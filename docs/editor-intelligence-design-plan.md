@@ -400,6 +400,15 @@ server's slices go to emerald-lang; slice 6 is in emerald-vscode; slice 7 is in 
   - LSP cases cover an unfinished native call and identifier, a named native argument, a native
     overload at both positions, a user function and method with a default, and generated and custom
     constructors. The real-server protocol runner checks their exact JSON replies 50 times each.
+  - Review correction (2026-10-04): after a comma, if only whitespace remains up to `)` or EOF,
+    insert a placeholder at the cursor in the private source so the parser retains the call and
+    its checked signature. This covers same-line and multiline empty arguments without changing
+    earlier offsets. Display names use Emerald's dotted spelling: catalog type methods qualify
+    with their owner, while prelude and user type functions and constructors use the written call
+    path with the implicit `Emerald.` prefix omitted. A nested type can also contain `::` in its
+    resolver key, so constructor detection uses its resolved struct declaration. Parameter source
+    spans/defaults are read from that declaration's file, which preserves prelude defaults such as
+    those on `Http.get`.
 
 ### Slice 5: Quick fixes
 

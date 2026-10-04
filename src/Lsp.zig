@@ -69,6 +69,7 @@ const Source = emerald.Source;
 const Lexer = emerald.Lexer;
 const Parser = emerald.Parser;
 const Ast = emerald.Ast;
+const Token = emerald.Token;
 const Formatter = emerald.Formatter;
 const unicode = emerald.unicode;
 const Project = emerald.Project;
@@ -2811,18 +2812,26 @@ fn onSignatureHelp(server: *Server, gpa: std.mem.Allocator, uri: []const u8, pos
             const declaration = if (target) |found| findFunctionDeclaration(analysis.parsed, found) else null;
             const constructor = if (target) |found| findConstructor(analysis.parsed, found) else null;
             const type_declaration = if (target) |found| findStructDeclarationAt(&analysis, found) else null;
-            const is_constructor = type_declaration != null and !std.mem.containsAtLeast(u8, resolved_key, 1, Resolver.method_separator);
+            const definition_source = if (target) |found|
+                if (found.file < analysis.files.len) &analysis.files[found.file].source else source_for_file
+            else
+                source_for_file;
+            // Nested types use `::` in their resolver key too, so the AST
+            // declaration—not a separator check—distinguishes them from methods.
+            const is_constructor = type_declaration != null;
+            const is_type_function = analysis.resolved.facts.type_members.contains(resolved_key);
             if (is_constructor and type_declaration.?.constructor == null) {
-                const generated = try generatedConstructorSignature(arena, source_for_file, type_declaration.?, active.index);
+                const name = signatureCallName(source_for_file, call.callee);
+                const generated = try generatedConstructorSignature(arena, definition_source, type_declaration.?, name, active.index);
                 try signatures.append(arena, generated);
             } else if (analysis.checked.signatures.get(resolved_key)) |signature| {
-                const label = if (is_constructor)
-                    type_declaration.?.name
+                const label = if (is_constructor or is_type_function)
+                    signatureCallName(source_for_file, call.callee)
                 else if (declaration) |function|
                     function.name
                 else
                     resolved_key[(std.mem.lastIndexOfScalar(u8, resolved_key, '.') orelse 0) + 1 ..];
-                const params = try sourceSignature(arena, source_for_file, label, signature, declaration, constructor, type_declaration, sourceActiveParameter(signature, active), is_constructor);
+                const params = try sourceSignature(arena, definition_source, label, signature, declaration, constructor, type_declaration, sourceActiveParameter(signature, active), is_constructor);
                 try signatures.append(arena, params);
             }
         }
@@ -2838,6 +2847,15 @@ fn onSignatureHelp(server: *Server, gpa: std.mem.Allocator, uri: []const u8, pos
         .activeSignature = active_signature,
         .activeParameter = signatures.items[active_signature].activeParameter,
     });
+}
+
+fn signatureCallName(source: *const Source, callee: *const Ast.Expression) []const u8 {
+    const written = source.text[callee.span.start..callee.span.end];
+    const visible = if (std.mem.startsWith(u8, written, Resolver.prelude_namespace ++ "."))
+        written[Resolver.prelude_namespace.len + 1 ..]
+    else
+        written;
+    return visible;
 }
 
 fn chooseActiveSignature(signatures: []const SignatureInformation, active: ActiveArgument) u32 {
@@ -2888,9 +2906,41 @@ fn appendSignatureSource(gpa: std.mem.Allocator, out: *std.ArrayList(u8), text: 
         try out.append(gpa, '0');
         if (end > start + 1) try out.appendNTimes(gpa, ' ', end - start - 1);
         try out.appendSlice(gpa, text[end..]);
+    } else if (emptyArgumentAfterComma(text, tokenized.tokens, cursor)) {
+        const offset: usize = @intCast(cursor);
+        try out.appendSlice(gpa, text[0..offset]);
+        try out.append(gpa, '0');
+        try out.appendSlice(gpa, text[offset..]);
     } else {
         try out.appendSlice(gpa, text);
     }
+}
+
+fn emptyArgumentAfterComma(text: []const u8, tokens: []const Token, cursor: u32) bool {
+    var previous: ?Token = null;
+    var next: ?Token = null;
+    for (tokens) |token| {
+        if (token.kind == .eof) {
+            if (token.span.start >= cursor and next == null) next = token;
+            continue;
+        }
+        if (token.span.end <= cursor and token.kind != .newline) {
+            previous = token;
+        } else if (token.span.start >= cursor and token.kind != .newline) {
+            next = token;
+            break;
+        }
+    }
+    const before = previous orelse return false;
+    const after = next orelse return false;
+    if (before.kind != .comma or (after.kind != .right_paren and after.kind != .eof)) return false;
+    const before_end: usize = @intCast(before.span.end);
+    const after_start: usize = @intCast(after.span.start);
+    const position: usize = @intCast(cursor);
+    if (before_end > position or after_start < position) return false;
+    for (text[before_end..position]) |char| if (!std.ascii.isWhitespace(char)) return false;
+    for (text[position..after_start]) |char| if (!std.ascii.isWhitespace(char)) return false;
+    return true;
 }
 
 const ActiveArgument = struct { index: u32, name: ?[]const u8 };
@@ -2965,14 +3015,21 @@ fn catalogMemberForKey(data: emerald.Builtins.Data, key: []const u8) ?emerald.Bu
         return emerald.Builtins.find(data, owner, key[separator + Resolver.method_separator.len ..]);
     }
     if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".")) {
-        return emerald.Builtins.find(data, null, key[Resolver.prelude_namespace.len + 1 ..]);
+        const visible = key[Resolver.prelude_namespace.len + 1 ..];
+        if (std.mem.lastIndexOfScalar(u8, visible, '.')) |separator| {
+            if (emerald.Builtins.find(data, visible[0..separator], visible[separator + 1 ..])) |member| return member;
+        }
+        return emerald.Builtins.find(data, null, visible);
     }
+    if (std.mem.lastIndexOfScalar(u8, key, '.')) |separator|
+        if (emerald.Builtins.find(data, key[0..separator], key[separator + 1 ..])) |member| return member;
     return null;
 }
 
 fn catalogSignature(gpa: std.mem.Allocator, member: emerald.Builtins.Member, signature: emerald.Builtins.Signature, active: u32) !SignatureInformation {
     var label: std.Io.Writer.Allocating = .init(gpa);
     defer label.deinit();
+    if (member.kind == .type_method) if (member.owner) |owner| try label.writer.print("{s}.", .{owner});
     try label.writer.writeAll(member.name);
     try label.writer.writeByte('(');
     const parameters = try gpa.alloc(SignatureParameterInformation, signature.parameters.len);
@@ -3043,12 +3100,12 @@ fn sourceSignature(
     return .{ .label = try gpa.dupe(u8, label.written()), .parameters = parameters, .activeParameter = if (count == 0) null else @min(active, @as(u32, @intCast(count - 1))) };
 }
 
-fn generatedConstructorSignature(gpa: std.mem.Allocator, source: *const Source, declaration: Ast.StructDeclaration, active: u32) !SignatureInformation {
+fn generatedConstructorSignature(gpa: std.mem.Allocator, source: *const Source, declaration: Ast.StructDeclaration, name: []const u8, active: u32) !SignatureInformation {
     const parameters = try gpa.alloc(SignatureParameterInformation, declaration.fields.len);
     errdefer gpa.free(parameters);
     var label: std.Io.Writer.Allocating = .init(gpa);
     defer label.deinit();
-    try label.writer.print("{s}(", .{declaration.name});
+    try label.writer.print("{s}(", .{name});
     for (declaration.fields, 0..) |field, index| {
         if (index != 0) try label.writer.writeAll(", ");
         var param: std.Io.Writer.Allocating = .init(gpa);
@@ -3059,7 +3116,7 @@ fn generatedConstructorSignature(gpa: std.mem.Allocator, source: *const Source, 
         parameters[index] = .{ .label = try gpa.dupe(u8, param.written()) };
         try label.writer.writeAll(param.written());
     }
-    try label.writer.print("): {s}", .{declaration.name});
+    try label.writer.print("): {s}", .{name});
     return .{ .label = try gpa.dupe(u8, label.written()), .parameters = parameters, .activeParameter = if (parameters.len == 0) null else @min(active, @as(u32, @intCast(parameters.len - 1))) };
 }
 
@@ -3086,7 +3143,7 @@ fn findFunctionDeclaration(parsed: []const Parser.Parsed, target: Resolver.Targe
 
 fn findFunctionWithin(declaration: Ast.StructDeclaration, start: u32) ?Ast.FunctionDeclaration {
     for (declaration.methods) |function| if (function.name_span.start == start) return function;
-    for (declaration.type_functions) |function| if (function.declaration.name_span.start == start) return function.declaration;
+    for (declaration.type_functions) |function| if (function.member_span.start == start or function.declaration.name_span.start == start) return function.declaration;
     for (declaration.properties) |property| {
         if (property.getter.name_span.start == start) return property.getter;
         if (property.setter) |setter| if (setter.name_span.start == start) return setter;

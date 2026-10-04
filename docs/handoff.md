@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-10-03. This is the live status a session starts from. Keep it to the current
+Updated: 2026-10-04. This is the live status a session starts from. Keep it to the current
 milestone, next work, active rough edges, and recent validation. Completed-slice narrative
 belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 [`docs/rewrite-context.md`](rewrite-context.md).
@@ -15,8 +15,8 @@ REPL are complete and merged on main (PR #30). The language server provides diag
 format-on-save, hover, go to definition, find references, rename, and completion.
 The language server also provides signature help for native and declared functions, methods,
 and constructors. Editor-intelligence slices 2 through 4 are implemented on
-`codex/editor-intelligence`; slice 4 is committed and branch CI run `37172527412` passed all
-seven jobs. Quick fixes
+`codex/editor-intelligence`; slice 4 review corrections are implemented and locally validated,
+with branch CI pending for the correction commit. Quick fixes
 (slice 5) are next after review. See "Next step" below.
 
 Built-ins live in a writable, implicitly imported `Emerald` namespace (14.2, 15.1): a project
@@ -178,13 +178,13 @@ settled: `scripts/check-builtin-parity.py` reports 0 problems against 249 catalo
 
 Slice 4 adds `textDocument/signatureHelp`, triggered by `(` and `,`. It uses one checked
 analysis, shows catalog signatures for native calls and checker signatures/source defaults for
-program declarations, and supports generated and custom constructors. Nine focused LSP cases
-and all 60 protocol cases returned identical replies 50 times each. Debug and ReleaseSafe test
-suites passed (the local HTTP fixture required running outside the sandbox for loopback binding),
-as did `zig build -j1`, the 159-link documentation check, `zig fmt --check src/Lsp.zig`,
-`git diff --check`, Windows and macOS cross-builds, the 10-test VS Code integration suite, and
-website parity. Slice 4 is committed as `d002068`, pushed, and CI run `37172527412` passed all
-seven jobs. Stop for review; slice 5 (quick fixes) begins only after approval.
+program declarations, and supports generated and custom constructors. Review corrections now
+cover empty arguments after commas and dotted type-function/nested-constructor labels. Twelve
+focused cases and all 72 protocol cases returned identical replies 50 times each. Debug and
+ReleaseSafe tests, the native build, documentation examples, formatting, whitespace, Windows and
+macOS cross-builds, the 9-test VS Code integration suite, and website parity (249 members, 253
+signatures, 26 pages, 0 problems) passed locally. Commit and push the correction, verify branch
+CI, then stop for review; slice 5 (quick fixes) begins only after approval.
 
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
 the others have a validated commit each, with reproductions in the journal). Concurrency is
