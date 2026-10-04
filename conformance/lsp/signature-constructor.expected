@@ -4,14 +4,14 @@
   "result": {
     "signatures": [
       {
-        "label": "pad_start(width: Int, fill: String = \" \"): String",
-        "documentation": "The text with `fill` added at its start until it is `width` characters long.",
+        "label": "Point(x: Int, label: String = \"origin\"): Point",
+        "documentation": null,
         "parameters": [
           {
-            "label": "width: Int"
+            "label": "x: Int"
           },
           {
-            "label": "fill: String = \" \""
+            "label": "label: String = \"origin\""
           }
         ],
         "activeParameter": 0

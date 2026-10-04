@@ -90,6 +90,18 @@ const DocumentSymbol = struct {
     children: []const DocumentSymbol = &.{},
 };
 const TextEdit = struct { range: Range, newText: []const u8 };
+const SignatureParameterInformation = struct { label: []const u8 };
+const SignatureInformation = struct {
+    label: []const u8,
+    documentation: ?[]const u8 = null,
+    parameters: []const SignatureParameterInformation,
+    activeParameter: ?u32 = null,
+};
+const SignatureHelp = struct {
+    signatures: []const SignatureInformation,
+    activeSignature: u32 = 0,
+    activeParameter: ?u32 = null,
+};
 
 /// LSP `SymbolKind` values this slice actually uses (the full enum has 26;
 /// only the ones Emerald's declarations map onto are named here).
@@ -501,6 +513,7 @@ fn handle(server: *Server, gpa: std.mem.Allocator, message: std.json.Value, out:
                 .referencesProvider = true,
                 .renameProvider = .{ .prepareProvider = true },
                 .completionProvider = .{ .triggerCharacters = &[_][]const u8{"."} },
+                .signatureHelpProvider = .{ .triggerCharacters = &[_][]const u8{ "(", "," } },
             },
         });
         return false;
@@ -597,6 +610,13 @@ fn handle(server: *Server, gpa: std.mem.Allocator, message: std.json.Value, out:
         const uri = try stringField(text_document, "uri");
         const position = try positionField(params);
         if (id) |request_id| try onCompletion(server, gpa, uri, position, request_id, out);
+        return false;
+    }
+    if (std.mem.eql(u8, method, "textDocument/signatureHelp")) {
+        const text_document = try objectField(params, "textDocument");
+        const uri = try stringField(text_document, "uri");
+        const position = try positionField(params);
+        if (id) |request_id| try onSignatureHelp(server, gpa, uri, position, request_id, out);
         return false;
     }
 
@@ -2719,6 +2739,425 @@ fn onCompletion(server: *Server, gpa: std.mem.Allocator, uri: []const u8, positi
 
     std.mem.sort(CompletionItem, items.items, {}, CompletionItem.lessThan);
     try respond(gpa, out, id, items.items);
+}
+
+/// Signature help uses the same single checked project as hover/completion.
+/// Closing delimiters only in this throwaway source lets the ordinary parser
+/// retain the call AST while a student is between `(` and `)`; it does not
+/// change the parser's error-tolerant behavior or the user's document.
+fn onSignatureHelp(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: Position, id: std.json.Value, out: *std.Io.Writer) !void {
+    const document = server.documents.get(uri) orelse {
+        try respond(gpa, out, id, null);
+        return;
+    };
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const original = document.text.items;
+    var source = try Source.init(arena, uri, original);
+    defer source.deinit(arena);
+    const cursor = offsetFromPosition(&source, position);
+
+    var patched: std.ArrayList(u8) = .empty;
+    defer patched.deinit(arena);
+    try appendSignatureSource(arena, &patched, original, cursor);
+    try appendUnclosedBrackets(arena, &patched, original, @intCast(original.len));
+    var loaded = try loadDocument(server, arena, uri, patched.items);
+    defer loaded.deinit(arena);
+    var analysis = (try emerald.analyzeProject(arena, &loaded.project)) orelse {
+        try respond(gpa, out, id, null);
+        return;
+    };
+    defer analysis.deinit(arena);
+
+    var selected: ?*const Ast.Expression = null;
+    var iterator = analysis.checked.expression_types.iterator();
+    while (iterator.next()) |entry| {
+        if (entry.value_ptr.file != loaded.index) continue;
+        const expression = entry.key_ptr.*;
+        if (expression.data != .call or !spanContains(expression.span, cursor)) continue;
+        if (selected == null or expression.span.len() < selected.?.span.len()) selected = expression;
+    }
+    const expression = selected orelse {
+        try respond(gpa, out, id, null);
+        return;
+    };
+    const call = expression.data.call;
+    const key = try callSignatureKey(gpa, &analysis, loaded.index, call.callee);
+
+    const source_for_file = &analysis.files[loaded.index].source;
+    const open = openParenAfter(source_for_file.text, call.callee.span.end, expression.span.end) orelse {
+        try respond(gpa, out, id, null);
+        return;
+    };
+    const active = activeArgument(source_for_file.text, open + 1, cursor);
+
+    var signatures: std.ArrayList(SignatureInformation) = .empty;
+    defer signatures.deinit(arena);
+
+    if (server.builtins) |catalog| {
+        const member = if (key) |found| catalogMemberForKey(catalog.value, found) else nativeCatalogMember(&analysis, loaded.index, call.callee, catalog.value);
+        if (member) |found| {
+            for (found.signatures) |signature| {
+                const info = try catalogSignature(arena, found, signature, catalogActiveParameter(signature, active));
+                try signatures.append(arena, info);
+            }
+        }
+    }
+
+    if (signatures.items.len == 0) {
+        if (key) |resolved_key| {
+            const target = analysis.resolved.facts.declarations.get(resolved_key);
+            const declaration = if (target) |found| findFunctionDeclaration(analysis.parsed, found) else null;
+            const constructor = if (target) |found| findConstructor(analysis.parsed, found) else null;
+            const type_declaration = if (target) |found| findStructDeclarationAt(&analysis, found) else null;
+            const is_constructor = type_declaration != null and !std.mem.containsAtLeast(u8, resolved_key, 1, Resolver.method_separator);
+            if (is_constructor and type_declaration.?.constructor == null) {
+                const generated = try generatedConstructorSignature(arena, source_for_file, type_declaration.?, active.index);
+                try signatures.append(arena, generated);
+            } else if (analysis.checked.signatures.get(resolved_key)) |signature| {
+                const label = if (is_constructor)
+                    type_declaration.?.name
+                else if (declaration) |function|
+                    function.name
+                else
+                    resolved_key[(std.mem.lastIndexOfScalar(u8, resolved_key, '.') orelse 0) + 1 ..];
+                const params = try sourceSignature(arena, source_for_file, label, signature, declaration, constructor, type_declaration, sourceActiveParameter(signature, active), is_constructor);
+                try signatures.append(arena, params);
+            }
+        }
+    }
+
+    if (signatures.items.len == 0) {
+        try respond(gpa, out, id, null);
+        return;
+    }
+    const active_signature = chooseActiveSignature(signatures.items, active);
+    try respond(gpa, out, id, SignatureHelp{
+        .signatures = signatures.items,
+        .activeSignature = active_signature,
+        .activeParameter = signatures.items[active_signature].activeParameter,
+    });
+}
+
+fn chooseActiveSignature(signatures: []const SignatureInformation, active: ActiveArgument) u32 {
+    if (active.name) |name| {
+        for (signatures, 0..) |signature, signature_index| {
+            for (signature.parameters) |parameter| {
+                if (std.mem.startsWith(u8, parameter.label, name) and parameter.label.len > name.len and parameter.label[name.len] == ':') return @intCast(signature_index);
+            }
+        }
+    }
+    for (signatures, 0..) |signature, index| if (active.index < signature.parameters.len) return @intCast(index);
+    return @intCast(signatures.len - 1);
+}
+
+/// Keep the request to one analysis, even while the student has typed only a
+/// prefix of an argument name. Replacing that one unresolved identifier with
+/// a same-width literal preserves every source offset and leaves named labels
+/// and nested calls intact.
+fn appendSignatureSource(gpa: std.mem.Allocator, out: *std.ArrayList(u8), text: []const u8, cursor: u32) !void {
+    var source = try Source.init(gpa, "<signature-help>", text);
+    defer source.deinit(gpa);
+    var tokenized = try Lexer.tokenize(gpa, &source);
+    defer tokenized.deinit(gpa);
+    var replacement: ?Source.Span = null;
+    for (tokenized.tokens, 0..) |token, index| {
+        if (token.kind != .identifier or cursor < token.span.start or cursor > token.span.end) continue;
+        var previous = index;
+        while (previous > 0) {
+            previous -= 1;
+            if (tokenized.tokens[previous].kind == .newline) continue;
+            if (tokenized.tokens[previous].kind == .dot or tokenized.tokens[previous].kind == .question_dot) break;
+            previous = index;
+            break;
+        }
+        if (previous < index and (tokenized.tokens[previous].kind == .dot or tokenized.tokens[previous].kind == .question_dot)) break;
+        var next = index + 1;
+        while (next < tokenized.tokens.len and tokenized.tokens[next].kind == .newline) : (next += 1) {}
+        // An identifier followed by `:` is a named parameter; followed by `(`,
+        // it is a nested call. Both must stay as written.
+        if (next < tokenized.tokens.len and (tokenized.tokens[next].kind == .colon or tokenized.tokens[next].kind == .left_paren)) break;
+        replacement = token.span;
+        break;
+    }
+    if (replacement) |span| {
+        const start: usize = @intCast(span.start);
+        const end: usize = @intCast(span.end);
+        try out.appendSlice(gpa, text[0..start]);
+        try out.append(gpa, '0');
+        if (end > start + 1) try out.appendNTimes(gpa, ' ', end - start - 1);
+        try out.appendSlice(gpa, text[end..]);
+    } else {
+        try out.appendSlice(gpa, text);
+    }
+}
+
+const ActiveArgument = struct { index: u32, name: ?[]const u8 };
+
+/// The source-level call key is the checker's decision, never a fresh guess
+/// from the spelling. That keeps shadowing, inheritance, and namespace aliases
+/// consistent with normal type checking.
+fn callSignatureKey(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, file: u32, callee: *const Ast.Expression) !?[]const u8 {
+    if (analysis.checked.method_calls.get(callee)) |key| return key;
+    if (analysis.resolved.facts.qualified.get(callee)) |key| return key;
+    if (callee.data == .name) {
+        if (analysis.resolved.facts.expression_targets.get(callee)) |target| return keyForTarget(analysis, target);
+        if (analysis.resolved.facts.keyFor(file, callee.data.name)) |key| return key;
+    }
+    if (callee.data == .member) if (try memberDefinition(gpa, analysis, file, callee)) |target| return keyForTarget(analysis, target);
+    return null;
+}
+
+fn keyForTarget(analysis: *const emerald.Analysis, target: Resolver.Target) ?[]const u8 {
+    var declarations = analysis.resolved.facts.declarations.iterator();
+    while (declarations.next()) |entry| if (targetEql(entry.value_ptr.*, target)) return entry.key_ptr.*;
+    return null;
+}
+
+fn nativeCatalogMember(analysis: *const emerald.Analysis, file: u32, callee: *const Ast.Expression, data: emerald.Builtins.Data) ?emerald.Builtins.Member {
+    if (callee.data != .member) return null;
+    const member = callee.data.member;
+    if (analysis.checked.expression_types.get(member.base)) |info| {
+        const base = if (info.type.optional) info.type.payload() else info.type;
+        const owner: ?[]const u8 = switch (base.kind) {
+            .string => "String",
+            .list => "List",
+            .dictionary => "Dict",
+            .set => "Set",
+            .int => "Int",
+            .float => "Float",
+            .bool => "Bool",
+            .range => "Range",
+            .bytes => "Bytes",
+            .tuple => "Tuple",
+            .task => "Task",
+            .channel => "Channel",
+            .struct_value => if (std.mem.startsWith(u8, base.user.?.name, Resolver.prelude_namespace ++ ".")) base.user.?.name[Resolver.prelude_namespace.len + 1 ..] else null,
+            else => null,
+        };
+        if (owner) |name| return emerald.Builtins.find(data, name, member.name);
+    }
+    const written = expressionPath(analysis, file, member.base) orelse return null;
+    const owner = if (std.mem.startsWith(u8, written, Resolver.prelude_namespace ++ ".")) written[Resolver.prelude_namespace.len + 1 ..] else written;
+    if (std.mem.indexOfScalar(u8, owner, '.') != null) return null;
+    return emerald.Builtins.find(data, owner, member.name);
+}
+
+fn catalogActiveParameter(signature: emerald.Builtins.Signature, active: ActiveArgument) u32 {
+    if (active.name) |name| for (signature.parameters, 0..) |parameter, index| {
+        if (std.mem.eql(u8, name, parameter.name)) return @intCast(index);
+    };
+    return active.index;
+}
+
+fn sourceActiveParameter(signature: Type.Signature, active: ActiveArgument) u32 {
+    if (active.name) |name| for (signature.parameter_names, 0..) |parameter, index| {
+        if (std.mem.eql(u8, name, parameter)) return @intCast(index);
+    };
+    return active.index;
+}
+
+fn catalogMemberForKey(data: emerald.Builtins.Data, key: []const u8) ?emerald.Builtins.Member {
+    if (std.mem.lastIndexOf(u8, key, Resolver.method_separator)) |separator| {
+        const prefix = key[0..separator];
+        const owner = prefix[(std.mem.lastIndexOfScalar(u8, prefix, '.') orelse return null) + 1 ..];
+        return emerald.Builtins.find(data, owner, key[separator + Resolver.method_separator.len ..]);
+    }
+    if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".")) {
+        return emerald.Builtins.find(data, null, key[Resolver.prelude_namespace.len + 1 ..]);
+    }
+    return null;
+}
+
+fn catalogSignature(gpa: std.mem.Allocator, member: emerald.Builtins.Member, signature: emerald.Builtins.Signature, active: u32) !SignatureInformation {
+    var label: std.Io.Writer.Allocating = .init(gpa);
+    defer label.deinit();
+    try label.writer.writeAll(member.name);
+    try label.writer.writeByte('(');
+    const parameters = try gpa.alloc(SignatureParameterInformation, signature.parameters.len);
+    errdefer gpa.free(parameters);
+    for (signature.parameters, 0..) |parameter, index| {
+        if (index != 0) try label.writer.writeAll(", ");
+        var parameter_label: std.Io.Writer.Allocating = .init(gpa);
+        defer parameter_label.deinit();
+        try parameter_label.writer.print("{s}: {s}", .{ parameter.name, parameter.type });
+        if (parameter.default) |default| try parameter_label.writer.print(" = {s}", .{default}) else if (parameter.optional) try parameter_label.writer.writeAll(" (optional)");
+        if (parameter.variadic) try parameter_label.writer.writeAll("...");
+        parameters[index] = .{ .label = try gpa.dupe(u8, parameter_label.written()) };
+        try label.writer.writeAll(parameter_label.written());
+    }
+    try label.writer.writeByte(')');
+    if (signature.block) |block| try label.writer.print(" {{ {s} }}", .{block});
+    try label.writer.print(": {s}", .{signature.result});
+    const documentation = try gpa.dupe(u8, signature.summary);
+    return .{ .label = try gpa.dupe(u8, label.written()), .documentation = documentation, .parameters = parameters, .activeParameter = if (parameters.len == 0) null else @min(active, @as(u32, @intCast(parameters.len - 1))) };
+}
+
+fn sourceSignature(
+    gpa: std.mem.Allocator,
+    source: *const Source,
+    name: []const u8,
+    signature: Type.Signature,
+    declaration: ?Ast.FunctionDeclaration,
+    constructor: ?Ast.StructDeclaration.Constructor,
+    type_declaration: ?Ast.StructDeclaration,
+    active: u32,
+    is_constructor: bool,
+) !SignatureInformation {
+    const written_params: []const Ast.Parameter = if (constructor) |value| value.parameters else if (declaration) |value| value.parameters else if (type_declaration) |value| if (value.constructor) |custom| custom.parameters else &.{} else &.{};
+    const generated_fields = if (is_constructor and constructor == null and type_declaration != null) type_declaration.?.fields else &[_]Ast.StructDeclaration.Field{};
+    const count = signature.parameters.len;
+    const parameters = try gpa.alloc(SignatureParameterInformation, count);
+    errdefer gpa.free(parameters);
+    var label: std.Io.Writer.Allocating = .init(gpa);
+    defer label.deinit();
+    try label.writer.print("{s}(", .{name});
+    for (0..count) |index| {
+        if (index != 0) try label.writer.writeAll(", ");
+        const parameter_name = if (index < signature.parameter_names.len) signature.parameter_names[index] else "value";
+        const type_text = if (index < written_params.len)
+            source.text[written_params[index].annotation.span.start..writtenTypeEnd(written_params[index].annotation)]
+        else if (index < generated_fields.len)
+            source.text[generated_fields[index].annotation.span.start..writtenTypeEnd(generated_fields[index].annotation)]
+        else
+            try renderedType(gpa, signature.parameters[index]);
+        var parameter_label: std.Io.Writer.Allocating = .init(gpa);
+        defer parameter_label.deinit();
+        try parameter_label.writer.print("{s}: {s}", .{ parameter_name, type_text });
+        const default = if (index < written_params.len) written_params[index].default else if (index < generated_fields.len) generated_fields[index].default else null;
+        if (default) |value| try parameter_label.writer.print(" = {s}", .{source.text[value.span.start..value.span.end]});
+        parameters[index] = .{ .label = try gpa.dupe(u8, parameter_label.written()) };
+        try label.writer.writeAll(parameter_label.written());
+    }
+    try label.writer.writeByte(')');
+    if (!is_constructor) {
+        const result = if (declaration) |function| if (function.return_annotation) |annotation|
+            source.text[annotation.span.start..writtenTypeEnd(annotation)]
+        else
+            try renderedType(gpa, signature.return_type) else try renderedType(gpa, signature.return_type);
+        try label.writer.print(": {s}", .{result});
+    } else {
+        try label.writer.print(": {s}", .{name});
+    }
+    return .{ .label = try gpa.dupe(u8, label.written()), .parameters = parameters, .activeParameter = if (count == 0) null else @min(active, @as(u32, @intCast(count - 1))) };
+}
+
+fn generatedConstructorSignature(gpa: std.mem.Allocator, source: *const Source, declaration: Ast.StructDeclaration, active: u32) !SignatureInformation {
+    const parameters = try gpa.alloc(SignatureParameterInformation, declaration.fields.len);
+    errdefer gpa.free(parameters);
+    var label: std.Io.Writer.Allocating = .init(gpa);
+    defer label.deinit();
+    try label.writer.print("{s}(", .{declaration.name});
+    for (declaration.fields, 0..) |field, index| {
+        if (index != 0) try label.writer.writeAll(", ");
+        var param: std.Io.Writer.Allocating = .init(gpa);
+        defer param.deinit();
+        const type_text = source.text[field.annotation.span.start..writtenTypeEnd(field.annotation)];
+        try param.writer.print("{s}: {s}", .{ field.name, type_text });
+        if (field.default) |value| try param.writer.print(" = {s}", .{source.text[value.span.start..value.span.end]});
+        parameters[index] = .{ .label = try gpa.dupe(u8, param.written()) };
+        try label.writer.writeAll(param.written());
+    }
+    try label.writer.print("): {s}", .{declaration.name});
+    return .{ .label = try gpa.dupe(u8, label.written()), .parameters = parameters, .activeParameter = if (parameters.len == 0) null else @min(active, @as(u32, @intCast(parameters.len - 1))) };
+}
+
+fn renderedType(gpa: std.mem.Allocator, value: Type) ![]const u8 {
+    var writer: std.Io.Writer.Allocating = .init(gpa);
+    defer writer.deinit();
+    try writer.writer.print("{f}", .{value});
+    return try gpa.dupe(u8, writer.written());
+}
+
+fn writtenTypeEnd(expression: Ast.TypeExpression) u32 {
+    return if (expression.question_span) |question| question.end else expression.span.end;
+}
+
+fn findFunctionDeclaration(parsed: []const Parser.Parsed, target: Resolver.Target) ?Ast.FunctionDeclaration {
+    if (target.file >= parsed.len) return null;
+    for (parsed[target.file].program.statements) |statement| switch (statement.data) {
+        .function_declaration => |function| if (function.name_span.start == target.span.start) return function,
+        .struct_declaration => |declaration| if (findFunctionWithin(declaration, target.span.start)) |function| return function,
+        else => {},
+    };
+    return null;
+}
+
+fn findFunctionWithin(declaration: Ast.StructDeclaration, start: u32) ?Ast.FunctionDeclaration {
+    for (declaration.methods) |function| if (function.name_span.start == start) return function;
+    for (declaration.type_functions) |function| if (function.declaration.name_span.start == start) return function.declaration;
+    for (declaration.properties) |property| {
+        if (property.getter.name_span.start == start) return property.getter;
+        if (property.setter) |setter| if (setter.name_span.start == start) return setter;
+    }
+    for (declaration.types) |nested| if (findFunctionWithin(nested.declaration, start)) |function| return function;
+    return null;
+}
+
+fn findConstructor(parsed: []const Parser.Parsed, target: Resolver.Target) ?Ast.StructDeclaration.Constructor {
+    if (target.file >= parsed.len) return null;
+    for (parsed[target.file].program.statements) |statement| switch (statement.data) {
+        .struct_declaration => |declaration| if (findStructWithinSpan(declaration, target.span.start)) |found| return found.constructor,
+        else => {},
+    };
+    return null;
+}
+
+fn findStructWithinSpan(declaration: Ast.StructDeclaration, start: u32) ?Ast.StructDeclaration {
+    if (declaration.name_span.start == start) return declaration;
+    for (declaration.types) |nested| if (findStructWithinSpan(nested.declaration, start)) |found| return found;
+    return null;
+}
+
+fn openParenAfter(text: []const u8, start: u32, end: u32) ?u32 {
+    var index: usize = @intCast(start);
+    const limit: usize = @min(end, @as(usize, @intCast(text.len)));
+    while (index < limit and std.ascii.isWhitespace(text[index])) : (index += 1) {}
+    if (index < limit and text[index] == '(') return @intCast(index);
+    return null;
+}
+
+/// Count commas only at this call's top level and recognize a named active
+/// argument (`fill:`) without treating commas in nested calls or strings as
+/// parameter separators.
+fn activeArgument(text: []const u8, start: u32, cursor: u32) ActiveArgument {
+    const end: usize = @min(cursor, @as(usize, @intCast(text.len)));
+    var index: usize = @intCast(start);
+    var commas: u32 = 0;
+    var nesting: u32 = 0;
+    var quote: u8 = 0;
+    var escaped = false;
+    var segment: usize = index;
+    while (index < end) : (index += 1) {
+        const char = text[index];
+        if (quote != 0) {
+            if (escaped) {
+                escaped = false;
+            } else if (char == '\\' and quote == '"') {
+                escaped = true;
+            } else if (char == quote) {
+                quote = 0;
+            }
+            continue;
+        }
+        if (char == '"' or char == '\'') {
+            quote = char;
+        } else if (char == '(' or char == '[' or char == '{') {
+            nesting += 1;
+        } else if ((char == ')' or char == ']' or char == '}') and nesting > 0) {
+            nesting -= 1;
+        } else if (char == ',' and nesting == 0) {
+            commas += 1;
+            segment = index + 1;
+        }
+    }
+    const current = std.mem.trim(u8, text[segment..end], " \t\r\n");
+    if (std.mem.indexOfScalar(u8, current, ':')) |colon| {
+        const name = std.mem.trim(u8, current[0..colon], " \t");
+        if (name.len != 0 and std.ascii.isAlphabetic(name[0])) return .{ .index = commas, .name = name };
+    }
+    return .{ .index = commas, .name = null };
 }
 
 /// Completes names visible at a bare identifier. Resolver facts provide the

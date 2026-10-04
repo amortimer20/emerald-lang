@@ -3740,6 +3740,9 @@ unchanged:
 
 The second slice is complete: hover, go to definition, find references, rename (with
 `prepareRename`), and completion, in that order, each building on what came before.
+Signature help is also available while entering calls: it shows native and declared
+parameters, defaults, and the active parameter (including named arguments), for functions,
+methods, and constructors.
 
 Inferred-type hover needed two things the first slice's file-scoped features never did:
 `Checker.zig`'s `expression_types` (every expression's type, by expression — `analyzeProject`

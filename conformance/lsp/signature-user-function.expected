@@ -1,0 +1,23 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "signatures": [
+      {
+        "label": "greet(name: String, punctuation: String = \"!\"): String",
+        "documentation": null,
+        "parameters": [
+          {
+            "label": "name: String"
+          },
+          {
+            "label": "punctuation: String = \"!\""
+          }
+        ],
+        "activeParameter": 1
+      }
+    ],
+    "activeSignature": 0,
+    "activeParameter": 1
+  }
+}

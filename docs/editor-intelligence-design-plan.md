@@ -386,7 +386,20 @@ server's slices go to emerald-lang; slice 6 is in emerald-vscode; slice 7 is in 
 - `textDocument/signatureHelp` (decision 7), triggered by `(` and `,`: the callee's parameters with
   the active one marked, defaults shown, and named arguments matched by name. Built-ins, the
   student's own functions and methods, and constructors.
-- Settled while building: (record here)
+- Settled while building (2026-10-03):
+  - Reused the request's single checked `Analysis`: its resolved call/member facts identify source
+    functions and methods, and the built-in catalog supplies native signatures and summaries.
+    No checker changes or second analysis were needed. A temporary same-width replacement for an
+    unfinished argument identifier keeps one analysis viable without changing any source offsets;
+    the request also closes open delimiters in its private source copy so a just-opened call parses.
+  - Generated constructors have no stored `Type.Signature` in the checker, so their parameter
+    labels come directly from the type's field declarations; custom constructors use the checked
+    signature and source defaults. Both forms are covered. When catalog overloads exist, the active
+    signature follows a named parameter when present, otherwise the active positional index, while
+    all overloads remain visible.
+  - LSP cases cover an unfinished native call and identifier, a named native argument, a native
+    overload at both positions, a user function and method with a default, and generated and custom
+    constructors. The real-server protocol runner checks their exact JSON replies 50 times each.
 
 ### Slice 5: Quick fixes
 

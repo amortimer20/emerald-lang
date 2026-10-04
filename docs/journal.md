@@ -5093,3 +5093,24 @@ unverified locally; the pushed commit's CI result is recorded below.
 Commit `83256c4` was pushed to `codex/editor-intelligence`; CI run `37164236982` passed all seven
 jobs, including Debug and ReleaseSafe on Ubuntu, macOS, and Windows. The local HTTP-suite limitation
 remains an environment-specific validation note, not a CI failure.
+
+## 2026-10-03: Editor intelligence slice 4 — signature help
+
+Added `textDocument/signatureHelp`, advertised for `(` and `,`. The request builds one checked
+analysis and uses its resolved call facts for source declarations, while `builtins.json` provides
+native signatures and summaries. Help covers functions, methods, generated field constructors,
+and custom constructors; it includes defaults, recognizes named active parameters, and keeps
+native overloads visible while selecting the active signature by the current argument.
+
+The parser has no incomplete-call recovery, so the LSP closes open delimiters only in a private
+source copy. An unfinished bare argument identifier is replaced with a same-width literal so the
+single analysis succeeds without shifting offsets. Generated constructors do not have a stored
+checker signature, so their labels come from the source fields; custom constructors use the
+checked signature. These implementation constraints and choices are recorded in slice 4 of the
+plan. Nine focused LSP cases and all 60 protocol cases returned identical replies 50 times each.
+
+On pinned Zig 0.16.0, Debug and ReleaseSafe test suites, `zig build -j1`, documentation examples,
+formatting, whitespace validation, Windows/macOS cross-builds, the 10-test VS Code integration
+suite, and the emerald-website built-in parity check all passed. The website check reported 249
+catalog members, 253 signatures, 26 pages, and zero problems. The slice commit and branch CI
+result are recorded in the follow-up below.

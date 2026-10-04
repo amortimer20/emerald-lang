@@ -1,0 +1,23 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "signatures": [
+      {
+        "label": "Box(value: Int, scale: Int = 2): Box",
+        "documentation": null,
+        "parameters": [
+          {
+            "label": "value: Int"
+          },
+          {
+            "label": "scale: Int = 2"
+          }
+        ],
+        "activeParameter": 1
+      }
+    ],
+    "activeSignature": 0,
+    "activeParameter": 1
+  }
+}
