@@ -15,9 +15,9 @@ REPL are complete and merged on main (PR #30). The language server provides diag
 format-on-save, hover, go to definition, find references, rename, and completion.
 The language server also provides signature help for native and declared functions, methods,
 and constructors, and structured quick fixes for exact name corrections. Editor-intelligence
-slices 2 through 4 are reviewed; slice 5 is committed and pushed as `8160fa5` on
-`codex/editor-intelligence`. Its full local gate and all seven CI jobs passed; it is ready
-for review. See "Next step" below.
+slices 2 through 5 are reviewed. Slice 5 is `8160fa5` on `codex/editor-intelligence`, plus
+Claude's follow-up attaching the annotation-typo replacement (`@overide` → `@override`).
+See "Next step" below.
 
 Built-ins live in a writable, implicitly imported `Emerald` namespace (14.2, 15.1): a project
 name always wins over a built-in, with a warning for the language's own built-ins only, and the built-in stays reachable as
@@ -176,7 +176,8 @@ anchors, and the branch includes current `main` through merge `f3bbb98`. Website
 settled: `scripts/check-builtin-parity.py` reports 0 problems against 249 catalog members,
 253 signatures, and 26 pages.
 
-Slice 5 adds `textDocument/codeAction` for existing exact name corrections. Diagnostics carry
+Slice 5 adds `textDocument/codeAction` for existing exact name corrections, including the
+parser's one "Did you mean" suggestion, a misspelled annotation. Diagnostics carry
 the compiler's replacement as structured `data`; actions check the document revision, original
 text, UTF-16 edit range, requested range, and kind filter without a new analysis. Thirteen new
 protocol cases cover the six member-synonym owners, `this` → `self`, Unicode positions,
@@ -207,8 +208,8 @@ focused cases and local full gates are recorded in the journal.
   method parentheses; bare names include the native types, `Math`, and `Program`.
 - LSP signature help shows active parameters, named/default arguments, overloads, and
   generated or custom constructors while a call is being written.
-- LSP quick fixes apply exact name corrections, such as `push` → `append` and `this` →
-  `self`, using compiler-supplied diagnostic data.
+- LSP quick fixes apply exact name corrections, such as `push` → `append`, `this` → `self`, and
+  `@overide` → `@override`, using compiler-supplied diagnostic data.
 - `chunks`, `windows`, and `pairs` results are now typed as nested lists and pairs;
   code that relied on the old wrong type now needs fixing.
 - Calling `Range.step()` without its required argument reports the normal missing-argument
@@ -340,20 +341,19 @@ Open work:
 Claude reviews and handles website parity). The plan is
 [`editor-intelligence-design-plan.md`](editor-intelligence-design-plan.md), accepted 2026-10-01 with all ten
 recommendations; the REPL prerequisite and slice 1 are merged. Slices 2–4 are reviewed and
-their CI is green; slice 5 is pushed with a full local gate and green CI, awaiting review.
+their CI is green; slice 5 is reviewed. Claude's review added the annotation quick fix.
 The goal is C#-level IntelliSense in VS Code. Completion now reads native descriptions
 from `src/builtins.json` and declarations from the compiler's analysis. The remaining gaps are:
 - Completion still patches unfinished source with a placeholder, as the accepted plan
   requires, but performs one analysis rather than two. Error-tolerant parsing is not part
   of this milestone.
-- The extension's grammar highlights only `print`, `write`, `input`, and `input_maybe` as
-  built-in functions (not `random` or `exit`), and the extension never says which `emerald`
-  binary it started.
 - The user reports red "not defined" errors in the editor that could not be reproduced; an
   example (the message and its line) is still needed.
 
-After slice 5 review, the remaining slice is extension polish (binary/version visibility and
-grammar). Claude completed website parity after slice 3, and it is checked in later gates.
+Slice 6's extension work is merged (emerald-vscode PR #4: the binary and version in the output
+channel and status bar, and `support.class.builtin.emerald` for the library classes, with the
+website's themes colouring it). What remains is the 0.3.0 release notes, which the user publishes.
+Claude completed website parity after slice 3, and it is checked in later gates.
 Native go to definition stays empty: a native
 has no Emerald declaration, and its documentation link belongs in hover instead.
 To probe the server by hand, speak JSON-RPC over stdio to

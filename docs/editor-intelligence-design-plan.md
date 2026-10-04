@@ -443,6 +443,13 @@ server's slices go to emerald-lang; slice 6 is in emerald-vscode; slice 7 is in 
     Website parity reported 249 members, 253 signatures, 26 pages, and zero problems.
     Slice 5 was committed as `8160fa5` and pushed to `codex/editor-intelligence`;
     CI run `37218063872` passed all seven jobs. Stopped for review before slice 6.
+  - Review follow-up (Claude, 2026-10-04): the parser's misspelled-annotation diagnostic
+    (`@overide`, "Did you mean `@override`?") is the compiler's only "Did you mean" suggestion and
+    carried no replacement. It now attaches one over the annotation word, leaving the `@`, so the
+    action reads ``Replace with `override` ``. Added `quickfix-annotation` and an allocator-backed
+    check that the corrected program has no errors. All 86 protocol cases matched 50 times, the
+    extension's 10 integration tests passed three times against this build, and parity reported
+    zero problems.
 
 ### Slice 6: The extension (emerald-vscode)
 

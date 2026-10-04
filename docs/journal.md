@@ -5173,3 +5173,14 @@ Committed slice 5 as `8160fa5` and pushed it to `codex/editor-intelligence`. CI 
 `37218063872` passed all seven jobs: bounded execution fuzzing and Debug/ReleaseSafe tests
 on Ubuntu, macOS, and Windows. The local gate and all 85 protocol cases at 50 requests each
 are recorded above. Stop for review; slice 6 (extension polish) begins only after approval.
+
+## 2026-10-04: Editor intelligence slice 5 — review follow-up
+
+Claude reviewed slice 5 with 14 real quick-fix requests: member synonyms, `this` → `self`, a
+`has_key` → `contains_key?` fix, UTF-16 ranges with an emoji earlier on the same line, and the
+deliberately help-only cases (`length()` and a misspelled variable). The one gap was the
+parser's misspelled-annotation suggestion, the compiler's only remaining "Did you mean", which
+carried no replacement. The replacement now covers the annotation word, so `@overide` becomes
+`@override`. Debug and ReleaseSafe `zig build test -j1` passed, all 86 protocol cases matched 50
+times, the extension's 10 integration tests passed three times against this build (the 9 recorded
+earlier predate emerald-vscode PR #4), and the website parity check reported zero problems.

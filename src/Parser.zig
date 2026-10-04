@@ -747,6 +747,8 @@ fn parseAnnotations(self: *Parser) Error!Annotations {
                 .{word},
                 try std.fmt.allocPrint(self.arena, "Did you mean `@{s}`?", .{suggestion}),
             );
+            // The word alone, so the `@` stays: the one exact edit the editor offers.
+            self.diagnostics.items[self.diagnostics.items.len - 1].replacement = .{ .span = name.span, .text = suggestion };
         } else {
             try self.reportFmtNote(
                 span,

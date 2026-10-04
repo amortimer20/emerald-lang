@@ -904,6 +904,7 @@ test "compiler quick fixes produce programs that check, including UTF-16 and nam
         "const n = 2.0\nprint(n./*cursor*/is_finite())\n",
         "var xs = [1, 2]\nprint(\"😀\", xs./*cursor*/push(3))\n",
         "class Score {\n    const value: Int\n    func show() {\n        print(/*cursor*/this.value)\n    }\n}\nScore(3).show()\n",
+        "class A {\n    func f() {}\n}\nclass B extends A {\n    @over/*cursor*/ide\n    func f() {}\n}\n",
     };
     for (examples) |marked| {
         const reply = try conformanceReply(gpa, io, path, marked, "textDocument/codeAction");
