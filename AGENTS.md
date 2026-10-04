@@ -86,6 +86,9 @@ through this repository.
 - **A plan starts as `Status: proposed`.** Once the user accepts its decisions (often "accept
   your recommendations"), the status becomes `accepted` and the implementing agent begins. Do
   not reopen an accepted decision.
+- **Website copy is Claude's.** The user wants one voice on the site, so Codex does not edit
+  `emerald-website` prose (pages, install text, release notes). If a code change makes a page
+  wrong, say which page and what changed in the handoff, and Claude updates it.
 - **Never share a working tree.** Whichever agent the user started in owns the main checkout.
   Claude works from `git worktree` directories under `~/.cache/emerald-worktrees/` (not
   `/tmp`, which environment restarts wipe).
