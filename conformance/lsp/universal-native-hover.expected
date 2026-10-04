@@ -4,7 +4,7 @@
   "result": {
     "contents": {
       "kind": "markdown",
-      "value": "```emerald\ntype_name: String\n```\n\nThe name of the value's type, as Emerald writes it, such as `Int` or `List[Int]`.\n\n[Read more](https://emerald-lang.web.app/docs/docs/language/inheritance/#asking-what-kind-of-object-it-is)"
+      "value": "```emerald\ntype_name: String\n```\n\nThe name of the value's type, as Emerald writes it, such as `Int` or `List[Int]`.\n\n[Read more](https://emerald-lang.web.app/docs/language/inheritance/#asking-what-kind-of-object-it-is)"
     },
     "range": {
       "start": {

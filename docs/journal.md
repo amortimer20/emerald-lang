@@ -5068,3 +5068,24 @@ formatting, whitespace, and Windows/macOS cross-builds passed. After emerald-vsc
 merged as `597d066`, the integration suite passed all 9 tests, including format-on-save,
 against this server. The correction was committed as `052ebda` and pushed to
 `codex/editor-intelligence`; CI run `37161858942` passed all seven jobs.
+
+## 2026-10-03: Editor intelligence website parity follow-up
+
+Against emerald-website main at `7cd37cd`, the initial `scripts/check-builtin-parity.py` run
+identified seven stale catalog destinations (nine diagnostics because `Console.table` has two
+signatures). Corrected the universal `type_name`, both `Console.table` entries, `Csv.decode` and
+`Csv.encode`, `Json.decode` and `Json.encode`, and `String.to_bytes` to their canonical member
+anchors. The next parity run reported 249 members, 253 signatures, 26 linked pages, and zero
+problems.
+
+The parity script only checks member-page relationships, so the 45 `type_pages` routes were also
+checked against website content directly. Seven stale routes were found: `Bytes` and the six error
+types. They now point to their built-in reference pages, and all 45 routes resolve. The plan now
+records slice 7 as settled and requires the parity check during slices 2–6. No summaries changed.
+
+The native build and doc-example check passed, along with formatting, whitespace validation, and
+50 identical replies each for the two changed `type_name` hover cases. The member parity check
+reported zero problems and all 45 type-page routes resolved. The full local test command did not
+finish: the sandboxed run could not bind the HTTP test server, and a direct run remained in the
+conformance suite until a 90-second timeout. Full Debug/ReleaseSafe test completion remains
+unverified locally and is left for CI.

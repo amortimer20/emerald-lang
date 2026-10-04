@@ -398,7 +398,26 @@ server's slices go to emerald-lang; slice 6 is in emerald-vscode; slice 7 is in 
 - The parity check (decision 3), run with the other page checks.
 - If the summaries changed any wording, carry it back to the pages' "At a glance" lines so the
   editor and the site say the same thing.
-- Settled while building: (record here)
+- Settled while building (2026-10-03):
+  - The website check is `scripts/check-builtin-parity.py`, run from `emerald-website` with
+    `EMERALD_LANG` pointing at this checkout. Member links on reference pages must target the
+    matching `<Member>` id; language pages without `<Member>` entries use heading ids instead.
+    Constructor entries are skipped, and "At a glance" wording is not compared because those
+    rows group multiple members under one phrase.
+  - The first run found the seven stale catalog destinations identified in review: universal
+    `type_name`, both `Console.table` signatures, `Csv.decode`/`encode`, `Json.decode`/`encode`,
+    and `String.to_bytes`. Corrected them to the canonical member anchors. The parity check then
+    reported 249 catalog members, 253 signatures, 26 pages, and zero problems.
+  - Also checked all 45 `type_pages` routes, which the member parity script does not inspect.
+    Seven were stale: `Bytes` and the six error types pointed at nonexistent library pages.
+    Updated them to their built-in reference pages; all 45 now resolve in the website content.
+    No summary wording changed, so no "At a glance" edits were needed.
+  - Validation: the native build and doc-example check passed, as did `zig fmt --check`,
+    `git diff --check`, and 50-repeat runs of both changed `type_name` hover cases. The website
+    parity and type-page checks passed. Local `zig build test -j1` did not finish: the sandboxed
+    attempt could not bind the HTTP test server, and a direct run outside the sandbox remained at
+    the conformance suite's HTTP cases until its 90-second timeout. Treat the full test gate as
+    unverified here; the catalog and golden-file tests are covered by the targeted LSP runs.
 
 ## Validation
 
@@ -406,8 +425,11 @@ Slices 1 to 5, on the pinned Zig 0.16.0 with `-j1`: Debug and ReleaseSafe `zig b
 build`, `tools/check-doc-examples.sh`, `zig fmt --check` on changed files, `git diff --check`, and
 the Windows and macOS cross-builds; plus the extension's integration suite (`npm run
 test:integration` in emerald-vscode), which drives a real VS Code against the built server. Slice
-2 onward also runs `conformance/lsp/`. Slice 6 runs the extension's `npm test`, `npm run package`,
-and the integration suite; slice 7 the website's page checks and build.
+2 onward also runs `conformance/lsp/`. Slices 2 to 6 also run
+`EMERALD_LANG=<checkout> python3 scripts/check-builtin-parity.py` from `emerald-website`, so
+catalog and prelude-page links stay valid as later editor work lands. Slice 6 runs the extension's
+`npm test`, `npm run package`, and the integration suite; slice 7 the website's page checks,
+builtin parity check, and build.
 
 ## Open questions
 

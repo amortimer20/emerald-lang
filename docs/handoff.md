@@ -192,8 +192,13 @@ expected edit for both file and untitled documents. The user reports seven succe
 Claude. emerald-vscode PR #3 (`597d066`) changes format-on-save to apply edits by document
 URI; its integration suite passed all 9 tests against this server after the merge. Slice 3
 is committed as `8fac992`, pushed, and CI run
-`37153243148` passed all seven jobs. Claude handles website parity slice 7; do not start slice 4
-until the user reviews these corrections and reports the website check.
+`37153243148` passed all seven jobs. Website parity slice 7 is now settled: the member parity
+check reports zero problems, and all 45 prelude type-page routes resolve. Slice 4 (signature help)
+is the next implementation slice, pending the user's review of these corrections. This correction
+passed the native build, documentation examples, formatting/whitespace checks, and 50-repeat runs
+of both changed hover cases. The full local test suite did not finish because its HTTP conformance
+server could not bind in the sandbox and the direct retry stalled at that suite for 90 seconds;
+Debug/ReleaseSafe test completion remains to be confirmed by CI.
 
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
 the others have a validated commit each, with reproductions in the journal). Concurrency is
