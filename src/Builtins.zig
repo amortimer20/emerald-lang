@@ -32,6 +32,10 @@ pub const Data = struct {
     version: u32,
     about: []const u8,
     type_pages: std.json.Value = .null,
+    /// Exceptions to a prelude member's website anchor being its name without
+    /// `?` or `!`, keyed `Type.member`: members documented inside a grouped
+    /// entry, an operator's entry, or under an id renamed to avoid a clash.
+    member_anchors: std.json.Value = .null,
     members: []const Member,
 };
 
@@ -61,6 +65,26 @@ pub fn pageForType(data: Data, name: []const u8) ?[]const u8 {
         } else null,
         else => null,
     };
+}
+
+/// The website anchor for a prelude type's member: its exception from
+/// `member_anchors` if it has one, otherwise its name without `?` or `!`.
+/// `key` is `Type.member`; the result borrows from `key` or the catalog.
+pub fn anchorForMember(data: Data, key: []const u8) []const u8 {
+    if (data.member_anchors == .object) {
+        if (data.member_anchors.object.get(key)) |value| if (value == .string) return value.string;
+    }
+    const name = key[(std.mem.lastIndexOfScalar(u8, key, '.') orelse return key) + 1 ..];
+    return std.mem.trimEnd(u8, name, "?!");
+}
+
+test "a member's anchor is its name unless member_anchors says otherwise" {
+    const catalog = try load(std.testing.allocator);
+    defer catalog.deinit();
+    try std.testing.expectEqualStrings("exists", anchorForMember(catalog.value, "File.exists?"));
+    try std.testing.expectEqualStrings("parts", anchorForMember(catalog.value, "Date.month"));
+    try std.testing.expectEqualStrings("null-1", anchorForMember(catalog.value, "Json.null?"));
+    try std.testing.expectEqualStrings("text", anchorForMember(catalog.value, "Regex.Match.start"));
 }
 
 pub fn sameOwner(left: ?[]const u8, right: ?[]const u8) bool {

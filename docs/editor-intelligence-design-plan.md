@@ -371,6 +371,15 @@ server's slices go to emerald-lang; slice 6 is in emerald-vscode; slice 7 is in 
     passed. After emerald-vscode PR #3 merged, `npm run test:integration` passed all 9 tests
     against this server. The correction was committed as `052ebda`, pushed, and CI run
     `37161858942` passed all seven jobs.
+  - Prelude member anchors (Claude, during slice 7): the website's parity check, extended to
+    the anchors hover generates for prelude members, found 61 that land on no `<Member>`
+    entry: members documented inside a grouped entry (Date's `year`, `month`, and `day` under
+    `#parts`), under an operator's entry (`Duration.add` under `#plus`), or under an id renamed
+    to avoid a clash (`Json.null?` is `#null-1`). `builtins.json` gained `member_anchors`,
+    exceptions keyed `Type.member`, and `Builtins.anchorForMember` applies them before the
+    name rule. The parity check fails on an anchor that does not exist and on an exception
+    that names no public prelude member, so a page regrouping its entries is caught. Added a
+    grouped-member hover case.
 
 ### Slice 4: Signature help
 

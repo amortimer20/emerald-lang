@@ -1026,6 +1026,14 @@ fn preludeLibraryLink(gpa: std.mem.Allocator, analysis: *const emerald.Analysis,
     return null;
 }
 
+/// A prelude member's website link; the website's parity check proves each
+/// anchor exists.
+fn memberLink(gpa: std.mem.Allocator, catalog: emerald.Builtins.Data, page: []const u8, type_name: []const u8, name: []const u8) ![]const u8 {
+    const key = try std.fmt.allocPrint(gpa, "{s}.{s}", .{ type_name, name });
+    defer gpa.free(key);
+    return try std.fmt.allocPrint(gpa, "https://emerald-lang.web.app/{s}#{s}", .{ page, emerald.Builtins.anchorForMember(catalog, key) });
+}
+
 fn preludeTypeLinkInDeclaration(
     gpa: std.mem.Allocator,
     declaration: Ast.StructDeclaration,
@@ -1047,20 +1055,16 @@ fn preludeTypeLinkInDeclaration(
     inline for (.{ declaration.methods, declaration.properties, declaration.fields }) |members| {
         for (members) |member| {
             if (member.name_span.start != target_start or page.len == 0) continue;
-            const name = member.name;
-            const anchor_name = if (name.len > 0 and (name[name.len - 1] == '?' or name[name.len - 1] == '!')) name[0 .. name.len - 1] else name;
-            return try std.fmt.allocPrint(gpa, "https://emerald-lang.web.app/{s}#{s}", .{ page, anchor_name });
+            return try memberLink(gpa, catalog, page, full_name, member.name);
         }
     }
     for (declaration.type_functions) |member| {
         if (member.member_span.start != target_start or page.len == 0) continue;
-        const name = member.member;
-        const anchor_name = if (name.len > 0 and (name[name.len - 1] == '?' or name[name.len - 1] == '!')) name[0 .. name.len - 1] else name;
-        return try std.fmt.allocPrint(gpa, "https://emerald-lang.web.app/{s}#{s}", .{ page, anchor_name });
+        return try memberLink(gpa, catalog, page, full_name, member.member);
     }
     for (declaration.type_fields) |member| {
         if (member.name_span.start != target_start or page.len == 0) continue;
-        return try std.fmt.allocPrint(gpa, "https://emerald-lang.web.app/{s}#{s}", .{ page, member.name });
+        return try memberLink(gpa, catalog, page, full_name, member.name);
     }
     for (declaration.types) |nested| {
         if (try preludeTypeLinkInDeclaration(gpa, nested.declaration, full_name, target_start, catalog)) |url| return url;
