@@ -5137,3 +5137,32 @@ whitespace, Windows/macOS cross-builds, the 9-test VS Code integration suite, an
 parity check passed; parity reported 249 members, 253 signatures, 26 pages, and zero problems.
 Commit `832280c` was pushed to `codex/editor-intelligence`; CI run `37176337549` passed all seven
 jobs, including Debug and ReleaseSafe on Ubuntu, macOS, and Windows.
+
+## 2026-10-04: Editor intelligence slice 5 — quick fixes
+
+Added `textDocument/codeAction` for existing exact name corrections. The checker attaches a
+replacement span and text to its catalog-validated member-synonym diagnostics, while the
+resolver supplies the existing `this` → `self` edit. Neither diagnostic prose nor language
+behavior changed. Indexing guidance and changes between method and property syntax remain
+hints because substituting the name alone would not implement the correction.
+
+Published diagnostics carry structured `data` with the edit, original text, and document
+revision. Code actions read that data without another analysis and validate the revision,
+UTF-16 coordinates, original text, requested range, and kind filter. The revision prevents
+a stale suggestion from applying even when the token still occupies its original position.
+The response uses ordinary `quickfix` workspace edits and includes the originating diagnostic.
+
+Thirteen new protocol cases forward the real server's didOpen diagnostics. They cover List,
+String, Dict, Set, Int, and Float synonyms; the name correction; Unicode positions; a request
+selecting only one of two diagnostics; and hints without an applicable edit. Workspace-edit
+URIs are normalized only in test expectations. Allocator-backed tests apply each correction
+and check the resulting program, change message prose independently of its data, and exercise
+stale, malformed, missing, and filtered metadata. Every new expected file was read by hand.
+
+The first sandboxed test command was denied a loopback socket for the existing HTTP tests;
+the full gates completed outside that restriction. On pinned Zig 0.16.0, Debug and ReleaseSafe
+each passed 561/561 tests. The native build, documentation check (24 examples executed and 135
+conformance links), changed-Zig formatting, whitespace checks, and Windows/macOS cross-builds
+outside zig-out passed. All 85 standalone LSP cases returned identical replies 50 times each,
+and the VS Code integration suite passed all nine tests against this server. Website parity
+reported 249 members, 253 signatures, 26 pages, and zero problems. Commit and branch CI follow.

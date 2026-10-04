@@ -82,7 +82,28 @@ const Resolver = emerald.Resolver;
 const Position = struct { line: u32, character: u32 };
 const Range = struct { start: Position, end: Position };
 const Location = struct { uri: []const u8, range: Range };
-const LspDiagnostic = struct { range: Range, severity: u32, message: []const u8 };
+const DiagnosticData = struct { replacement: TextEdit, oldText: []const u8, revision: u64 };
+const LspDiagnostic = struct {
+    range: Range,
+    severity: u32,
+    message: []const u8,
+    data: ?DiagnosticData = null,
+
+    pub fn jsonStringify(self: LspDiagnostic, json: *std.json.Stringify) !void {
+        try json.beginObject();
+        try json.objectField("range");
+        try json.write(self.range);
+        try json.objectField("severity");
+        try json.write(self.severity);
+        try json.objectField("message");
+        try json.write(self.message);
+        if (self.data) |data| {
+            try json.objectField("data");
+            try json.write(data);
+        }
+        try json.endObject();
+    }
+};
 const DocumentSymbol = struct {
     name: []const u8,
     kind: u32,
@@ -169,6 +190,7 @@ fn offsetFromPosition(source: *const Source, position: Position) u32 {
 
 const Document = struct {
     text: std.ArrayList(u8) = .empty,
+    revision: u64 = 0,
 
     fn deinit(self: *Document, gpa: std.mem.Allocator) void {
         self.text.deinit(gpa);
@@ -184,6 +206,7 @@ const Server = struct {
     io: std.Io,
     documents: std.StringHashMapUnmanaged(Document) = .empty,
     builtins: ?emerald.Builtins.Catalog = null,
+    revision: u64 = 0,
 
     fn deinit(self: *Server) void {
         if (self.builtins) |catalog| catalog.deinit();
@@ -208,6 +231,8 @@ const Server = struct {
             gop.value_ptr.text.clearRetainingCapacity();
         }
         try gop.value_ptr.text.appendSlice(self.gpa, text);
+        self.revision += 1;
+        gop.value_ptr.revision = self.revision;
     }
 
     fn forget(self: *Server, uri: []const u8) void {
@@ -347,7 +372,10 @@ fn pathToUri(gpa: std.mem.Allocator, path: []const u8) ![]u8 {
 pub fn run(gpa: std.mem.Allocator, io: std.Io, in: *std.Io.Reader, out: *std.Io.Writer) !void {
     var server: Server = .{ .gpa = gpa, .io = io, .builtins = try emerald.Builtins.load(gpa) };
     defer server.deinit();
+    try runMessages(&server, gpa, in, out);
+}
 
+fn runMessages(server: *Server, gpa: std.mem.Allocator, in: *std.Io.Reader, out: *std.Io.Writer) !void {
     while (true) {
         var parsed = readMessage(gpa, in) catch |err| switch (err) {
             // The body was read in full regardless, so the stream is still
@@ -359,7 +387,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, in: *std.Io.Reader, out: *std.Io.
         } orelse break;
         defer parsed.deinit();
 
-        const should_exit = handle(&server, gpa, parsed.value, out) catch |err| switch (err) {
+        const should_exit = handle(server, gpa, parsed.value, out) catch |err| switch (err) {
             error.OutOfMemory, error.WriteFailed => |e| return e,
             // A malformed or unexpected message is not fatal to the session;
             // whatever request it was simply goes unanswered.
@@ -370,8 +398,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, in: *std.Io.Reader, out: *std.Io.
 }
 
 /// Backend-neutral protocol cases use the real framed-message server, not
-/// completion helpers. Only the selected request's reply enters its golden;
-/// didOpen diagnostics belong to the diagnostics suite.
+/// completion helpers. Code actions forward the server's own didOpen diagnostics.
 pub fn conformanceReply(gpa: std.mem.Allocator, io: std.Io, path: []const u8, marked: []const u8, method: []const u8) ![]u8 {
     const marker = "/*cursor*/";
     const at = std.mem.indexOf(u8, marked, marker) orelse return error.MissingCursorMarker;
@@ -392,19 +419,41 @@ pub fn conformanceReply(gpa: std.mem.Allocator, io: std.Io, path: []const u8, ma
     try writeMessage(gpa, &requests.writer, .{ .jsonrpc = "2.0", .method = "textDocument/didOpen", .params = .{
         .textDocument = .{ .uri = uri, .languageId = "emerald", .version = 1, .text = text.items },
     } });
-    try writeMessage(gpa, &requests.writer, .{ .jsonrpc = "2.0", .id = 1, .method = method, .params = .{
-        .textDocument = .{ .uri = uri },
-        .position = lspPosition(&source, @intCast(at)),
-    } });
     var reader: std.Io.Reader = .fixed(requests.written());
     var responses: std.Io.Writer.Allocating = .init(gpa);
     defer responses.deinit();
-    try run(gpa, io, &reader, &responses.writer);
+    var server: Server = .{ .gpa = gpa, .io = io, .builtins = try emerald.Builtins.load(gpa) };
+    defer server.deinit();
+    try runMessages(&server, gpa, &reader, &responses.writer);
     reader = .fixed(responses.written());
-    while (try readMessage(gpa, &reader)) |parsed| {
+    var initialized = (try readMessage(gpa, &reader)).?;
+    defer initialized.deinit();
+    var published = (try readMessage(gpa, &reader)).?;
+    defer published.deinit();
+    requests.clearRetainingCapacity();
+    const position = lspPosition(&source, @intCast(at));
+    if (std.mem.eql(u8, method, "textDocument/codeAction")) {
+        try writeMessage(gpa, &requests.writer, .{ .jsonrpc = "2.0", .id = 1, .method = method, .params = .{
+            .textDocument = .{ .uri = uri },
+            .range = Range{ .start = position, .end = position },
+            .context = .{ .diagnostics = published.value.object.get("params").?.object.get("diagnostics").? },
+        } });
+    } else {
+        try writeMessage(gpa, &requests.writer, .{ .jsonrpc = "2.0", .id = 1, .method = method, .params = .{
+            .textDocument = .{ .uri = uri },
+            .position = position,
+        } });
+    }
+    responses.clearRetainingCapacity();
+    reader = .fixed(requests.written());
+    try runMessages(&server, gpa, &reader, &responses.writer);
+    reader = .fixed(responses.written());
+    while (try readMessage(gpa, &reader)) |value| {
+        var parsed = value;
         defer parsed.deinit();
         const id = parsed.value.object.get("id") orelse continue;
         if (id != .integer or id.integer != 1) continue;
+        normalizeConformanceUri(&parsed.value, uri);
         var answer: std.Io.Writer.Allocating = .init(gpa);
         errdefer answer.deinit();
         var json: std.json.Stringify = .{ .writer = &answer.writer, .options = .{ .whitespace = .indent_2 } };
@@ -413,6 +462,21 @@ pub fn conformanceReply(gpa: std.mem.Allocator, io: std.Io, path: []const u8, ma
         return try answer.toOwnedSlice();
     }
     return error.MissingRequestReply;
+}
+
+/// Workspace edits include absolute document URIs. Normalize only this case's
+/// URI so protocol expectations remain portable across machines and platforms.
+fn normalizeConformanceUri(value: *std.json.Value, uri: []const u8) void {
+    switch (value.*) {
+        .string => |text| if (std.mem.eql(u8, text, uri)) {
+            value.* = .{ .string = "file:///document.em" };
+        },
+        .array => |*array| for (array.items) |*item| normalizeConformanceUri(item, uri),
+        .object => |*object| {
+            for (object.values()) |*item| normalizeConformanceUri(item, uri);
+        },
+        else => {},
+    }
 }
 
 // Transport.
@@ -515,6 +579,7 @@ fn handle(server: *Server, gpa: std.mem.Allocator, message: std.json.Value, out:
                 .renameProvider = .{ .prepareProvider = true },
                 .completionProvider = .{ .triggerCharacters = &[_][]const u8{"."} },
                 .signatureHelpProvider = .{ .triggerCharacters = &[_][]const u8{ "(", "," } },
+                .codeActionProvider = .{ .codeActionKinds = &[_][]const u8{"quickfix"} },
             },
         });
         return false;
@@ -620,6 +685,12 @@ fn handle(server: *Server, gpa: std.mem.Allocator, message: std.json.Value, out:
         if (id) |request_id| try onSignatureHelp(server, gpa, uri, position, request_id, out);
         return false;
     }
+    if (std.mem.eql(u8, method, "textDocument/codeAction")) {
+        const text_document = try objectField(params, "textDocument");
+        const uri = try stringField(text_document, "uri");
+        if (id) |request_id| try onCodeAction(server, gpa, uri, params.?, request_id, out);
+        return false;
+    }
 
     // Anything else, and `$/cancelRequest`: a well-formed "not found" for a
     // request, silently ignored for a notification — never a crash or a
@@ -704,12 +775,230 @@ fn publishDiagnostics(server: *Server, gpa: std.mem.Allocator, uri: []const u8, 
             // LSP's `DiagnosticSeverity`: 1 is Error, 2 is Warning.
             .severity = if (diagnostic.severity == .warning) 2 else 1,
             .message = diagnostic.message,
+            .data = if (diagnostic.replacement) |replacement| .{
+                .replacement = .{ .range = lspRange(source, replacement.span), .newText = replacement.text },
+                .oldText = source.text[replacement.span.start..replacement.span.end],
+                .revision = document.revision,
+            } else null,
         });
     }
     try notify(gpa, out, "textDocument/publishDiagnostics", .{
         .uri = uri,
         .diagnostics = diagnostics.items,
     });
+}
+
+// Quick fixes.
+
+const DocumentEdit = struct {
+    textDocument: struct { uri: []const u8, version: ?i64 = null },
+    edits: []const TextEdit,
+};
+const CodeAction = struct {
+    title: []const u8,
+    kind: []const u8 = "quickfix",
+    diagnostics: []const std.json.Value,
+    isPreferred: bool = true,
+    edit: struct { documentChanges: []const DocumentEdit },
+};
+
+fn rangeField(container: std.json.Value, name: []const u8) !Range {
+    const range = try objectField(container, name);
+    return .{
+        .start = try positionFieldNamed(range, "start"),
+        .end = try positionFieldNamed(range, "end"),
+    };
+}
+
+fn positionFieldNamed(container: std.json.Value, name: []const u8) !Position {
+    const position = try objectField(container, name);
+    return .{
+        .line = std.math.cast(u32, try intField(position, "line")) orelse return error.InvalidParams,
+        .character = std.math.cast(u32, try intField(position, "character")) orelse return error.InvalidParams,
+    };
+}
+
+fn positionsEqual(a: Position, b: Position) bool {
+    return a.line == b.line and a.character == b.character;
+}
+
+/// A diagnostic may have been published before the latest keystroke. Require
+/// an exact UTF-16 range and unchanged original text before returning its edit.
+fn exactRange(source: *const Source, range: Range) ?Source.Span {
+    if (range.start.line >= source.line_starts.len or range.end.line >= source.line_starts.len) return null;
+    const start = offsetFromPosition(source, range.start);
+    const end = offsetFromPosition(source, range.end);
+    if (start > end or !positionsEqual(range.start, lspPosition(source, start)) or
+        !positionsEqual(range.end, lspPosition(source, end))) return null;
+    return .{ .start = start, .end = end };
+}
+
+fn onCodeAction(server: *Server, gpa: std.mem.Allocator, uri: []const u8, params: std.json.Value, id: std.json.Value, out: *std.Io.Writer) !void {
+    const document = server.documents.get(uri) orelse {
+        try respond(gpa, out, id, @as([]const CodeAction, &.{}));
+        return;
+    };
+    const context = try objectField(params, "context");
+    if (context.object.get("only")) |only| {
+        if (only != .array) return error.InvalidParams;
+        var includes_quickfix = false;
+        for (only.array.items) |kind| {
+            if (kind == .string and (kind.string.len == 0 or std.mem.eql(u8, kind.string, "quickfix"))) includes_quickfix = true;
+        }
+        if (!includes_quickfix) {
+            try respond(gpa, out, id, @as([]const CodeAction, &.{}));
+            return;
+        }
+    }
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const source = try Source.init(arena, uri, document.text.items);
+    const requested = exactRange(&source, try rangeField(params, "range")) orelse {
+        try respond(gpa, out, id, @as([]const CodeAction, &.{}));
+        return;
+    };
+    var actions: std.ArrayList(CodeAction) = .empty;
+    for ((try arrayField(context, "diagnostics")).items) |diagnostic| {
+        const data = objectField(diagnostic, "data") catch continue;
+        const revision = std.math.cast(u64, intField(data, "revision") catch continue) orelse continue;
+        if (revision != document.revision) continue;
+        const replacement = objectField(data, "replacement") catch continue;
+        const range = rangeField(replacement, "range") catch continue;
+        const span = exactRange(&source, range) orelse continue;
+        const old_text = stringField(data, "oldText") catch continue;
+        const new_text = stringField(replacement, "newText") catch continue;
+        if (span.start == span.end or !std.mem.eql(u8, source.text[span.start..span.end], old_text)) continue;
+        const overlaps = if (requested.start == requested.end)
+            requested.start >= span.start and requested.start <= span.end
+        else
+            requested.start < span.end and span.start < requested.end;
+        if (!overlaps) continue;
+        const edits = try arena.dupe(TextEdit, &.{.{ .range = range, .newText = new_text }});
+        try actions.append(arena, .{
+            .title = try std.fmt.allocPrint(arena, "Replace with `{s}`", .{new_text}),
+            .diagnostics = try arena.dupe(std.json.Value, &.{diagnostic}),
+            .edit = .{ .documentChanges = try arena.dupe(DocumentEdit, &.{.{
+                .textDocument = .{ .uri = uri },
+                .edits = edits,
+            }}) },
+        });
+    }
+    try respond(gpa, out, id, actions.items);
+}
+
+test "compiler quick fixes produce programs that check, including UTF-16 and name edits" {
+    const gpa = testing.allocator;
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const directory = try std.Io.Dir.cwd().realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(directory);
+    const path = try std.fs.path.join(gpa, &.{ directory, "quickfix-test.em" });
+    defer gpa.free(path);
+    const examples = [_][]const u8{
+        "var xs = [1, 2]\nxs./*cursor*/push(3)\n",
+        "print(\"hello\"./*cursor*/length)\n",
+        "print(\"hello\"./*cursor*/uppercase())\n",
+        "var xs = [1, 2].to_set()\nxs./*cursor*/insert(3)\n",
+        "const xs = [\"key\": 1]\nprint(xs./*cursor*/has_key?(\"key\"))\n",
+        "const n = 2\nprint(n./*cursor*/is_even())\n",
+        "const n = 2.0\nprint(n./*cursor*/is_finite())\n",
+        "var xs = [1, 2]\nprint(\"😀\", xs./*cursor*/push(3))\n",
+        "class Score {\n    const value: Int\n    func show() {\n        print(/*cursor*/this.value)\n    }\n}\nScore(3).show()\n",
+    };
+    for (examples) |marked| {
+        const reply = try conformanceReply(gpa, io, path, marked, "textDocument/codeAction");
+        defer gpa.free(reply);
+        const parsed = try std.json.parseFromSlice(std.json.Value, gpa, reply, .{});
+        defer parsed.deinit();
+        const actions = parsed.value.object.get("result").?.array.items;
+        try testing.expectEqual(@as(usize, 1), actions.len);
+        const document_edit = actions[0].object.get("edit").?.object.get("documentChanges").?.array.items[0];
+        const edit = document_edit.object.get("edits").?.array.items[0];
+        const cursor = std.mem.indexOf(u8, marked, "/*cursor*/").?;
+        const text = try std.mem.concat(gpa, u8, &.{ marked[0..cursor], marked[cursor + "/*cursor*/".len ..] });
+        defer gpa.free(text);
+        var source = try Source.init(gpa, "quickfix-test.em", text);
+        defer source.deinit(gpa);
+        const span = exactRange(&source, try rangeField(edit, "range")).?;
+        const fixed = try std.mem.concat(gpa, u8, &.{ text[0..span.start], try stringField(edit, "newText"), text[span.end..] });
+        defer gpa.free(fixed);
+        var fixed_source = try Source.init(gpa, "quickfix-test.em", fixed);
+        defer fixed_source.deinit(gpa);
+        var report = try emerald.check(gpa, &fixed_source);
+        defer report.deinit();
+        try testing.expect(!emerald.Diagnostic.anyErrors(report.diagnostics));
+    }
+}
+
+fn testCodeAction(server: *Server, uri: []const u8, diagnostics: std.json.Value, range: Range, only: []const []const u8) !std.json.Parsed(std.json.Value) {
+    const gpa = testing.allocator;
+    const encoded = try std.json.Stringify.valueAlloc(gpa, .{
+        .range = range,
+        .context = .{ .diagnostics = diagnostics, .only = only },
+    }, .{});
+    defer gpa.free(encoded);
+    const params = try std.json.parseFromSlice(std.json.Value, gpa, encoded, .{});
+    defer params.deinit();
+    var output: std.Io.Writer.Allocating = .init(gpa);
+    defer output.deinit();
+    try onCodeAction(server, gpa, uri, params.value, .{ .integer = 1 }, &output.writer);
+    var reader: std.Io.Reader = .fixed(output.written());
+    return (try readMessage(gpa, &reader)).?;
+}
+
+test "code actions use structured data and reject stale, unrelated, or malformed edits" {
+    const gpa = testing.allocator;
+    const uri = "untitled:quickfix.em";
+    const text = "var xs = [1]\nxs.push(2)\n";
+    var server: Server = .{ .gpa = gpa, .io = std.Io.Threaded.global_single_threaded.io() };
+    defer server.deinit();
+    try server.store(uri, text);
+    var output: std.Io.Writer.Allocating = .init(gpa);
+    defer output.deinit();
+    try publishDiagnostics(&server, gpa, uri, &output.writer);
+    var reader: std.Io.Reader = .fixed(output.written());
+    var published = (try readMessage(gpa, &reader)).?;
+    defer published.deinit();
+    const diagnostics = published.value.object.get("params").?.object.get("diagnostics").?;
+    const diagnostic = &diagnostics.array.items[0];
+    diagnostic.object.getPtr("message").?.* = .{ .string = "opaque prose with no suggested name" };
+    const range: Range = .{ .start = .{ .line = 1, .character = 3 }, .end = .{ .line = 1, .character = 3 } };
+    var accepted = try testCodeAction(&server, uri, diagnostics, range, &.{"quickfix"});
+    defer accepted.deinit();
+    try testing.expectEqualStrings("Replace with `append`", accepted.value.object.get("result").?.array.items[0].object.get("title").?.string);
+
+    var unrelated = try testCodeAction(&server, uri, diagnostics, .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 0, .character = 3 } }, &.{"quickfix"});
+    defer unrelated.deinit();
+    try testing.expectEqual(@as(usize, 0), unrelated.value.object.get("result").?.array.items.len);
+    var filtered = try testCodeAction(&server, uri, diagnostics, range, &.{"refactor"});
+    defer filtered.deinit();
+    try testing.expectEqual(@as(usize, 0), filtered.value.object.get("result").?.array.items.len);
+
+    try server.store(uri, "var xs = [1]\nxs.pull(2)\n");
+    var stale = try testCodeAction(&server, uri, diagnostics, range, &.{"quickfix"});
+    defer stale.deinit();
+    try testing.expectEqual(@as(usize, 0), stale.value.object.get("result").?.array.items.len);
+    try server.store(uri, text);
+    var unchanged_token = try testCodeAction(&server, uri, diagnostics, range, &.{"quickfix"});
+    defer unchanged_token.deinit();
+    try testing.expectEqual(@as(usize, 0), unchanged_token.value.object.get("result").?.array.items.len);
+    const data = diagnostic.object.getPtr("data").?;
+    data.object.getPtr("revision").?.* = .{ .integer = @intCast(server.documents.get(uri).?.revision) };
+    data.object.getPtr("oldText").?.* = .{ .string = "pull" };
+    var wrong_text = try testCodeAction(&server, uri, diagnostics, range, &.{"quickfix"});
+    defer wrong_text.deinit();
+    try testing.expectEqual(@as(usize, 0), wrong_text.value.object.get("result").?.array.items.len);
+    data.object.getPtr("oldText").?.* = .{ .string = "push" };
+    const replacement = data.object.getPtr("replacement").?;
+    const end = replacement.object.getPtr("range").?.object.getPtr("end").?;
+    end.object.getPtr("character").?.* = .{ .integer = 999 };
+    var malformed = try testCodeAction(&server, uri, diagnostics, range, &.{"quickfix"});
+    defer malformed.deinit();
+    try testing.expectEqual(@as(usize, 0), malformed.value.object.get("result").?.array.items.len);
+    _ = diagnostic.object.swapRemove("data");
+    var without_data = try testCodeAction(&server, uri, diagnostics, range, &.{"quickfix"});
+    defer without_data.deinit();
+    try testing.expectEqual(@as(usize, 0), without_data.value.object.get("result").?.array.items.len);
 }
 
 // Document symbols.

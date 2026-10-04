@@ -1,0 +1,69 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "title": "Replace with `self`",
+      "kind": "quickfix",
+      "diagnostics": [
+        {
+          "range": {
+            "start": {
+              "line": 4,
+              "character": 14
+            },
+            "end": {
+              "line": 4,
+              "character": 18
+            }
+          },
+          "severity": 1,
+          "message": "Emerald calls the current value `self`",
+          "data": {
+            "replacement": {
+              "range": {
+                "start": {
+                  "line": 4,
+                  "character": 14
+                },
+                "end": {
+                  "line": 4,
+                  "character": 18
+                }
+              },
+              "newText": "self"
+            },
+            "oldText": "this",
+            "revision": 1
+          }
+        }
+      ],
+      "isPreferred": true,
+      "edit": {
+        "documentChanges": [
+          {
+            "textDocument": {
+              "uri": "file:///document.em",
+              "version": null
+            },
+            "edits": [
+              {
+                "range": {
+                  "start": {
+                    "line": 4,
+                    "character": 14
+                  },
+                  "end": {
+                    "line": 4,
+                    "character": 18
+                  }
+                },
+                "newText": "self"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -3744,6 +3744,12 @@ Signature help is also available while entering calls: it shows native and decla
 parameters, defaults, and the active parameter (including named arguments), for functions,
 methods, and constructors.
 
+Quick fixes are available when a diagnostic carries one exact name replacement, such as
+`push` → `append` or `this` → `self`. The compiler supplies the source edit as structured
+diagnostic data; the editor never derives a replacement from message text. Advice requiring
+more than a name change remains a hint. A fix is offered only for the current document
+revision and a diagnostic in the requested range.
+
 Inferred-type hover needed two things the first slice's file-scoped features never did:
 `Checker.zig`'s `expression_types` (every expression's type, by expression — `analyzeProject`
 in `src/emerald.zig` exposes checking's full detail without executing anything) and a
@@ -3767,9 +3773,7 @@ for every caller. Completion covers a value's own members, a type-qualified base
 members (10.4), namespace-level members, and bare identifiers. Native built-in type and
 namespace members remain shallow; the handoff records that editor limitation precisely.
 
-Quick fixes correspond to known diagnostics and deterministic edits, and are not yet
-implemented. The official VS Code extension comes first, while the server remains
-editor-independent.
+The official VS Code extension comes first, while the server remains editor-independent.
 
 ### 18.6 Debugging
 

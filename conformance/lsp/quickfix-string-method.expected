@@ -1,0 +1,69 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "title": "Replace with `upper`",
+      "kind": "quickfix",
+      "diagnostics": [
+        {
+          "range": {
+            "start": {
+              "line": 0,
+              "character": 14
+            },
+            "end": {
+              "line": 0,
+              "character": 23
+            }
+          },
+          "severity": 1,
+          "message": "String has no method `uppercase`",
+          "data": {
+            "replacement": {
+              "range": {
+                "start": {
+                  "line": 0,
+                  "character": 14
+                },
+                "end": {
+                  "line": 0,
+                  "character": 23
+                }
+              },
+              "newText": "upper"
+            },
+            "oldText": "uppercase",
+            "revision": 1
+          }
+        }
+      ],
+      "isPreferred": true,
+      "edit": {
+        "documentChanges": [
+          {
+            "textDocument": {
+              "uri": "file:///document.em",
+              "version": null
+            },
+            "edits": [
+              {
+                "range": {
+                  "start": {
+                    "line": 0,
+                    "character": 14
+                  },
+                  "end": {
+                    "line": 0,
+                    "character": 23
+                  }
+                },
+                "newText": "upper"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

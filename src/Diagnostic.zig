@@ -140,6 +140,13 @@ pub const Explanation = struct {
     correction: []const u8,
 };
 
+/// One exact source edit supplied by the compiler, independently of the
+/// learner-facing message and help. Consumers must not derive edits from prose.
+pub const Replacement = struct {
+    span: Source.Span,
+    text: []const u8,
+};
+
 /// What is wrong, in the user's vocabulary. Never names an implementation detail.
 message: []const u8,
 /// The source range to underline.
@@ -149,6 +156,7 @@ help: []const u8,
 severity: Severity = .err,
 /// Present only when code has a curated command-line explanation.
 code: ?Code = null,
+replacement: ?Replacement = null,
 /// The calls active when a runtime error was raised, innermost first. Empty for
 /// every diagnostic reported before a program runs.
 trace: []const Frame = &.{},

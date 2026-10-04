@@ -414,7 +414,34 @@ server's slices go to emerald-lang; slice 6 is in emerald-vscode; slice 7 is in 
 
 - `textDocument/codeAction` for diagnostics that suggest one exact replacement (decision 8). The
   diagnostic carries the replacement as data, so the editor never parses message text.
-- Settled while building: (record here)
+- Settled while building (2026-10-04):
+  - Added one optional exact replacement (source span and text) to a compiler diagnostic.
+    Existing catalog-validated member synonyms supply it when renaming preserves the
+    property's or method's form; the resolver's existing `this` → `self` correction
+    supplies a name edit too. No new typo heuristic or diagnostic wording was introduced.
+    Unknown names with no exact candidate, indexing hints, and method/property shape
+    changes remain help-only: renaming `length()` to `count()` would still be invalid.
+  - Published diagnostics carry the edit in `data`, with the original text and a server
+    document revision. `textDocument/codeAction` consumes only that structured data, checks
+    the revision, exact UTF-16 range, original text, requested range, and `context.only`,
+    and returns `quickfix` workspace edits. It performs no new analysis. Revision checks
+    reject a stale edit even if the old token is still at the same position.
+    Each action is titled `Replace with` followed by the corrected name, marked preferred
+    because the diagnostic supplies one candidate, and carries an ordinary `documentChanges`
+    edit rather than a command or a separate code-action resolution step.
+  - Protocol fixtures forward the real didOpen diagnostics to codeAction on the same
+    framed server session. The edited document URI is normalized in expectations to
+    `file:///document.em` so the tests are portable. Thirteen cases cover all six synonym
+    owners, a name correction, Unicode positions, request-range filtering, and help-only
+    diagnostics. Allocator-backed tests apply the fixes and check the resulting programs;
+    separate tests change diagnostic prose and verify stale/malformed/filtered data handling.
+  - The full local gate passed on pinned Zig 0.16.0: Debug and ReleaseSafe tests
+    (561/561 each), native build, documentation examples (24 executed, 135 conformance
+    links), changed-Zig formatting, whitespace checks, and Windows/macOS cross-builds
+    outside zig-out. All 85 LSP protocol cases returned identical replies 50 times each;
+    the VS Code integration suite passed all nine tests against the built server.
+    Website parity reported 249 members, 253 signatures, 26 pages, and zero problems.
+    Branch CI is pending the slice commit and push.
 
 ### Slice 6: The extension (emerald-vscode)
 

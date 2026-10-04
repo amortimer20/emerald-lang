@@ -37,13 +37,18 @@ def run_case(binary, case, repetitions, show):
             "textDocument": {"uri": case.resolve().as_uri(), "languageId": "emerald",
                              "version": 1, "text": text}
         }})
-        receive(process)
+        published = receive(process)
         rendered = ""
         for index in range(repetitions):
-            send(process, {"jsonrpc": "2.0", "id": 1, "method": method, "params": {
-                "textDocument": {"uri": case.resolve().as_uri()}, "position": position
-            }})
+            params = {"textDocument": {"uri": case.resolve().as_uri()}}
+            if method == "textDocument/codeAction":
+                params.update(range={"start": position, "end": position},
+                              context={"diagnostics": published["params"]["diagnostics"]})
+            else:
+                params["position"] = position
+            send(process, {"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
             reply = receive(process)
+            normalize_uri(reply, case.resolve().as_uri())
             rendered = json.dumps(reply, ensure_ascii=False, indent=2) + "\n"
             if not show and rendered != expected.read_text():
                 raise RuntimeError(f"{case}, execution {index + 1}: reply differs from {expected}\n{rendered}")
@@ -54,6 +59,18 @@ def run_case(binary, case, repetitions, show):
     finally:
         process.stdin.close()
         process.wait(timeout=10)
+
+
+def normalize_uri(value, uri):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if item == uri:
+                value[key] = "file:///document.em"
+            else:
+                normalize_uri(item, uri)
+    elif isinstance(value, list):
+        for item in value:
+            normalize_uri(item, uri)
 
 
 def main():

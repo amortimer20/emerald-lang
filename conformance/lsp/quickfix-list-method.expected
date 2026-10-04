@@ -1,0 +1,69 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "title": "Replace with `append`",
+      "kind": "quickfix",
+      "diagnostics": [
+        {
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 6
+            },
+            "end": {
+              "line": 1,
+              "character": 10
+            }
+          },
+          "severity": 1,
+          "message": "List[Int] has no method `push`",
+          "data": {
+            "replacement": {
+              "range": {
+                "start": {
+                  "line": 1,
+                  "character": 6
+                },
+                "end": {
+                  "line": 1,
+                  "character": 10
+                }
+              },
+              "newText": "append"
+            },
+            "oldText": "push",
+            "revision": 1
+          }
+        }
+      ],
+      "isPreferred": true,
+      "edit": {
+        "documentChanges": [
+          {
+            "textDocument": {
+              "uri": "file:///document.em",
+              "version": null
+            },
+            "edits": [
+              {
+                "range": {
+                  "start": {
+                    "line": 1,
+                    "character": 6
+                  },
+                  "end": {
+                    "line": 1,
+                    "character": 10
+                  }
+                },
+                "newText": "append"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

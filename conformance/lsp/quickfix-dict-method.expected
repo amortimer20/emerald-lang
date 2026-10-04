@@ -1,0 +1,69 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "title": "Replace with `contains_key?`",
+      "kind": "quickfix",
+      "diagnostics": [
+        {
+          "range": {
+            "start": {
+              "line": 1,
+              "character": 13
+            },
+            "end": {
+              "line": 1,
+              "character": 21
+            }
+          },
+          "severity": 1,
+          "message": "Dict[String, Int] has no method `has_key?`",
+          "data": {
+            "replacement": {
+              "range": {
+                "start": {
+                  "line": 1,
+                  "character": 13
+                },
+                "end": {
+                  "line": 1,
+                  "character": 21
+                }
+              },
+              "newText": "contains_key?"
+            },
+            "oldText": "has_key?",
+            "revision": 1
+          }
+        }
+      ],
+      "isPreferred": true,
+      "edit": {
+        "documentChanges": [
+          {
+            "textDocument": {
+              "uri": "file:///document.em",
+              "version": null
+            },
+            "edits": [
+              {
+                "range": {
+                  "start": {
+                    "line": 1,
+                    "character": 13
+                  },
+                  "end": {
+                    "line": 1,
+                    "character": 21
+                  }
+                },
+                "newText": "contains_key?"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

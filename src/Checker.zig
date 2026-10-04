@@ -9001,7 +9001,7 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
     else
         null;
     if (suggestion) |name| {
-        return self.reportWithHelpCoded(
+        try self.reportWithHelpCoded(
             member.name_span,
             .unknown_member,
             "{f} has no " ++ what ++ " `{s}`",
@@ -9009,6 +9009,20 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
             "Emerald calls this `{s}`.",
             .{name},
         );
+        // Renaming alone must preserve whether this is a property or a call.
+        // Indexing hints and changes such as length() -> count need structural
+        // edits; this slice offers only exact name replacements.
+        const owner = instanceCatalogOwner(base) orelse return;
+        const target = Builtins.find(try self.catalog(), owner, name) orelse return;
+        if ((std.mem.eql(u8, what, "method") and target.kind == .method) or
+            (std.mem.eql(u8, what, "property") and target.kind == .property))
+        {
+            self.diagnostics.items[self.diagnostics.items.len - 1].replacement = .{
+                .span = member.name_span,
+                .text = name,
+            };
+        }
+        return;
     }
     try self.reportCoded(
         member.name_span,

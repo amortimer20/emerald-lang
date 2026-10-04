@@ -38,8 +38,11 @@ is meaningful; `.gitattributes` exempts only these golden files from trailing-sp
 LSP documents mark one request position with `/*cursor*/`, which is removed before
 `didOpen`. The server receives real framed `initialize`, `didOpen`, and request messages.
 The request is `textDocument/completion` unless a `.request` file names another method.
-Its full reply is pretty-printed JSON in `.expected`; incidental didOpen diagnostics
-are not part of that reply. A directory with `main.em` is a project case, as above.
+For `textDocument/codeAction`, the request forwards the actual didOpen diagnostics
+in its context and uses an empty range at the marker. Its full reply is pretty-printed
+JSON in `.expected`; incidental didOpen diagnostics are not otherwise part of that reply.
+The case's absolute URI in workspace edits is normalized to `file:///document.em`.
+A directory with `main.em` is a project case, as above.
 Every case runs 50 consecutive times, including under CI's testing allocator.
 
 Cases run in sorted order, and every case runs even after one fails, so a single run
