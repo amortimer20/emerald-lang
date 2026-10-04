@@ -390,8 +390,11 @@ compiler), or the compiler depends on it.
    QA checklist for 0.7.0 (tick each as it lands; built from what changed since 0.6.0):
 
    *Automated sweeps.*
-   - [ ] A1 (Claude) Run every website example against a 0.7.0 build: `check-outputs.py` and
-     `check-examples.py` over all pages, and `tools/check-doc-examples.sh`.
+   - [x] A1 (Claude, 2026-10-04) Run every website example against a 0.7.0 build: `check-outputs.py`
+     and `check-examples.py` over all pages, and `tools/check-doc-examples.sh`. Result: 429
+     examples with output on 70 pages, 13 pages of `# →` results, and 159 linked files all match.
+     Two interactive examples (`loops`, `optionals`) had no typed answers on their fences, so the
+     checker could not confirm them; they now carry `input="…"` (website `d4247d2`).
    - [ ] A2 (Codex) Editor crash sweep: send hover, completion, and signature help at every
      position of every file in `examples/`; fail on a crash, a hang, or a reply over about 100 ms.
    - [ ] A3 (Codex) A longer fuzz campaign (about a million inputs; CI runs a bounded one).
