@@ -256,7 +256,10 @@ const Printer = struct {
                 .blank_line => pending_blank = true,
                 .line_comment, .doc_comment, .block_comment => {
                     if (pending_blank) {
-                        try self.write("\n");
+                        // Leading blank lines are discarded, including before comments.
+                        // Otherwise two leading newlines become one on the first pass
+                        // and disappear only on the second, breaking idempotence.
+                        if (self.out.items.len > 0) try self.write("\n");
                         pending_blank = false;
                     }
                     try self.writeIndent();
@@ -1448,6 +1451,12 @@ test "a comment on the same line as a statement stays there" {
         "print(1) # explains itself\nprint(2)\n",
         "print(1) # explains itself\nprint(2)\n",
     );
+}
+
+test "leading blank lines before comments disappear on the first pass" {
+    try expectFormats("\n\n### note", "### note\n");
+    try expectFormats("\n\n# note\n", "# note\n");
+    try expectFormats("\n\n#[ note ]#\n", "#[ note ]#\n");
 }
 
 test "a block comment's interior survives untouched, unlike a line comment" {

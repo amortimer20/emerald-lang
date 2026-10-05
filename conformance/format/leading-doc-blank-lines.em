@@ -1,0 +1,5 @@
+
+
+## a documentation comment after leading blank lines
+func example() {
+}

@@ -186,8 +186,12 @@ counts recorded but never asserted. A5 is validated and complete, with no produc
 optimization. A2 is also complete: the ReleaseSafe sweep of all 31 examples passed both
 passes, 189,662 requests, with no failures or replies over 100 ms. It found and fixed a
 signature-help crash before a call's opening parenthesis; two regression cases each passed
-50 runs and the full fix gate passed. Next: A3's eight-seed million-case campaign. A3 remains
-unticked. A5's pushed commit has green CI. Open the PR after the batch; do not merge.
+50 runs and the full fix gate passed. A3's first five new seeds passed 625,000 cases. Seed
+314159265 then found formatter non-idempotence at case 57260, reproduced with the same seed:
+leading blank lines before a comment disappeared only on the second format pass. A small
+fix and regression tests passed the full gate; resume the campaign after committing it. A3
+remains unticked. A5 and the signature-help fix have green CI. Open the PR after the batch;
+do not merge.
 
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
 the others have a validated commit each, with reproductions in the journal). Concurrency is

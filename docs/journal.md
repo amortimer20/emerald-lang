@@ -5412,3 +5412,27 @@ only now. No website prose changed or became incorrect. The final source is iden
 separately committed crash fix that passed the full Debug/ReleaseSafe, build, docs, format,
 diff and cross-build gate; this item adds only the manual Python tool and evidence. Diff
 check passed again before committing. The pre-existing tools/__pycache__ remains unstaged.
+
+## 2026-10-04: QA A3 campaign stopped on formatter non-idempotence
+
+The warmed rate probe (seed 130363, 1,000 cases) passed in 0.96 s, roughly 1,040 cases/s.
+The campaign then passed 125,000 cases on each of 104729, 130363, 155921, 196613 and 262147.
+Seed 314159265 failed at case 57260, case seed 7493403186477881512, with
+FormatterIsNotIdempotent. The runner stopped immediately, without proceeding to the remaining
+seeds. Replaying 314159265 with 57261 cases reproduced the identical failure.
+
+The generated text contained leading newlines followed by a single documentation comment.
+The minimal source `\n\n### note` formats first with one leading newline, then with none.
+flushTrivia emitted a pending blank before a comment even when output was empty; the lexer
+does not retain that single blank on the next pass. Suppress that leading blank at emission,
+matching the existing handling before the first statement. This is a formatter fix, not a
+language change. A format conformance case and allocator-backed unit coverage for doc, line
+and block comments cover it. The expected file was read by hand. Full validation is running;
+A3 remains incomplete. No website prose is affected.
+
+The formatter fix subsequently passed the full gate on pinned Zig 0.16.0, all builds -j1:
+Debug and ReleaseSafe tests, native build, documentation examples (24 executed, 135 linked
+conformance cases), changed Zig formatting, diff check, and Windows x86_64/macOS aarch64
+cross-builds outside zig-out. No catalog/prelude changes require website parity. Commit this
+bug independently, then resume the failed seed and remaining two seeds; do not count the
+failed/reproduction attempts as completed campaigns.
