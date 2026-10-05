@@ -38,6 +38,8 @@ pub fn build(b: *std.Build) void {
 
     const version_options = b.addOptions();
     version_options.addOption([]const u8, "version", version);
+    // Manual wall-clock benchmark only; CI asserts work, never elapsed time.
+    version_options.addOption(usize, "session_execution_runs", b.option(usize, "session-execution-runs", "Record repeated REPL execution timing samples (manual QA)") orelse 0);
     // Native library code also needs the version: Http sends it as its
     // default User-Agent, just as the executable prints it for --version.
     emerald_module.addOptions("version_options", version_options);
@@ -81,6 +83,14 @@ pub fn build(b: *std.Build) void {
         .root_module = emerald_module,
     });
     const run_unit_tests = b.addRunArtifact(unit_tests);
+    // `zig build session-execution-probe -Dsession-execution-runs=200` records
+    // the timing distribution without making shared-runner noise a test failure.
+    const session_probe = b.addTest(.{
+        .name = "session-execution-probe",
+        .root_module = emerald_module,
+        .filters = &.{"entry 500"},
+    });
+    b.step("session-execution-probe", "Measure REPL execution work and optional repeated timings").dependOn(&b.addRunArtifact(session_probe).step);
 
     const conformance_tests = b.addTest(.{
         .name = "emerald-conformance",

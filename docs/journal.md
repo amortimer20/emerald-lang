@@ -5257,3 +5257,220 @@ the new language-server code). Nothing here needs action before 0.7.0.
 
 The early entries are about 0.3 ms (10%) slower, mostly resolution (1.128 to 1.223 ms), which is
 the same prelude growth rebuilt per entry; the large entries are within 1.5%.
+
+## 2026-10-04: QA A5 investigation — execution timing is not equal total work
+
+Started `codex/qa-sweeps` from freshly pulled main `cd224a4`. The requested baseline body
+ran 200 times in Debug and 200 times in ReleaseSafe on pinned Zig 0.16.0, without changing
+the interpreter, retrying a failed assertion, or widening the margin. The manual mode
+records all timing values instead of stopping at the first outlier. Full per-run early,
+late, and noise nanoseconds are in [the CSV](qa/2026-10-04-session-execution.csv).
+
+| Baseline (200 runs each) | Debug | ReleaseSafe |
+| --- | ---: | ---: |
+| Median early batch (ns) | 10,399,854.5 | 1,650,538.5 |
+| Median late batch (ns) | 10,636,168 | 1,622,249.5 |
+| Median paired late minus early (ns) | +222,795 | -29,072.5 |
+| Mean paired difference (ns) | +249,463.095 | -26,443.59 |
+| Paired difference p05 / p95 (ns) | -19,665 / +535,884 | -57,478 / +17,518 |
+| Minimum / maximum paired difference (ns) | -1,406,449 / +4,791,077 | -114,585 / +58,554 |
+| Runs with late greater than early | 182/200 (91%) | 24/200 (12%) |
+| Runs exceeding the original noise allowance | 0/200 | 0/200 |
+| Median noise allowance (ns) | 1,776,942.5 | 374,115 |
+
+The Debug shift is consistent enough not to dismiss as scheduling noise, even though none
+of these local runs crossed the allowance. It changes sign in ReleaseSafe. Source inspection
+and a separate instrumented Debug probe identify unequal work:
+
+| Work over warm-up plus all 31 paired samples | Entry 5 | Entry 500 |
+| --- | ---: | ---: |
+| Interpreter steps (existing execution budget counter) | 295,296 | 295,296 |
+| Session origin binary-search comparisons | 98,304 | 393,216 |
+| Garbage collections | 24 | 27 |
+| Sum of live objects at collection boundaries | 98,304 | 110,592 |
+
+Every sample creates 1,536 closures. `Session.originOf` does two versus eight comparisons
+per callable in these fixtures, a real logarithmic Session cost. The fixture's earlier
+`job_N` declarations also keep hundreds more heap closures alive at entry 500. The loop's
+local `f` captures its environment, including the binding holding `f`, leaving cycles;
+`popScope` correctly retains captured environments until collection. That larger live heap
+reaches the fixed allocation threshold more frequently, and the collector scans more roots.
+This is required ownership behavior, not a replay bug. Equal interpreter steps do not imply
+equal total collector work when the earlier retained state differs.
+
+Proposed narrow completion, awaiting user approval: add a latest-origin fast path and guard
+exact interpreter-step and origin-lookup work, retaining timing as a manual benchmark and
+leaving GC semantics untouched. Keeping a total-time CI assertion cannot exclude shared-runner
+noise; making collector work flat regardless of retained state would require a much larger
+collector design, not a small QA fix. A5 remains unticked pending that scope decision.
+
+Validation of the investigation: Debug and ReleaseSafe full `zig build test -j1` measurement
+campaigns both exited 0; the separate instrumented `session-execution-probe` exited 0.
+Zig labels captured debug-print output as a warning and prints a `failed command` line even
+when the build exits 0; this is stderr reporting in std.Build.Step.Run, not a failed assertion.
+The first measurement-harness compile attempt used `run` as a variable name and collided with
+the module's public `run`; corrected to `iteration` before any measurements were collected.
+The baseline commands were `zig build test -j1 -Dsession-execution-runs=200` and its
+`-Doptimize=ReleaseSafe` variant. The targeted probe was
+`zig build session-execution-probe -j1 -Dsession-execution-runs=1`.
+
+A2 tooling is drafted, not complete: `tools/lsp-sweep.py` reuses the benchmark framing helpers,
+handles didClose diagnostic-clear notifications, uses UTF-16 positions, records slow replies,
+and enforces a 5-second response deadline. Its Debug unfinished-code smoke check on enums
+passed all 920 prefixes (completion median/p95/max 2.935/32.827/39.104 ms; signature help
+1.332/16.392/24.646 ms). These are smoke timings, not the requested ReleaseSafe results.
+A3 has not started. No website prose was edited. No commits or PR until the item is settled.
+
+## 2026-10-04: QA A5 approved completion — exact work, not total elapsed time
+
+The user approved the investigation and chose a deterministic guard: equal interpreter
+steps at entries 5 and 500, and origin comparisons no greater than lookup count times the
+bit length of the origin count. A new test-only lookup counter accompanies the comparison
+counter. All QA counters, including the recorded collector counters, have `void` storage in
+production (`builtin.is_test`); counting code is also test-only. Collector counts are never
+asserted. The renamed test does not read a clock on its normal CI path.
+
+The proposed latest-origin fast path was explicitly rejected: ReleaseSafe's median paired
+shift was -29 us, not a slowdown, and the current lookup is already logarithmic. Revisit
+production lookup only if the REPL benchmark shows execution growing with session length.
+There is no production behavior change here. `session-execution-probe`,
+`-Dsession-execution-runs`, the original noise statistic, and the 400-row CSV remain a manual
+wall-clock benchmark; build.zig documents that distinction. The REPL plan now names the
+approved guard rather than the obsolete time assertion.
+
+The original incident is preserved here as the resolved rough edge: CI run 37227701791,
+Ubuntu Debug, PR #39 head 09d487e, seed 0x62d727c4; early 16,592,827 ns, late 17,121,102 ns,
+noise 501,255 ns, an overrun of 27,020 ns. Claude's one rerun passed, contrary to the no-retry
+rule; that historical result is not evidence of a fix. A5's separate fixed-size investigation
+and the approved deterministic guard resolve the faulty assertion without widening its margin.
+
+Validation passed on pinned Zig 0.16.0, all builds -j1: Debug and ReleaseSafe full tests;
+native build; documentation examples (24 executed, 135 linked conformance cases); changed
+Zig formatting; git diff --check; Windows x86_64 and macOS aarch64 cross-builds with prefixes
+outside zig-out. Also built a separate native ReleaseSafe server for A2. The catalog and
+prelude did not change, so the conditional website parity gate is not needed. Two automatic
+permission-review requests for long command chains timed out; shorter authorized test
+commands were each retried once and approved, not failed tests rerun until green.
+The retained manual benchmark also passed a one-run smoke check after the guard rewrite;
+it recorded 295,296 steps in each fixture, 98,304/393,216 comparisons, and 24/27 collections.
+
+## 2026-10-04: QA A2 sweep finding — signature help before a callee
+
+The first ReleaseSafe sweep stopped, rather than retrying, in examples/arithmetic.em
+at byte 102 (line 3, character 0), before `print(score)`. Signature help selected a call
+whose span included its callee, then sliced from the opening parenthesis to an earlier
+cursor: start 108, end 102. The independent minimal probe `/*cursor*/print(1)` reproduced
+the panic in the original binary (start 6, end 0).
+
+Call selection now requires the cursor to follow the opening parenthesis. This fixes the
+cause, rather than masking the invalid slice, and lets an enclosing call remain selected
+when the cursor is on a nested callee. Two new LSP conformance cases cover null help before
+the callee and outer help in `outer(/*cursor*/inner(1))`; both passed 50 identical replies
+against the rebuilt ReleaseSafe server. The outer case's hand-written golden initially
+omitted the serializer's `documentation: null`; the expected-only mismatch was inspected
+and corrected, and every new expected file was read by hand. No website prose is affected.
+
+The complete Debug suite passed. Remaining validation is in progress; A2 is not ticked,
+and the full examples sweep must resume only after this fix's gate finishes. The manual
+tool now consumes didClose's clearing diagnostic before didOpen, so final request latency
+excludes analysis during document opening; the earlier Debug smoke timings above were not
+the final measurement methodology.
+
+The signature-help fix's full gate subsequently passed on Zig 0.16.0, with -j1 builds:
+Debug and ReleaseSafe tests, native build, documentation examples (24 executed and 135
+conformance links), changed Zig formatting, diff check, Windows x86_64 and macOS aarch64
+cross-builds using prefixes outside zig-out. No catalog or prelude changes require parity.
+
+## 2026-10-04: QA A2 complete — full ReleaseSafe example sweep
+
+Replay: `PYTHONDONTWRITEBYTECODE=1 python3 tools/lsp-sweep.py BINARY examples --output REPORT.json`.
+The manual tool reuses framing from lsp-completion-benchmark.py, starts one server per file,
+maps every character boundary to UTF-16, and checks complete sources and unfinished prefixes.
+It fails immediately on a crash, a five-second hang, RPC error, or malformed JSON. Replies
+over 100 ms are listed separately. Opening/closing-document analysis is excluded from request
+latencies by explicitly consuming each diagnostic notification. UTF-16 mapping (including
+an astral character), error/timeout handling, and result validation were checked separately.
+
+After fixing the before-callee crash, both passes completed without failure in 784.70 s:
+31 files, 41,915 UTF-8 bytes, 41,938 complete positions, 31,923 unfinished prefixes, and two
+diagnostic code-action requests. Total 189,662 requests. Above 2 KiB, unfinished prefixes
+sample every eighth character boundary and always include EOF: ledger/ledger.em (538),
+ledger/main.em (483), structs.em (413); all other files use every boundary. The actual checkout
+has more text than the brief's approximate 32 KiB. No reply exceeded 100 ms.
+
+| Request | Count | Median ms | p95 ms | Maximum ms |
+| --- | ---: | ---: | ---: | ---: |
+| hover | 41,938 | 4.027 | 8.888 | 67.363 |
+| completion | 73,861 | 2.316 | 8.402 | 32.845 |
+| signatureHelp | 73,861 | 3.377 | 9.631 | 40.843 |
+| codeAction | 2 | 0.210 | 0.262 | 0.262 |
+
+The optional conformance/run sweep was not run: the mandatory two-pass examples campaign
+took thirteen minutes, and the next required work is the million-case fuzz campaign. The
+tool accepts `conformance/run/*.em --pass complete` for that optional extension. A2 is ticked
+only now. No website prose changed or became incorrect. The final source is identical to the
+separately committed crash fix that passed the full Debug/ReleaseSafe, build, docs, format,
+diff and cross-build gate; this item adds only the manual Python tool and evidence. Diff
+check passed again before committing. The pre-existing tools/__pycache__ remains unstaged.
+
+## 2026-10-04: QA A3 campaign stopped on formatter non-idempotence
+
+The warmed rate probe (seed 130363, 1,000 cases) passed in 0.96 s, roughly 1,040 cases/s.
+The campaign then passed 125,000 cases on each of 104729, 130363, 155921, 196613 and 262147.
+Seed 314159265 failed at case 57260, case seed 7493403186477881512, with
+FormatterIsNotIdempotent. The runner stopped immediately, without proceeding to the remaining
+seeds. Replaying 314159265 with 57261 cases reproduced the identical failure.
+
+The generated text contained leading newlines followed by a single documentation comment.
+The minimal source `\n\n### note` formats first with one leading newline, then with none.
+flushTrivia emitted a pending blank before a comment even when output was empty; the lexer
+does not retain that single blank on the next pass. Suppress that leading blank at emission,
+matching the existing handling before the first statement. This is a formatter fix, not a
+language change. A format conformance case and allocator-backed unit coverage for doc, line
+and block comments cover it. The expected file was read by hand. Full validation is running;
+A3 remains incomplete. No website prose is affected.
+
+The formatter fix subsequently passed the full gate on pinned Zig 0.16.0, all builds -j1:
+Debug and ReleaseSafe tests, native build, documentation examples (24 executed, 135 linked
+conformance cases), changed Zig formatting, diff check, and Windows x86_64/macOS aarch64
+cross-builds outside zig-out. No catalog/prelude changes require website parity. Commit this
+bug independently, then resume the failed seed and remaining two seeds; do not count the
+failed/reproduction attempts as completed campaigns.
+
+## 2026-10-04: QA A3 complete — eight new fuzz seeds
+
+Replay each row with `zig build fuzz -j1 -Doptimize=ReleaseSafe -- SEED 125000`
+(this environment used a writable /tmp global cache). These seeds are distinct from the
+four nightly seeds; the workflow is unchanged. Each completed row covers 125,000 cases.
+First five ran at 46f62f0; the last three ran after the independent formatter fix 705cb33.
+
+| Seed | Executed programs | Seconds | Result |
+| ---: | ---: | ---: | --- |
+| 104729 | 17,188 | 118.983 | pass |
+| 130363 | 16,986 | 116.431 | pass |
+| 155921 | 17,176 | 121.266 | pass |
+| 196613 | 17,221 | 119.733 | pass |
+| 262147 | 17,128 | 117.456 | pass |
+| 314159265 | 17,009 | 183.295 | pass after reproduced formatter fix |
+| 271828182 | 16,859 | 115.566 | pass |
+| 4294967311 | 17,074 | 117.007 | pass |
+
+Total: 1,000,000 completed cases, 136,641 executed programs. The resumed 314159265 row
+includes rebuilding the fuzzer; its 682 cases/s is not a warmed throughput measurement.
+Other campaigns ran at 1,031–1,082 cases/s. The earlier failure and reproduction are kept
+above, not hidden or counted as completed campaigns. No other failure occurred. Fuzzing
+checks lexing, parsing, checking, formatter parseability/idempotence and bounded execution;
+the separate A2 tool covers the language server. The final source passed the full gate in
+the formatter-fix commit; no source changes followed it, only this evidence and handoff.
+Diff check passed again. A3 is ticked only now. No website prose was edited or made wrong.
+
+The obsolete editor-intelligence validation paragraph was removed from the live handoff:
+slice 5 at 8160fa5 had passed 561/561 Debug and ReleaseSafe tests, the native/docs/format/diff
+and cross-build gate, 85 LSP cases repeated 50 times, nine extension integration tests, and
+website parity (249 members, 253 signatures, 26 pages, zero problems). CI 37218063872 passed
+all seven jobs. That milestone is merged; it is no longer awaiting slice-5 review.
+
+QA branch pushed and PR #41 opened for review, without merging. CI passed on all source
+commits: A5 run 37248824997, signature-help fix 37250268173, sweep tool 37251264040,
+formatter fix 37253398155. Final evidence/status updates are Markdown-only; the PR's
+current checks still need confirmation before Claude merges.

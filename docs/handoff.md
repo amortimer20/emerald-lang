@@ -177,8 +177,23 @@ The first QA batch is merged (PR #39, `076e871`): Console table errors name "the
 and number data rows from 1, and an invalid Channel annotation no longer adds a dependent
 "needs a message type" error. Claude updated the website's Console page to match (`17aae66`).
 Extension 0.3.0 is merged in emerald-vscode (PR #5) and unpublished; the user publishes it after
-Emerald 0.7.0 is released. Next: scope the rest of the QA iteration with the user (item 2),
-then release 0.7.0 (including the install page, which still points at 0.6.0).
+Emerald 0.7.0 is released. The active work is A5, A2, and A3 on `codex/qa-sweeps`, based on
+main `cd224a4`. A5's 200-run Debug and 200-run ReleaseSafe baseline campaigns are recorded
+in the journal and `docs/qa/2026-10-04-session-execution.csv`. The fixtures perform equal
+interpreter steps but different origin-lookup and garbage-collector work: this is not pure
+wall-clock noise. The user approved equal-step and logarithmic-lookup bounds, with collector
+counts recorded but never asserted. A5 is validated and complete, with no production lookup
+optimization. A2 is also complete: the ReleaseSafe sweep of all 31 examples passed both
+passes, 189,662 requests, with no failures or replies over 100 ms. It found and fixed a
+signature-help crash before a call's opening parenthesis; two regression cases each passed
+50 runs and the full fix gate passed. A3 is complete: eight new seeds each passed 125,000
+cases (one million total, 136,641 executed programs). It found formatter non-idempotence
+at seed 314159265 case 57260, reproduced exactly and fixed with a conformance case and
+unit tests; the full gate and the seed's full replay passed. The nightly workflow is
+unchanged. Next: review [PR #41](https://github.com/amortimer20/emerald-lang/pull/41);
+do not merge automatically. See the journal for all seeds,
+latencies, work measurements and validation. All source-changing commits have green CI,
+including the formatter fix (run 37253398155). New PR checks may still be pending.
 
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
 the others have a validated commit each, with reproductions in the journal). Concurrency is
@@ -395,9 +410,13 @@ compiler), or the compiler depends on it.
      examples with output on 70 pages, 13 pages of `# →` results, and 159 linked files all match.
      Two interactive examples (`loops`, `optionals`) had no typed answers on their fences, so the
      checker could not confirm them; they now carry `input="…"` (website `d4247d2`).
-   - [ ] A2 (Codex) Editor crash sweep: send hover, completion, and signature help at every
-     position of every file in `examples/`; fail on a crash, a hang, or a reply over about 100 ms.
-   - [ ] A3 (Codex) A longer fuzz campaign (about a million inputs; CI runs a bounded one).
+   - [x] A2 (Codex, 2026-10-04) ReleaseSafe sweep of 31 examples: 41,938 complete positions,
+     31,923 unfinished prefixes (stride 8 above 2 KiB), and code actions on both diagnostics.
+     189,662 requests passed; no reply over 100 ms. One signature-help crash fixed with two
+     50-run regression cases and the full gate. Latencies and replay command are in the journal.
+   - [x] A3 (Codex, 2026-10-04) Eight new seeds × 125,000 cases passed: one million inputs,
+     136,641 executed programs. Found and fixed leading-comment formatter non-idempotence;
+     exact-seed reproduction and full replay recorded alongside all seeds in the journal.
    - [x] A4 (Claude, 2026-10-04) Compare speed with 0.6.0: startup (`print(1)` was 3.5 ms), the REPL
      and task benchmarks. Result: startup is about 3% slower (3.58 to 3.71 ms; +0.13 ms and about
      40 page faults on every program, probably the prelude's growth); task scaling is linear
@@ -405,8 +424,10 @@ compiler), or the compiler depends on it.
      entries and within 1.5% at 500 and 1000. Tasks and the REPL have no 0.6.0 baseline, so they
      are compared with the journal's recorded numbers. Nothing needs action; details in the
      journal.
-   - [ ] A5 (Codex) Find the cause of the flaky "entry 500 ... entry 5" timing test (see "Active
-     rough edges"), without rerunning it until it passes or widening its margin.
+   - [x] A5 (Codex, 2026-10-04) 200 Debug and 200 ReleaseSafe measurements and work counters
+     distinguish jitter, logarithmic lookup, and larger retained-heap collection. The approved
+     guard asserts equal interpreter steps and comparisons bounded by lookups × bit length.
+     No production optimization, retries, collector assertion, or widened margin; full gate passed.
    - [x] A6 (Claude, 2026-10-04) Link check across the site, the docs, and the READMEs. Result: 13,951
      internal links and anchors on 110 built pages and 329 relative links in the three repos'
      markdown files are all intact, and the 32 external URLs are reachable (the only non-200s are
@@ -730,14 +751,6 @@ not yet discussed:
 
 ## Active rough edges
 
-- The unit test "entry 500 execution stays within measurement noise of entry 5"
-  (`src/emerald.zig`) failed once in CI on Ubuntu Debug (PR #39, 2026-10-04), by 27 microseconds:
-  early 16.59 ms, late 17.12 ms, noise allowance 0.50 ms. Nothing in that PR touched it, and a
-  rerun of the same commit passed. Its allowance (five times the median deviation plus 100
-  microseconds) looks tight for a shared runner, but per AGENTS.md this is a real bug until shown
-  otherwise: find the cause, and do not widen the margin or rerun until it passes. (Claude reran
-  the failed job once to clear PR #39 and it passed; that was against this rule, and it is
-  recorded here so the evidence is not lost.)
 - A Windows Debug REPL test runner stopped responding for about a minute in the
   policy-only CI run at `3f7d694`, before the parser changes. Its cause is not
   established. The subsequent group A run passed every job, including Windows
@@ -795,19 +808,17 @@ not yet discussed:
 
 ## Validation and repository state
 
-Editor-intelligence slice 5 passed the full local gate on pinned Zig 0.16.0:
-Debug and ReleaseSafe `zig build test -j1` each passed 561/561 tests, native
-`zig build -j1`, documentation examples (24 executed, 135 conformance links),
-changed-Zig formatting, `git diff --check`, and Windows/macOS cross-builds outside
-zig-out. All 85 LSP protocol cases returned identical replies 50 times each;
-the VS Code integration suite passed all nine tests against the built server.
-Website parity reported 249 members, 253 signatures, 26 pages, and zero problems.
-The initial sandboxed test attempt could not bind the HTTP test server; the full
-gates completed outside that restriction. Commit `8160fa5` is pushed and
-[CI run `37218063872`](https://github.com/amortimer20/emerald-lang/actions/runs/37218063872)
-passed all seven jobs: Linux/macOS/Windows Debug and ReleaseSafe, plus bounded execution
-fuzzing. Slice 5 is stopped for review. Earlier slices and their validation history are
-recorded in the journal.
+QA A5, A2 and A3 are complete on `codex/qa-sweeps`, not merged. Each source fix passed
+the full local gate on pinned Zig 0.16.0 with -j1: Debug/ReleaseSafe tests, native build,
+documentation examples (24 executed, 135 conformance links), changed Zig formatting,
+diff check, and Windows x86_64/macOS aarch64 cross-builds outside zig-out. The two new
+LSP cases each passed 50 replies. The ReleaseSafe example sweep passed 189,662 requests,
+and the fuzz campaign passed one million cases on eight new seeds. Catalog and prelude
+are unchanged, so website parity was not required. A5, A2, and the formatter fix's CI passed
+(runs 37248824997, 37250268173, 37251264040, 37253398155). PR #41 is open for review;
+confirm its current checks before merging. The only unrelated untracked artifact is the
+pre-existing tools/__pycache__; it is not staged. Earlier milestone validation is in
+the journal, not a pending editor-intelligence step.
 
 `main` is the only long-lived branch. Work happens on
 `claude/*` and `codex/*` branches, merged by pull request once CI passes; see

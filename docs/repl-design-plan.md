@@ -307,8 +307,11 @@ commits.
   across entries, a multiline function, each unfinished-input form, a check error and a runtime
   error (and what each keeps), redeclaration, `:reset`, `Tasks.run` in an entry, echoes of calls,
   properties, and nothing-returning calls, and an error position in a late entry.
-- Execution timing: assert that entry 500's execution time is within noise of entry 5's.
-  Analysis is excluded from this assertion; it is measured, not asserted in CI.
+- Execution work (QA A5 correction, 2026-10-04): assert equal interpreter steps at entries
+  5 and 500, and origin comparisons bounded by lookups times the bit length of the origin
+  count. Wall-clock timings remain a manual benchmark, never a CI assertion. Different
+  retained heaps naturally give different collector work; do not assert equality there.
+  Analysis is also measured, not asserted in CI.
 - In ReleaseSafe, record median analysis times at entries 5, 100, 500, and 1000, including
   resolve/check breakdown and whether the prelude is redone. Entry 500 must be under 100 ms
   on the development machine; otherwise stop and report it.

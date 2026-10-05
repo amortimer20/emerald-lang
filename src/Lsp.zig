@@ -3061,12 +3061,17 @@ fn onSignatureHelp(server: *Server, gpa: std.mem.Allocator, uri: []const u8, pos
     };
     defer analysis.deinit(arena);
 
+    const source_for_file = &analysis.files[loaded.index].source;
     var selected: ?*const Ast.Expression = null;
     var iterator = analysis.checked.expression_types.iterator();
     while (iterator.next()) |entry| {
         if (entry.value_ptr.file != loaded.index) continue;
         const expression = entry.key_ptr.*;
         if (expression.data != .call or !spanContains(expression.span, cursor)) continue;
+        const candidate_open = openParenAfter(source_for_file.text, expression.data.call.callee.span.end, expression.span.end) orelse continue;
+        // A call span includes its callee, but signature help starts after `(`.
+        // Skip that callee, allowing an enclosing call's argument to win.
+        if (cursor <= candidate_open) continue;
         if (selected == null or expression.span.len() < selected.?.span.len()) selected = expression;
     }
     const expression = selected orelse {
@@ -3076,7 +3081,6 @@ fn onSignatureHelp(server: *Server, gpa: std.mem.Allocator, uri: []const u8, pos
     const call = expression.data.call;
     const key = try callSignatureKey(gpa, &analysis, loaded.index, call.callee);
 
-    const source_for_file = &analysis.files[loaded.index].source;
     const open = openParenAfter(source_for_file.text, call.callee.span.end, expression.span.end) orelse {
         try respond(gpa, out, id, null);
         return;
