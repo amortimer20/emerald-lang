@@ -449,8 +449,13 @@ compiler), or the compiler depends on it.
      message and its line.
 
    *Release mechanics.*
-   - [ ] C1 (Claude) Write the Emerald 0.7.0 release notes (the draft list is under "Since 0.6.0,
-     for the 0.7.0 release notes").
+   - [x] C1 (Claude, 2026-10-04) Write the Emerald 0.7.0 release notes: drafted in
+     `docs/release-notes-0.7.0.md`, in the style of the 0.6.0 notes. Each claim not already
+     covered by the conformance suite was run against a `v0.7.0-rc1`-versioned build of main (the
+     REPL transcript, the foreign-operator hints, `RecursionError`, `File.append`, `Tasks.run`,
+     `InputError` for `input` and the prompts, and Math values). After tagging, publish with
+     `gh release edit v0.7.0 --notes-file docs/release-notes-0.7.0.md`. Revise the file if
+     candidate testing changes any behavior it describes.
    - [ ] C2 (Claude) Move the install page from 0.6.0 to 0.7.0: sample outputs and the two pinned
      version commands. The user deploys.
    - [ ] C3 (the user) Tag `v0.7.0-rc1` first, then `v0.7.0`; the release workflow builds and
