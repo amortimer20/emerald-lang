@@ -135,6 +135,11 @@ jobs:
       - name: Publish release assets
         uses: softprops/action-gh-release@v2
         with:
+          # A tag with a hyphen (v0.7.0-rc1) is a prerelease. GitHub's
+          # `releases/latest`, which install.sh, install.ps1, and the install
+          # page resolve, skips prereleases, so a release candidate is only
+          # installed by naming its tag.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             dist/emerald-*.tar.gz
             dist/emerald-*.zip
