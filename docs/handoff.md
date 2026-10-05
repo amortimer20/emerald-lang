@@ -432,8 +432,11 @@ compiler), or the compiler depends on it.
      for the 0.7.0 release notes").
    - [ ] C2 (Claude) Move the install page from 0.6.0 to 0.7.0: sample outputs and the two pinned
      version commands. The user deploys.
-   - [ ] C3 (the user) Tag `v0.7.0`; the release workflow builds and smoke-tests three platforms.
-     Check the assets and the install scripts against the tag.
+   - [ ] C3 (the user) Tag `v0.7.0-rc1` first, then `v0.7.0`; the release workflow builds and
+     smoke-tests three platforms. A tag containing a hyphen publishes as a prerelease (so
+     `releases/latest`, which the install scripts and install page use, still points at 0.6.0); install a
+     candidate with `install.sh --version v0.7.0-rc1` or `install.ps1 -Version v0.7.0-rc1`. Check the
+     assets and the install scripts against the tag.
    - [ ] C4 (the user) Publish extension 0.3.0 and tag `v0.3.0`.
    - [ ] C5 Install from the real release assets on each OS.
 
