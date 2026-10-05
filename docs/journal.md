@@ -5436,3 +5436,36 @@ conformance cases), changed Zig formatting, diff check, and Windows x86_64/macOS
 cross-builds outside zig-out. No catalog/prelude changes require website parity. Commit this
 bug independently, then resume the failed seed and remaining two seeds; do not count the
 failed/reproduction attempts as completed campaigns.
+
+## 2026-10-04: QA A3 complete — eight new fuzz seeds
+
+Replay each row with `zig build fuzz -j1 -Doptimize=ReleaseSafe -- SEED 125000`
+(this environment used a writable /tmp global cache). These seeds are distinct from the
+four nightly seeds; the workflow is unchanged. Each completed row covers 125,000 cases.
+First five ran at 46f62f0; the last three ran after the independent formatter fix 705cb33.
+
+| Seed | Executed programs | Seconds | Result |
+| ---: | ---: | ---: | --- |
+| 104729 | 17,188 | 118.983 | pass |
+| 130363 | 16,986 | 116.431 | pass |
+| 155921 | 17,176 | 121.266 | pass |
+| 196613 | 17,221 | 119.733 | pass |
+| 262147 | 17,128 | 117.456 | pass |
+| 314159265 | 17,009 | 183.295 | pass after reproduced formatter fix |
+| 271828182 | 16,859 | 115.566 | pass |
+| 4294967311 | 17,074 | 117.007 | pass |
+
+Total: 1,000,000 completed cases, 136,641 executed programs. The resumed 314159265 row
+includes rebuilding the fuzzer; its 682 cases/s is not a warmed throughput measurement.
+Other campaigns ran at 1,031–1,082 cases/s. The earlier failure and reproduction are kept
+above, not hidden or counted as completed campaigns. No other failure occurred. Fuzzing
+checks lexing, parsing, checking, formatter parseability/idempotence and bounded execution;
+the separate A2 tool covers the language server. The final source passed the full gate in
+the formatter-fix commit; no source changes followed it, only this evidence and handoff.
+Diff check passed again. A3 is ticked only now. No website prose was edited or made wrong.
+
+The obsolete editor-intelligence validation paragraph was removed from the live handoff:
+slice 5 at 8160fa5 had passed 561/561 Debug and ReleaseSafe tests, the native/docs/format/diff
+and cross-build gate, 85 LSP cases repeated 50 times, nine extension integration tests, and
+website parity (249 members, 253 signatures, 26 pages, zero problems). CI 37218063872 passed
+all seven jobs. That milestone is merged; it is no longer awaiting slice-5 review.

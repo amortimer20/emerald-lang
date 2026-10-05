@@ -186,12 +186,13 @@ counts recorded but never asserted. A5 is validated and complete, with no produc
 optimization. A2 is also complete: the ReleaseSafe sweep of all 31 examples passed both
 passes, 189,662 requests, with no failures or replies over 100 ms. It found and fixed a
 signature-help crash before a call's opening parenthesis; two regression cases each passed
-50 runs and the full fix gate passed. A3's first five new seeds passed 625,000 cases. Seed
-314159265 then found formatter non-idempotence at case 57260, reproduced with the same seed:
-leading blank lines before a comment disappeared only on the second format pass. A small
-fix and regression tests passed the full gate; resume the campaign after committing it. A3
-remains unticked. A5 and the signature-help fix have green CI. Open the PR after the batch;
-do not merge.
+50 runs and the full fix gate passed. A3 is complete: eight new seeds each passed 125,000
+cases (one million total, 136,641 executed programs). It found formatter non-idempotence
+at seed 314159265 case 57260, reproduced exactly and fixed with a conformance case and
+unit tests; the full gate and the seed's full replay passed. The nightly workflow is
+unchanged. Next: review the QA branch's PR; do not merge. See the journal for all seeds,
+latencies, work measurements and validation. The A5 and A2 commits have green CI;
+the formatter fix's CI is pending confirmation.
 
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
 the others have a validated commit each, with reproductions in the journal). Concurrency is
@@ -412,7 +413,9 @@ compiler), or the compiler depends on it.
      31,923 unfinished prefixes (stride 8 above 2 KiB), and code actions on both diagnostics.
      189,662 requests passed; no reply over 100 ms. One signature-help crash fixed with two
      50-run regression cases and the full gate. Latencies and replay command are in the journal.
-   - [ ] A3 (Codex) A longer fuzz campaign (about a million inputs; CI runs a bounded one).
+   - [x] A3 (Codex, 2026-10-04) Eight new seeds × 125,000 cases passed: one million inputs,
+     136,641 executed programs. Found and fixed leading-comment formatter non-idempotence;
+     exact-seed reproduction and full replay recorded alongside all seeds in the journal.
    - [x] A4 (Claude, 2026-10-04) Compare speed with 0.6.0: startup (`print(1)` was 3.5 ms), the REPL
      and task benchmarks. Result: startup is about 3% slower (3.58 to 3.71 ms; +0.13 ms and about
      40 page faults on every program, probably the prelude's growth); task scaling is linear
@@ -801,19 +804,16 @@ not yet discussed:
 
 ## Validation and repository state
 
-Editor-intelligence slice 5 passed the full local gate on pinned Zig 0.16.0:
-Debug and ReleaseSafe `zig build test -j1` each passed 561/561 tests, native
-`zig build -j1`, documentation examples (24 executed, 135 conformance links),
-changed-Zig formatting, `git diff --check`, and Windows/macOS cross-builds outside
-zig-out. All 85 LSP protocol cases returned identical replies 50 times each;
-the VS Code integration suite passed all nine tests against the built server.
-Website parity reported 249 members, 253 signatures, 26 pages, and zero problems.
-The initial sandboxed test attempt could not bind the HTTP test server; the full
-gates completed outside that restriction. Commit `8160fa5` is pushed and
-[CI run `37218063872`](https://github.com/amortimer20/emerald-lang/actions/runs/37218063872)
-passed all seven jobs: Linux/macOS/Windows Debug and ReleaseSafe, plus bounded execution
-fuzzing. Slice 5 is stopped for review. Earlier slices and their validation history are
-recorded in the journal.
+QA A5, A2 and A3 are complete on `codex/qa-sweeps`, not merged. Each source fix passed
+the full local gate on pinned Zig 0.16.0 with -j1: Debug/ReleaseSafe tests, native build,
+documentation examples (24 executed, 135 conformance links), changed Zig formatting,
+diff check, and Windows x86_64/macOS aarch64 cross-builds outside zig-out. The two new
+LSP cases each passed 50 replies. The ReleaseSafe example sweep passed 189,662 requests,
+and the fuzz campaign passed one million cases on eight new seeds. Catalog and prelude
+are unchanged, so website parity was not required. A5 and A2 CI passed; confirm the
+formatter fix's CI before review/merge. The only unrelated untracked artifact is the
+pre-existing tools/__pycache__; it is not staged. Earlier milestone validation is in
+the journal, not a pending editor-intelligence step.
 
 `main` is the only long-lived branch. Work happens on
 `claude/*` and `codex/*` branches, merged by pull request once CI passes; see
