@@ -1398,7 +1398,12 @@ fn sessionMedian(samples: []i96) i96 {
     return samples[samples.len / 2];
 }
 
-test "entry 500 execution stays within measurement noise of entry 5" {
+test "entry 500 uses equal interpreter steps and logarithmically bounded origin lookups" {
+    const runs = @import("version_options").session_execution_runs;
+    for (0..@max(runs, 1)) |iteration| try sessionExecutionComparison(iteration, runs != 0);
+}
+
+fn sessionExecutionComparison(iteration: usize, record: bool) !void {
     var out: std.Io.Writer.Allocating = .init(testing.allocator);
     defer out.deinit();
     var input: std.Io.Reader = .fixed("");
@@ -1408,6 +1413,27 @@ test "entry 500 execution stays within measurement noise of entry 5" {
     var late: SessionExecutionProbe = undefined;
     try late.init(500, &out.writer, &input);
     defer late.deinit();
+    early.runtime.qa_origin_comparisons = 0;
+    late.runtime.qa_origin_comparisons = 0;
+    early.runtime.qa_origin_lookups = 0;
+    late.runtime.qa_origin_lookups = 0;
+    early.runtime.interpreter.task.state.steps_remaining = std.math.maxInt(usize);
+    late.runtime.interpreter.task.state.steps_remaining = std.math.maxInt(usize);
+    if (!record) {
+        // The retained heaps differ, so elapsed time (and collector work) is
+        // not an equal-work invariant. Count execution and bound origin search.
+        for (0..3) |_| {
+            try testing.expectEqual(.complete, try early.runtime.runEntry(early.statements));
+            try testing.expectEqual(.complete, try late.runtime.runEntry(late.statements));
+        }
+        try testing.expectEqual(early.runtime.interpreter.task.state.steps_remaining, late.runtime.interpreter.task.state.steps_remaining);
+        for ([_]*Interpreter.Session{ early.runtime, late.runtime }) |session| {
+            const bit_length: usize = @bitSizeOf(usize) - @clz(session.origins.items.len);
+            try testing.expect(session.qa_origin_lookups > 0);
+            try testing.expect(session.qa_origin_comparisons <= session.qa_origin_lookups * bit_length);
+        }
+        return;
+    }
     // Warm both paths, then alternate their order to avoid measuring a CPU
     // warm-up or system-load trend as session growth. Analysis is not timed.
     _ = try early.sample();
@@ -1430,11 +1456,23 @@ test "entry 500 execution stays within measurement noise of entry 5" {
         deviations[index * 2] = @intCast(@abs(a - first));
         deviations[index * 2 + 1] = @intCast(@abs(b - last));
     }
-    // Robust observed jitter plus a 100 us clock/scheduling floor per batch.
-    // This measures equal work, not a platform-specific absolute speed budget.
+    // Preserve the original noise statistic for manual comparison only.
     const noise = 5 * sessionMedian(&deviations) + 100 * std.time.ns_per_us;
-    if (last > first + noise) std.debug.print("execution batches: early {d} ns, late {d} ns, noise {d} ns\n", .{ first, last, noise });
-    try testing.expect(last <= first + noise);
+    if (record) {
+        std.debug.print("session-execution,{d},{d},{d},{d}\n", .{ iteration, first, last, noise });
+        std.debug.print("session-work,{d},{d},{d},{d},{d},{d},{d},{d},{d}\n", .{
+            iteration,
+            std.math.maxInt(usize) - early.runtime.interpreter.task.state.steps_remaining.?,
+            std.math.maxInt(usize) - late.runtime.interpreter.task.state.steps_remaining.?,
+            early.runtime.qa_origin_comparisons,
+            late.runtime.qa_origin_comparisons,
+            early.runtime.interpreter.heap.qa_collections,
+            late.runtime.interpreter.heap.qa_collections,
+            early.runtime.interpreter.heap.qa_collected_objects,
+            late.runtime.interpreter.heap.qa_collected_objects,
+        });
+        return;
+    }
 }
 
 fn expectOutput(text: []const u8, expected: []const u8) !void {

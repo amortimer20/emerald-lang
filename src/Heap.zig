@@ -270,6 +270,8 @@ live_objects: usize = 0,
 /// each collection so that a program holding many live objects does not pay
 /// for a full trace on every allocation.
 collect_after: usize = minimum_threshold,
+qa_collections: if (@import("builtin").is_test) usize else void = if (@import("builtin").is_test) 0 else {},
+qa_collected_objects: if (@import("builtin").is_test) usize else void = if (@import("builtin").is_test) 0 else {},
 /// The collector's worklist, kept between collections so that tracing rarely
 /// allocates after the first one.
 work: std.ArrayList(Object) = .empty,
@@ -947,6 +949,10 @@ fn maybeCollect(self: *Heap) void {
 /// that no hidden pointer silently keeps an object alive — still holds, because
 /// retaining is what makes a pointer a holder and nothing may hold without it.
 pub fn collect(self: *Heap) void {
+    if (@import("builtin").is_test) {
+        self.qa_collections += 1;
+        self.qa_collected_objects += self.live_objects;
+    }
     self.resetMarks();
     self.countInternalReferences();
     // Tracing needs memory it may not get. Nothing has been freed at that

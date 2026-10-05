@@ -430,6 +430,8 @@ pub const Session = struct {
     current_declarations: Declarations = undefined,
     failed: std.AutoHashMapUnmanaged(usize, Failed) = .empty,
     origins: std.ArrayList(Origin) = .empty,
+    qa_origin_comparisons: if (@import("builtin").is_test) usize else void = if (@import("builtin").is_test) 0 else {},
+    qa_origin_lookups: if (@import("builtin").is_test) usize else void = if (@import("builtin").is_test) 0 else {},
     active: ?usize = null,
     host_allocator: std.mem.Allocator,
     shared_allocator: *Scheduler.SharedAllocator,
@@ -624,12 +626,14 @@ pub const Session = struct {
 
     fn originOf(self: *Session, file: u32, span: Source.Span) ?usize {
         if (file != self.entry) return null;
+        if (@import("builtin").is_test) self.qa_origin_lookups += 1;
         // Entry offsets are append-only, including failed entries. Find the
         // last origin starting at or before this span instead of scanning the
         // whole session every time a callable is created.
         var low: usize = 0;
         var high = self.origins.items.len;
         while (low < high) {
+            if (@import("builtin").is_test) self.qa_origin_comparisons += 1;
             const middle = low + (high - low) / 2;
             if (self.origins.items[middle].entry <= span.start) {
                 low = middle + 1;
@@ -10848,6 +10852,8 @@ test "session origin lookup finds ordered entries and excludes gaps and other fi
     var session: Session = undefined;
     session.entry = 0;
     session.origins = .empty;
+    session.qa_origin_comparisons = 0;
+    session.qa_origin_lookups = 0;
     defer session.origins.deinit(testing.allocator);
     try testing.expectEqual(@as(?usize, null), session.originOf(0, .{ .start = 0, .end = 0 }));
     for (0..1000) |index| {

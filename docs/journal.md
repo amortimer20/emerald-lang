@@ -5257,3 +5257,99 @@ the new language-server code). Nothing here needs action before 0.7.0.
 
 The early entries are about 0.3 ms (10%) slower, mostly resolution (1.128 to 1.223 ms), which is
 the same prelude growth rebuilt per entry; the large entries are within 1.5%.
+
+## 2026-10-04: QA A5 investigation — execution timing is not equal total work
+
+Started `codex/qa-sweeps` from freshly pulled main `cd224a4`. The requested baseline body
+ran 200 times in Debug and 200 times in ReleaseSafe on pinned Zig 0.16.0, without changing
+the interpreter, retrying a failed assertion, or widening the margin. The manual mode
+records all timing values instead of stopping at the first outlier. Full per-run early,
+late, and noise nanoseconds are in [the CSV](qa/2026-10-04-session-execution.csv).
+
+| Baseline (200 runs each) | Debug | ReleaseSafe |
+| --- | ---: | ---: |
+| Median early batch (ns) | 10,399,854.5 | 1,650,538.5 |
+| Median late batch (ns) | 10,636,168 | 1,622,249.5 |
+| Median paired late minus early (ns) | +222,795 | -29,072.5 |
+| Mean paired difference (ns) | +249,463.095 | -26,443.59 |
+| Paired difference p05 / p95 (ns) | -19,665 / +535,884 | -57,478 / +17,518 |
+| Minimum / maximum paired difference (ns) | -1,406,449 / +4,791,077 | -114,585 / +58,554 |
+| Runs with late greater than early | 182/200 (91%) | 24/200 (12%) |
+| Runs exceeding the original noise allowance | 0/200 | 0/200 |
+| Median noise allowance (ns) | 1,776,942.5 | 374,115 |
+
+The Debug shift is consistent enough not to dismiss as scheduling noise, even though none
+of these local runs crossed the allowance. It changes sign in ReleaseSafe. Source inspection
+and a separate instrumented Debug probe identify unequal work:
+
+| Work over warm-up plus all 31 paired samples | Entry 5 | Entry 500 |
+| --- | ---: | ---: |
+| Interpreter steps (existing execution budget counter) | 295,296 | 295,296 |
+| Session origin binary-search comparisons | 98,304 | 393,216 |
+| Garbage collections | 24 | 27 |
+| Sum of live objects at collection boundaries | 98,304 | 110,592 |
+
+Every sample creates 1,536 closures. `Session.originOf` does two versus eight comparisons
+per callable in these fixtures, a real logarithmic Session cost. The fixture's earlier
+`job_N` declarations also keep hundreds more heap closures alive at entry 500. The loop's
+local `f` captures its environment, including the binding holding `f`, leaving cycles;
+`popScope` correctly retains captured environments until collection. That larger live heap
+reaches the fixed allocation threshold more frequently, and the collector scans more roots.
+This is required ownership behavior, not a replay bug. Equal interpreter steps do not imply
+equal total collector work when the earlier retained state differs.
+
+Proposed narrow completion, awaiting user approval: add a latest-origin fast path and guard
+exact interpreter-step and origin-lookup work, retaining timing as a manual benchmark and
+leaving GC semantics untouched. Keeping a total-time CI assertion cannot exclude shared-runner
+noise; making collector work flat regardless of retained state would require a much larger
+collector design, not a small QA fix. A5 remains unticked pending that scope decision.
+
+Validation of the investigation: Debug and ReleaseSafe full `zig build test -j1` measurement
+campaigns both exited 0; the separate instrumented `session-execution-probe` exited 0.
+Zig labels captured debug-print output as a warning and prints a `failed command` line even
+when the build exits 0; this is stderr reporting in std.Build.Step.Run, not a failed assertion.
+The first measurement-harness compile attempt used `run` as a variable name and collided with
+the module's public `run`; corrected to `iteration` before any measurements were collected.
+The baseline commands were `zig build test -j1 -Dsession-execution-runs=200` and its
+`-Doptimize=ReleaseSafe` variant. The targeted probe was
+`zig build session-execution-probe -j1 -Dsession-execution-runs=1`.
+
+A2 tooling is drafted, not complete: `tools/lsp-sweep.py` reuses the benchmark framing helpers,
+handles didClose diagnostic-clear notifications, uses UTF-16 positions, records slow replies,
+and enforces a 5-second response deadline. Its Debug unfinished-code smoke check on enums
+passed all 920 prefixes (completion median/p95/max 2.935/32.827/39.104 ms; signature help
+1.332/16.392/24.646 ms). These are smoke timings, not the requested ReleaseSafe results.
+A3 has not started. No website prose was edited. No commits or PR until the item is settled.
+
+## 2026-10-04: QA A5 approved completion — exact work, not total elapsed time
+
+The user approved the investigation and chose a deterministic guard: equal interpreter
+steps at entries 5 and 500, and origin comparisons no greater than lookup count times the
+bit length of the origin count. A new test-only lookup counter accompanies the comparison
+counter. All QA counters, including the recorded collector counters, have `void` storage in
+production (`builtin.is_test`); counting code is also test-only. Collector counts are never
+asserted. The renamed test does not read a clock on its normal CI path.
+
+The proposed latest-origin fast path was explicitly rejected: ReleaseSafe's median paired
+shift was -29 us, not a slowdown, and the current lookup is already logarithmic. Revisit
+production lookup only if the REPL benchmark shows execution growing with session length.
+There is no production behavior change here. `session-execution-probe`,
+`-Dsession-execution-runs`, the original noise statistic, and the 400-row CSV remain a manual
+wall-clock benchmark; build.zig documents that distinction. The REPL plan now names the
+approved guard rather than the obsolete time assertion.
+
+The original incident is preserved here as the resolved rough edge: CI run 37227701791,
+Ubuntu Debug, PR #39 head 09d487e, seed 0x62d727c4; early 16,592,827 ns, late 17,121,102 ns,
+noise 501,255 ns, an overrun of 27,020 ns. Claude's one rerun passed, contrary to the no-retry
+rule; that historical result is not evidence of a fix. A5's separate fixed-size investigation
+and the approved deterministic guard resolve the faulty assertion without widening its margin.
+
+Validation passed on pinned Zig 0.16.0, all builds -j1: Debug and ReleaseSafe full tests;
+native build; documentation examples (24 executed, 135 linked conformance cases); changed
+Zig formatting; git diff --check; Windows x86_64 and macOS aarch64 cross-builds with prefixes
+outside zig-out. Also built a separate native ReleaseSafe server for A2. The catalog and
+prelude did not change, so the conditional website parity gate is not needed. Two automatic
+permission-review requests for long command chains timed out; shorter authorized test
+commands were each retried once and approved, not failed tests rerun until green.
+The retained manual benchmark also passed a one-run smoke check after the guard rewrite;
+it recorded 295,296 steps in each fixture, 98,304/393,216 comparisons, and 24/27 collections.
