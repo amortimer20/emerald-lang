@@ -171,29 +171,24 @@ project loader's, and range's unit tests now run in `zig build test`; they had b
 
 ## Next step
 
-Editor intelligence is reviewed and merged: language-server slices 1–5 through PR #38,
-extension slice 6 through emerald-vscode PR #4, and website parity through its checker.
-The first QA batch is merged (PR #39, `076e871`): Console table errors name "the header"
-and number data rows from 1, and an invalid Channel annotation no longer adds a dependent
-"needs a message type" error. Claude updated the website's Console page to match (`17aae66`).
-Extension 0.3.0 is merged in emerald-vscode (PR #5) and unpublished; the user publishes it after
-Emerald 0.7.0 is released. The active work is A5, A2, and A3 on `codex/qa-sweeps`, based on
-main `cd224a4`. A5's 200-run Debug and 200-run ReleaseSafe baseline campaigns are recorded
-in the journal and `docs/qa/2026-10-04-session-execution.csv`. The fixtures perform equal
-interpreter steps but different origin-lookup and garbage-collector work: this is not pure
-wall-clock noise. The user approved equal-step and logarithmic-lookup bounds, with collector
-counts recorded but never asserted. A5 is validated and complete, with no production lookup
-optimization. A2 is also complete: the ReleaseSafe sweep of all 31 examples passed both
-passes, 189,662 requests, with no failures or replies over 100 ms. It found and fixed a
-signature-help crash before a call's opening parenthesis; two regression cases each passed
-50 runs and the full fix gate passed. A3 is complete: eight new seeds each passed 125,000
-cases (one million total, 136,641 executed programs). It found formatter non-idempotence
-at seed 314159265 case 57260, reproduced exactly and fixed with a conformance case and
-unit tests; the full gate and the seed's full replay passed. The nightly workflow is
-unchanged. Next: review [PR #41](https://github.com/amortimer20/emerald-lang/pull/41);
-do not merge automatically. See the journal for all seeds,
-latencies, work measurements and validation. All source-changing commits have green CI,
-including the formatter fix (run 37253398155). New PR checks may still be pending.
+Emerald 0.7.0 is in its QA pass (roadmap item 2; the checklist is there). Everything planned
+for it is merged: editor intelligence (language-server slices 1–5, PRs #37 and #38; the extension
+in emerald-vscode, PRs #4 and #5; website parity through `scripts/check-builtin-parity.py`), the
+first QA batch (PR #39: Console table errors name "the header" and number rows from 1, and an
+invalid Channel annotation no longer adds a dependent error), and the automated sweeps (PR #41:
+the exact-work test replacing the flaky timing test, a ReleaseSafe editor sweep of 189,662
+requests that found and fixed a signature-help crash, and a million fuzz cases that found and
+fixed a formatter idempotence bug; the evidence is in the journal and `docs/qa/`).
+
+`v0.7.0-rc1` is tagged and published as a prerelease (main `0a93f06`, 2026-10-05): all three
+platform builds, their smoke tests, and the install-script checks passed, and `releases/latest`
+still points at 0.6.0. Install it by naming its tag (see C3). Extension 0.3.0 is published on the
+Marketplace (2026-10-04; the published package is byte-identical to a build of emerald-vscode
+`638d8cd`); the user's local `v0.3.0` tag on that commit was not yet pushed to GitHub.
+
+Next: the user's hands-on items (B1–B5), then C2 (the install page moves to 0.7.0; Claude), the
+final `v0.7.0` tag, the release notes (`docs/release-notes-0.7.0.md`), and C5. The live website
+predates the Console page wording fix (`17aae66`); it needs a Firebase deploy.
 
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
 the others have a validated commit each, with reproductions in the journal). Concurrency is
@@ -365,7 +360,7 @@ from `src/builtins.json` and declarations from the compiler's analysis. The rema
 
 Slice 6's extension work is merged (emerald-vscode PR #4: the binary and version in the output
 channel and status bar, and `support.class.builtin.emerald` for the library classes, with the
-website's themes colouring it). What remains is the 0.3.0 release notes, which the user publishes.
+website's themes colouring it). Extension 0.3.0, with its release notes, is published.
 Claude completed website parity after slice 3, and it is checked in later gates.
 Native go to definition stays empty: a native
 has no Emerald declaration, and its documentation link belongs in hover instead.
@@ -386,7 +381,7 @@ compiler), or the compiler depends on it.
 ### In flight
 
 1. **Editor intelligence**: done. The language server's slices 1-5 are merged (PRs #37 and #38),
-   the extension's slice 6 is merged in emerald-vscode (PRs #4 and #5, 0.3.0 unpublished), and
+   the extension's slice 6 is merged in emerald-vscode (PRs #4 and #5; 0.3.0 is published), and
    slice 7 (website parity) is Claude's `scripts/check-builtin-parity.py` in `emerald-website`.
 2. **A QA iteration, then the 0.7.0 release** (added 2026-10-01): a deliberate pass over how Emerald looks and behaves in real
    use, before more is built on top. The user's first finding, Console tables rendering poorly on
@@ -463,7 +458,9 @@ compiler), or the compiler depends on it.
      `releases/latest`, which the install scripts and install page use, still points at 0.6.0); install a
      candidate with `install.sh --version v0.7.0-rc1` or `install.ps1 -Version v0.7.0-rc1`. Check the
      assets and the install scripts against the tag.
-   - [ ] C4 (the user) Publish extension 0.3.0 and tag `v0.3.0`.
+   - [ ] C4 (the user) Extension 0.3.0 is published (Marketplace, 2026-10-04; verified byte-identical to
+     emerald-vscode `638d8cd`). Remaining: push the `v0.3.0` tag, which exists only locally, with
+     `git push origin v0.3.0`.
    - [ ] C5 Install from the real release assets on each OS.
 
    Not in this pass: the error-message review against real student mistakes and the
