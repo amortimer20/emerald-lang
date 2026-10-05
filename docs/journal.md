@@ -5469,3 +5469,8 @@ slice 5 at 8160fa5 had passed 561/561 Debug and ReleaseSafe tests, the native/do
 and cross-build gate, 85 LSP cases repeated 50 times, nine extension integration tests, and
 website parity (249 members, 253 signatures, 26 pages, zero problems). CI 37218063872 passed
 all seven jobs. That milestone is merged; it is no longer awaiting slice-5 review.
+
+QA branch pushed and PR #41 opened for review, without merging. CI passed on all source
+commits: A5 run 37248824997, signature-help fix 37250268173, sweep tool 37251264040,
+formatter fix 37253398155. Final evidence/status updates are Markdown-only; the PR's
+current checks still need confirmation before Claude merges.

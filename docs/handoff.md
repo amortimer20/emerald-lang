@@ -190,9 +190,10 @@ signature-help crash before a call's opening parenthesis; two regression cases e
 cases (one million total, 136,641 executed programs). It found formatter non-idempotence
 at seed 314159265 case 57260, reproduced exactly and fixed with a conformance case and
 unit tests; the full gate and the seed's full replay passed. The nightly workflow is
-unchanged. Next: review the QA branch's PR; do not merge. See the journal for all seeds,
-latencies, work measurements and validation. The A5 and A2 commits have green CI;
-the formatter fix's CI is pending confirmation.
+unchanged. Next: review [PR #41](https://github.com/amortimer20/emerald-lang/pull/41);
+do not merge automatically. See the journal for all seeds,
+latencies, work measurements and validation. All source-changing commits have green CI,
+including the formatter fix (run 37253398155). New PR checks may still be pending.
 
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
 the others have a validated commit each, with reproductions in the journal). Concurrency is
@@ -810,8 +811,9 @@ documentation examples (24 executed, 135 conformance links), changed Zig formatt
 diff check, and Windows x86_64/macOS aarch64 cross-builds outside zig-out. The two new
 LSP cases each passed 50 replies. The ReleaseSafe example sweep passed 189,662 requests,
 and the fuzz campaign passed one million cases on eight new seeds. Catalog and prelude
-are unchanged, so website parity was not required. A5 and A2 CI passed; confirm the
-formatter fix's CI before review/merge. The only unrelated untracked artifact is the
+are unchanged, so website parity was not required. A5, A2, and the formatter fix's CI passed
+(runs 37248824997, 37250268173, 37251264040, 37253398155). PR #41 is open for review;
+confirm its current checks before merging. The only unrelated untracked artifact is the
 pre-existing tools/__pycache__; it is not staged. Earlier milestone validation is in
 the journal, not a pending editor-intelligence step.
 
