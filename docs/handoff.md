@@ -184,8 +184,11 @@ interpreter steps but different origin-lookup and garbage-collector work: this i
 wall-clock noise. The user approved equal-step and logarithmic-lookup bounds, with collector
 counts recorded but never asserted. A5 is validated and complete, with no production lookup
 optimization. Next: A2's full ReleaseSafe example sweep, both passes, then A3's eight-seed
-million-case campaign. The manual sweep tool is drafted; its 920-prefix Debug smoke check
-is not the complete sweep. A2 and A3 remain unticked. Open the PR after the batch; do not merge.
+million-case campaign. The first A2 ReleaseSafe sweep found a signature-help crash before a
+call's opening parenthesis. Selection now excludes that region and still selects an enclosing
+call; two regression cases each passed 50 runs, and the full fix gate passed. The manual
+sweep tool is drafted; its 920-prefix Debug smoke check is not the complete sweep. A2 and A3
+remain unticked. A5's pushed commit has green CI. Open the PR after the batch; do not merge.
 
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
 the others have a validated commit each, with reproductions in the journal). Concurrency is

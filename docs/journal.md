@@ -5353,3 +5353,30 @@ permission-review requests for long command chains timed out; shorter authorized
 commands were each retried once and approved, not failed tests rerun until green.
 The retained manual benchmark also passed a one-run smoke check after the guard rewrite;
 it recorded 295,296 steps in each fixture, 98,304/393,216 comparisons, and 24/27 collections.
+
+## 2026-10-04: QA A2 sweep finding — signature help before a callee
+
+The first ReleaseSafe sweep stopped, rather than retrying, in examples/arithmetic.em
+at byte 102 (line 3, character 0), before `print(score)`. Signature help selected a call
+whose span included its callee, then sliced from the opening parenthesis to an earlier
+cursor: start 108, end 102. The independent minimal probe `/*cursor*/print(1)` reproduced
+the panic in the original binary (start 6, end 0).
+
+Call selection now requires the cursor to follow the opening parenthesis. This fixes the
+cause, rather than masking the invalid slice, and lets an enclosing call remain selected
+when the cursor is on a nested callee. Two new LSP conformance cases cover null help before
+the callee and outer help in `outer(/*cursor*/inner(1))`; both passed 50 identical replies
+against the rebuilt ReleaseSafe server. The outer case's hand-written golden initially
+omitted the serializer's `documentation: null`; the expected-only mismatch was inspected
+and corrected, and every new expected file was read by hand. No website prose is affected.
+
+The complete Debug suite passed. Remaining validation is in progress; A2 is not ticked,
+and the full examples sweep must resume only after this fix's gate finishes. The manual
+tool now consumes didClose's clearing diagnostic before didOpen, so final request latency
+excludes analysis during document opening; the earlier Debug smoke timings above were not
+the final measurement methodology.
+
+The signature-help fix's full gate subsequently passed on Zig 0.16.0, with -j1 builds:
+Debug and ReleaseSafe tests, native build, documentation examples (24 executed and 135
+conformance links), changed Zig formatting, diff check, Windows x86_64 and macOS aarch64
+cross-builds using prefixes outside zig-out. No catalog or prelude changes require parity.
