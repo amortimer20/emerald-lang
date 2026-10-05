@@ -5380,3 +5380,35 @@ The signature-help fix's full gate subsequently passed on Zig 0.16.0, with -j1 b
 Debug and ReleaseSafe tests, native build, documentation examples (24 executed and 135
 conformance links), changed Zig formatting, diff check, Windows x86_64 and macOS aarch64
 cross-builds using prefixes outside zig-out. No catalog or prelude changes require parity.
+
+## 2026-10-04: QA A2 complete — full ReleaseSafe example sweep
+
+Replay: `PYTHONDONTWRITEBYTECODE=1 python3 tools/lsp-sweep.py BINARY examples --output REPORT.json`.
+The manual tool reuses framing from lsp-completion-benchmark.py, starts one server per file,
+maps every character boundary to UTF-16, and checks complete sources and unfinished prefixes.
+It fails immediately on a crash, a five-second hang, RPC error, or malformed JSON. Replies
+over 100 ms are listed separately. Opening/closing-document analysis is excluded from request
+latencies by explicitly consuming each diagnostic notification. UTF-16 mapping (including
+an astral character), error/timeout handling, and result validation were checked separately.
+
+After fixing the before-callee crash, both passes completed without failure in 784.70 s:
+31 files, 41,915 UTF-8 bytes, 41,938 complete positions, 31,923 unfinished prefixes, and two
+diagnostic code-action requests. Total 189,662 requests. Above 2 KiB, unfinished prefixes
+sample every eighth character boundary and always include EOF: ledger/ledger.em (538),
+ledger/main.em (483), structs.em (413); all other files use every boundary. The actual checkout
+has more text than the brief's approximate 32 KiB. No reply exceeded 100 ms.
+
+| Request | Count | Median ms | p95 ms | Maximum ms |
+| --- | ---: | ---: | ---: | ---: |
+| hover | 41,938 | 4.027 | 8.888 | 67.363 |
+| completion | 73,861 | 2.316 | 8.402 | 32.845 |
+| signatureHelp | 73,861 | 3.377 | 9.631 | 40.843 |
+| codeAction | 2 | 0.210 | 0.262 | 0.262 |
+
+The optional conformance/run sweep was not run: the mandatory two-pass examples campaign
+took thirteen minutes, and the next required work is the million-case fuzz campaign. The
+tool accepts `conformance/run/*.em --pass complete` for that optional extension. A2 is ticked
+only now. No website prose changed or became incorrect. The final source is identical to the
+separately committed crash fix that passed the full Debug/ReleaseSafe, build, docs, format,
+diff and cross-build gate; this item adds only the manual Python tool and evidence. Diff
+check passed again before committing. The pre-existing tools/__pycache__ remains unstaged.

@@ -183,12 +183,11 @@ in the journal and `docs/qa/2026-10-04-session-execution.csv`. The fixtures perf
 interpreter steps but different origin-lookup and garbage-collector work: this is not pure
 wall-clock noise. The user approved equal-step and logarithmic-lookup bounds, with collector
 counts recorded but never asserted. A5 is validated and complete, with no production lookup
-optimization. Next: A2's full ReleaseSafe example sweep, both passes, then A3's eight-seed
-million-case campaign. The first A2 ReleaseSafe sweep found a signature-help crash before a
-call's opening parenthesis. Selection now excludes that region and still selects an enclosing
-call; two regression cases each passed 50 runs, and the full fix gate passed. The manual
-sweep tool is drafted; its 920-prefix Debug smoke check is not the complete sweep. A2 and A3
-remain unticked. A5's pushed commit has green CI. Open the PR after the batch; do not merge.
+optimization. A2 is also complete: the ReleaseSafe sweep of all 31 examples passed both
+passes, 189,662 requests, with no failures or replies over 100 ms. It found and fixed a
+signature-help crash before a call's opening parenthesis; two regression cases each passed
+50 runs and the full fix gate passed. Next: A3's eight-seed million-case campaign. A3 remains
+unticked. A5's pushed commit has green CI. Open the PR after the batch; do not merge.
 
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
 the others have a validated commit each, with reproductions in the journal). Concurrency is
@@ -405,8 +404,10 @@ compiler), or the compiler depends on it.
      examples with output on 70 pages, 13 pages of `# →` results, and 159 linked files all match.
      Two interactive examples (`loops`, `optionals`) had no typed answers on their fences, so the
      checker could not confirm them; they now carry `input="…"` (website `d4247d2`).
-   - [ ] A2 (Codex) Editor crash sweep: send hover, completion, and signature help at every
-     position of every file in `examples/`; fail on a crash, a hang, or a reply over about 100 ms.
+   - [x] A2 (Codex, 2026-10-04) ReleaseSafe sweep of 31 examples: 41,938 complete positions,
+     31,923 unfinished prefixes (stride 8 above 2 KiB), and code actions on both diagnostics.
+     189,662 requests passed; no reply over 100 ms. One signature-help crash fixed with two
+     50-run regression cases and the full gate. Latencies and replay command are in the journal.
    - [ ] A3 (Codex) A longer fuzz campaign (about a million inputs; CI runs a bounded one).
    - [x] A4 (Claude, 2026-10-04) Compare speed with 0.6.0: startup (`print(1)` was 3.5 ms), the REPL
      and task benchmarks. Result: startup is about 3% slower (3.58 to 3.71 ms; +0.13 ms and about
