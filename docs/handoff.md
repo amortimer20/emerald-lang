@@ -171,24 +171,28 @@ project loader's, and range's unit tests now run in `zig build test`; they had b
 
 ## Next step
 
-Emerald 0.7.0 is in its QA pass (roadmap item 2; the checklist is there). Everything planned
-for it is merged: editor intelligence (language-server slices 1–5, PRs #37 and #38; the extension
-in emerald-vscode, PRs #4 and #5; website parity through `scripts/check-builtin-parity.py`), the
-first QA batch (PR #39: Console table errors name "the header" and number rows from 1, and an
-invalid Channel annotation no longer adds a dependent error), and the automated sweeps (PR #41:
-the exact-work test replacing the flaky timing test, a ReleaseSafe editor sweep of 189,662
-requests that found and fixed a signature-help crash, and a million fuzz cases that found and
-fixed a formatter idempotence bug; the evidence is in the journal and `docs/qa/`).
+**Emerald 0.7.0 is released** (tag `v0.7.0` on main `f519cd2`, 2026-10-11; GitHub's latest release).
+`v0.7.0-rc1` was the same code (the only commit between them changed this handoff). The release
+workflow's three platform builds, smoke tests, and install-script checks passed, and the notes in
+`docs/release-notes-0.7.0.md` are the release body. The documented install command was run
+against the live release on Linux and installed `Emerald 0.7.0`. The user tested rc1 and
+extension 0.3.0 by hand and reported that both work well (B1–B3). The website's install page
+and roadmap were updated for 0.7.0 (`640aa8b`); they go live with the user's next Firebase deploy.
 
-`v0.7.0-rc1` is tagged and published as a prerelease (main `0a93f06`, 2026-10-05): all three
-platform builds, their smoke tests, and the install-script checks passed, and `releases/latest`
-still points at 0.6.0. Install it by naming its tag (see C3). Extension 0.3.0 is published on the
-Marketplace (2026-10-04; the published package is byte-identical to a build of emerald-vscode
-`638d8cd`); the user's local `v0.3.0` tag on that commit was not yet pushed to GitHub.
+What 0.7.0 contains is in the release notes; the work behind them is merged: editor intelligence
+(language-server slices 1–5, PRs #37 and #38; the extension in emerald-vscode, PRs #4 and #5;
+website parity through `scripts/check-builtin-parity.py`), the first QA batch (PR #39), and the
+automated sweeps (PR #41: the exact-work test replacing the flaky timing test, a ReleaseSafe
+editor sweep of 189,662 requests that found and fixed a signature-help crash, and a million fuzz
+cases that found and fixed a formatter idempotence bug; the evidence is in the journal and
+`docs/qa/`). Extension 0.3.0 is published on the Marketplace (2026-10-04; byte-identical to a
+build of emerald-vscode `638d8cd`); the user's `v0.3.0` tag on that commit was local only when
+last checked.
 
-Next: the user's hands-on items (B1–B5), then C2 (the install page moves to 0.7.0; Claude), the
-final `v0.7.0` tag, the release notes (`docs/release-notes-0.7.0.md`), and C5. The live website
-predates the Console page wording fix (`17aae66`); it needs a Firebase deploy.
+Next: the pre-compiler phase (roadmap items 3 onward). Item 3, the design plans for enums that
+carry data and clean generics, needs the user's decisions first. Still open from the QA pass: B4
+(reading the site) and B5 (reproducing the red "not defined" editor errors) were not reported;
+the flaky-test cause is settled (the exact-work test). The Zig 0.17 upgrade waits for 0.17.1.
 
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
 the others have a validated commit each, with reproductions in the journal). Concurrency is
@@ -383,7 +387,7 @@ compiler), or the compiler depends on it.
 1. **Editor intelligence**: done. The language server's slices 1-5 are merged (PRs #37 and #38),
    the extension's slice 6 is merged in emerald-vscode (PRs #4 and #5; 0.3.0 is published), and
    slice 7 (website parity) is Claude's `scripts/check-builtin-parity.py` in `emerald-website`.
-2. **A QA iteration, then the 0.7.0 release** (added 2026-10-01): a deliberate pass over how Emerald looks and behaves in real
+2. **A QA iteration, then the 0.7.0 release** (added 2026-10-01; **done, 0.7.0 released 2026-10-11**; B4 and B5 below were not reported): a deliberate pass over how Emerald looks and behaves in real
    use, before more is built on top. The user's first finding, Console tables rendering poorly on
    the website's Console page (borders short, vertical lines broken between rows; the terminal was
    always fine), is fixed: it self-hosts the full JetBrains Mono (Google's copy omits the
@@ -432,15 +436,15 @@ compiler), or the compiler depends on it.
      Fonts, unlike the self-hosted site.
 
    *Hands-on (the user).*
-   - [ ] B1 Install the release candidate as a student would on Windows (and a Mac if possible):
+   - [x] B1 Install the release candidate as a student would on Windows (and a Mac if possible):
      follow the install page, then `emerald --version`.
-   - [ ] B2 Write a 30-line program in VS Code with extension 0.3.0 and the new build: do
+   - [x] B2 Write a 30-line program in VS Code with extension 0.3.0 and the new build: do
      completion, hover, signature help, and quick fixes help or add noise, and do the one-line
      descriptions read clearly cold?
-   - [ ] B3 Use the REPL for ten minutes: multi-line input, mistakes, recovering from errors.
-   - [ ] B4 Read the site from Install through the first lessons, in both themes and at phone
+   - [x] B3 Use the REPL for ten minutes: multi-line input, mistakes, recovering from errors.
+   - [ ] B4 (not reported at release) Read the site from Install through the first lessons, in both themes and at phone
      width: colours (the new library-class colour especially), layout, wording.
-   - [ ] B5 Try to reproduce the red "not defined" editor errors on the new build, and send the
+   - [ ] B5 (not reported at release) Try to reproduce the red "not defined" editor errors on the new build, and send the
      message and its line.
 
    *Release mechanics.*
@@ -451,9 +455,9 @@ compiler), or the compiler depends on it.
      `InputError` for `input` and the prompts, and Math values). After tagging, publish with
      `gh release edit v0.7.0 --notes-file docs/release-notes-0.7.0.md`. Revise the file if
      candidate testing changes any behavior it describes.
-   - [ ] C2 (Claude) Move the install page from 0.6.0 to 0.7.0: sample outputs and the two pinned
+   - [x] C2 (Claude) Move the install page from 0.6.0 to 0.7.0: sample outputs and the two pinned
      version commands. The user deploys.
-   - [ ] C3 (the user) Tag `v0.7.0-rc1` first, then `v0.7.0`; the release workflow builds and
+   - [x] C3 (the user) Tag `v0.7.0-rc1` first, then `v0.7.0`; the release workflow builds and
      smoke-tests three platforms. A tag containing a hyphen publishes as a prerelease (so
      `releases/latest`, which the install scripts and install page use, still points at 0.6.0); install a
      candidate with `install.sh --version v0.7.0-rc1` or `install.ps1 -Version v0.7.0-rc1`. Check the
@@ -461,7 +465,10 @@ compiler), or the compiler depends on it.
    - [ ] C4 (the user) Extension 0.3.0 is published (Marketplace, 2026-10-04; verified byte-identical to
      emerald-vscode `638d8cd`). Remaining: push the `v0.3.0` tag, which exists only locally, with
      `git push origin v0.3.0`.
-   - [ ] C5 Install from the real release assets on each OS.
+   - [x] C5 Install from the real release assets on each OS. (Claude, 2026-10-11) Linux: the documented
+     install command run against the live release installed `Emerald 0.7.0`; `--version`, `run`, and
+     `repl` worked. Windows (both PowerShell flavors) and macOS: the release workflow's install-script
+     checks passed against the `v0.7.0` tag.
 
    Not in this pass: the error-message review against real student mistakes and the
    whole-codebase review (both later, in the pre-compiler phase), new features, and speed work.
