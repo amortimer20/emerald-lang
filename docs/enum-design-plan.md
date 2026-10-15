@@ -1,8 +1,8 @@
 # Data-carrying enums: design and implementation plan
 
-Status: proposed, 2026-10-13. The user asked Codex to write this plan, overriding
-the usual Claude/Codex division for this milestone. No implementation is authorized
-by this document until the user accepts its recommendations.
+Status: accepted, 2026-10-15. Codex wrote this plan (proposed 2026-10-13); the user
+accepted all nine recommendations as amended below and assigned implementation to
+Claude, now the only programming agent.
 
 Amended 2026-10-15 by Claude at the user's request: a data choice is no longer a
 value without a call (decision 2), and a binding name that is another position's
@@ -445,8 +445,8 @@ implementation shortcut.
 
 Assess the sibling extension's lexical grammar/snippets with its own instructions
 before changes. Keep syntax colouring lexical; do not add compiler logic to the
-extension. Claude owns website prose and will update its enum/case lessons and
-JSON/CSV/table eligibility descriptions after the implementation is reviewed.
+extension. Update the website's enum/case lessons and JSON/CSV/table eligibility
+descriptions once the implementation is reviewed.
 
 ## 9. Boundaries
 
@@ -551,11 +551,13 @@ constraints, not public syntax choices:
 
 ## Runnable implementation slices
 
-Use `codex/enum-data` after acceptance, one focused commit per slice with its
-validation in the message. Do not merge. Update the plan's “Settled while
-building” notes, handoff, and journal before each implementation commit. If the
-plan disagrees with the source, record the mismatch and ask instead of inventing
-behavior. Complete the milestone before presenting it as generally available.
+Build on `claude/enum-data`, one focused commit per slice with its validation in
+the message. Update the plan's “Settled while building” notes, handoff, and
+journal in each implementation commit. If the plan disagrees with the source,
+record the mismatch here; decide routine matters by Emerald's philosophy and ask
+when accepted language behavior would change. Self-review the whole branch as
+AGENTS.md describes before its pull request. Complete the milestone before
+presenting it as generally available.
 
 ### Slice 1: Data declarations, construction, and value safety
 
@@ -607,8 +609,8 @@ behavior. Complete the milestone before presenting it as generally available.
   scopes, named construction arguments, and rename across a multi-file project;
   repeat the new protocol cases 50 times under the testing allocator.
 - Check the sibling extension grammar and integration suite. Any extension changes
-  use that repo's instructions and a separate branch/review; leave website prose
-  to Claude. Record concrete companion work in the handoff.
+  use that repo's instructions and a separate branch/review. Record concrete
+  companion work in the handoff.
 - Settled while building: pending.
 
 ### Slice 4: Teaching material and milestone integration
@@ -622,7 +624,7 @@ behavior. Complete the milestone before presenting it as generally available.
   interpreter-specific representation, timing, or exact recursion depths.
 - Run all proposed teaching programs as conformance cases with carefully read
   output/diagnostic goldens. Close every diagnostic-matrix row and boundary case.
-- Update handoff and journal; give Claude the precise website pages/claims to change.
+- Update handoff and journal, and the website pages whose claims changed.
   Keep automatic serialization and generics deferred rather than silently expanding
   this milestone.
 - Settled while building: pending.
@@ -721,11 +723,8 @@ concern; this is not an interpreter-optimization milestone.
 
 ## Acceptance and next step
 
-Accept or change the nine recommendations, particularly required data without
-defaults, no data choice as a value without a call, small positional binding
-matches with the swapped-label check, and deferring
-automatic serialization. The user need not choose Zig data structures or compiler
-mechanics; routine implementation choices belong to the executor within these rules.
-
-After acceptance, change this plan's status to accepted and start slice 1. Until
-then, do not modify language behavior or rewrite the settled specification.
+Accepted 2026-10-15: all nine recommendations as amended, including required data
+without defaults, no data choice as a value without a call, small positional
+binding matches with the swapped-label check, and deferred automatic
+serialization. Routine implementation choices belong to the implementer within
+these rules. Next: slice 1 on `claude/enum-data`.

@@ -196,24 +196,15 @@ and clean generics, needs the user's decisions first. Still open from the QA pas
 (reading the site) and B5 (reproducing the red "not defined" editor errors) were not reported;
 the flaky-test cause is settled (the exact-work test). The Zig 0.17 upgrade waits for 0.17.1.
 
-**Current language-design work (2026-10-13):** the user authorized Codex to plan
-data-carrying enums for this milestone. [`enum-design-plan.md`](enum-design-plan.md)
-is **proposed**, with nine recommendations, teaching examples, diagnostics,
-source-informed implementation constraints, and four runnable slices. Next: the
-user accepts or changes the recommendations; only then start slice 1 on
-`codex/enum-data`. Claude amended it on 2026-10-15 at the user's request: a data
-choice is not a value without a call (as a struct type is not), and a binding name
-that is another position's label is an error. Key boundaries to review: required
-data without defaults, small positional binding matches, and rejecting
-automatic JSON/CSV/typed-table conversion for data-carrying enums until a saved-data
-format is designed. Existing plain enums keep their behavior.
-
-No language implementation, settled specification, or website content changed.
-The focused review is in [`enum-source-review.md`](enum-source-review.md); its
-completed validation is recorded in the journal. The plan's Markdown links,
-own-line layout, and whitespace are checked separately from executable behavior;
-proposed syntax has not been compiled. The plan awaits acceptance; implementation
-has not started.
+**Current work: data-carrying enums (accepted 2026-10-15).** Codex is retired; Claude is
+the only programming agent and implements, then self-reviews (AGENTS.md).
+[`enum-design-plan.md`](enum-design-plan.md) is **accepted** with all nine
+recommendations as amended on 2026-10-15: a data choice is not a value without a call
+(as a struct type is not), and a binding name that is another position's label is an
+error. Its implementation constraints 8 and 9 record a source check of where those go.
+Next: slice 1 (declarations, construction, display, equality, key and serializer
+guards) on `claude/enum-data`. Existing plain enums keep their behavior. The focused
+source review is in [`enum-source-review.md`](enum-source-review.md).
 
 Documentation checkpoint validation (2026-10-14): pinned Zig 0.16.0 toolchain
 probe and `zig build test -j1` in Debug passed, with localhost socket access for
@@ -371,11 +362,10 @@ Open work:
     runner handling several test processes on Windows (probably a Zig 0.16.0 bug to report upstream
     with the logs); a clean run points at something conformance does, such as the fixed-name
     directories its programs create in the working directory or the memory its programs use.
-- **Editor intelligence**, below. Codex implements the accepted slices; Claude reviews.
-- A 0.7.0 release after the QA iteration (roadmap item 2); the REPL is merged.
+- **Editor intelligence**, below: done, with two remaining gaps.
 
-**In progress: editor intelligence** (the user's go-ahead, 2026-09-28; Codex implements,
-Claude reviews and handles website parity). The plan is
+**Editor intelligence** (the user's go-ahead, 2026-09-28; built by Codex, reviewed by
+Claude). The plan is
 [`editor-intelligence-design-plan.md`](editor-intelligence-design-plan.md), accepted 2026-10-01 with all ten
 recommendations; the REPL prerequisite and slice 1 are merged. Slices 2–4 are reviewed and
 their CI is green; slice 5 is reviewed, and all four are merged (PR #38). Claude's review added
@@ -811,20 +801,12 @@ not yet discussed:
 
 ## Validation and repository state
 
-QA A5, A2 and A3 are complete on `codex/qa-sweeps`, not merged. Each source fix passed
-the full local gate on pinned Zig 0.16.0 with -j1: Debug/ReleaseSafe tests, native build,
-documentation examples (24 executed, 135 conformance links), changed Zig formatting,
-diff check, and Windows x86_64/macOS aarch64 cross-builds outside zig-out. The two new
-LSP cases each passed 50 replies. The ReleaseSafe example sweep passed 189,662 requests,
-and the fuzz campaign passed one million cases on eight new seeds. Catalog and prelude
-are unchanged, so website parity was not required. A5, A2, and the formatter fix's CI passed
-(runs 37248824997, 37250268173, 37251264040, 37253398155). PR #41 is open for review;
-confirm its current checks before merging. The only unrelated untracked artifact is the
-pre-existing tools/__pycache__; it is not staged. Earlier milestone validation is in
-the journal, not a pending editor-intelligence step.
+Latest (2026-10-15): `zig build test -j1` in Debug passed on main `3e2d2bf` plus the
+Markdown-only enum plan amendments. QA A2, A3, and A5 merged with PR #41; their
+validation is in the journal.
 
-`main` is the only long-lived branch. Work happens on
-`claude/*` and `codex/*` branches, merged by pull request once CI passes; see
+`main` is the only long-lived branch. Work happens on `claude/*` branches (the
+`codex/*` ones are history), merged by pull request once CI passes; see
 [AGENTS.md](../AGENTS.md) for the workflow.
 
 **Full gate**, with the pinned Zig 0.16.0 and always `-j1` (the development machine has 7 GB,

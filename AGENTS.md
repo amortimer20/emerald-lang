@@ -1,8 +1,8 @@
 # Shared agent working instructions
 
-These instructions apply to Codex, Claude, and other coding agents working on Emerald.
-The user runs agents sequentially. Coordinate through repository files and Git rather
-than assumed conversational memory. The user's current instructions take precedence.
+These instructions apply to Claude, Emerald's programming agent, and to any other agent
+the user runs. Coordinate through repository files and Git rather than assumed
+conversational memory. The user's current instructions take precedence.
 
 ## Start of a session
 
@@ -49,7 +49,7 @@ than assumed conversational memory. The user's current instructions take precede
 
 ## Git and handoff
 
-- Preserve unrelated changes, including work left by the other agent. Inspect changes
+- Preserve unrelated changes, including work left by the user or an earlier session. Inspect changes
   before staging; never assume a dirty working tree is disposable.
 - Review the staged diff, stage specific files, and use a focused commit message. Commit,
   push, and merge only as the roles below allow; the user's current instructions take
@@ -69,29 +69,30 @@ than assumed conversational memory. The user's current instructions take precede
 
 ## Roles and workflow
 
-The user works with two agents, one after the other or side by side, and coordinates them
-through this repository.
+Claude is the one programming agent (the user, 2026-10-15). Codex is retired: its
+`codex/*` branches, plans, and journal entries are history, written when Codex
+implemented and Claude reviewed.
 
-- **Claude** writes design plans (`docs/<topic>-design-plan.md`) whose decisions carry a
-  recommendation for the user to accept or change; reviews the other agent's branches by
-  reading the whole diff and running real programs; fixes what review finds and records it in
-  the plan; and opens and merges pull requests. The user has given Claude standing permission
-  to commit once work is verified, to push its own branches, and to merge a pull request after
-  the full local gate passes and CI is green. Claude also makes design choices that come up
-  in a review, using Emerald's philosophy, rather than asking.
-- **Codex** implements an accepted plan slice by slice on a `codex/<name>` branch, one commit
-  per slice with its validation in the message, and updates the handoff and journal before
-  each commit. It does not merge. If the plan disagrees with the source, it stops, records the
-  mismatch in the plan and handoff, and asks rather than inventing behavior.
-- **A plan starts as `Status: proposed`.** Once the user accepts its decisions (often "accept
-  your recommendations"), the status becomes `accepted` and the implementing agent begins. Do
-  not reopen an accepted decision.
-- **Website copy is Claude's.** The user wants one voice on the site, so Codex does not edit
-  `emerald-website` prose (pages, install text, release notes). If a code change makes a page
-  wrong, say which page and what changed in the handoff, and Claude updates it.
-- **Never share a working tree.** Whichever agent the user started in owns the main checkout.
-  Claude works from `git worktree` directories under `~/.cache/emerald-worktrees/` (not
-  `/tmp`, which environment restarts wipe).
+- **Plan, then build.** Claude writes a design plan (`docs/<topic>-design-plan.md`) whose
+  decisions carry a recommendation for the user to accept or change. **A plan starts as
+  `Status: proposed`.** Once the user accepts its decisions (often "accept your
+  recommendations"), the status becomes `accepted` and building begins. Do not reopen an
+  accepted decision.
+- **Build slice by slice** on a `claude/<name>` branch, one commit per slice with its
+  validation in the message, updating the plan's "Settled while building" notes, the
+  handoff, and the journal in the same commit. If the plan disagrees with the source, record
+  the mismatch in the plan; decide it by Emerald's philosophy when it is routine, and ask
+  when it changes language behavior the user accepted.
+- **Review your own work before a pull request**, as a second agent would: read the whole
+  diff, run real programs (results and diagnostics), and run `/code-review` at high effort.
+  Fix what it finds and record the fixes in the plan.
+- **Standing permission:** commit once work is verified, push `claude/*` branches, and merge a
+  pull request after the full local gate passes and CI is green.
+- **Website copy is Claude's**, in one voice. If a code change makes a page wrong, update it or
+  name the page and the change in the handoff.
+- **Work from worktrees.** Branch work happens in `git worktree` directories under
+  `~/.cache/emerald-worktrees/` (not `/tmp`, which environment restarts wipe), leaving the
+  main checkout on `main` for Markdown-only changes.
 - **Markdown-only changes** (plans, the handoff, the journal, reference pages) may go straight to
   `main` after `zig build test -j1` passes locally; CI skips them. Anything that touches code,
   build files, or workflows goes through a branch, a pull request, and green CI.
