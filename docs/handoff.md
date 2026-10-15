@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-10-04. This is the live status a session starts from. Keep it to the current
+Updated: 2026-10-14. This is the live status a session starts from. Keep it to the current
 milestone, next work, active rough edges, and recent validation. Completed-slice narrative
 belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 [`docs/rewrite-context.md`](rewrite-context.md).
@@ -195,6 +195,28 @@ Godot bindings, and a debugger come after 1.0). Item 3, the design plans for enu
 and clean generics, needs the user's decisions first. Still open from the QA pass: B4
 (reading the site) and B5 (reproducing the red "not defined" editor errors) were not reported;
 the flaky-test cause is settled (the exact-work test). The Zig 0.17 upgrade waits for 0.17.1.
+
+**Current language-design work (2026-10-13):** the user authorized Codex to plan
+data-carrying enums for this milestone. [`enum-design-plan.md`](enum-design-plan.md)
+is **proposed**, with nine recommendations, teaching examples, diagnostics,
+source-informed implementation constraints, and four runnable slices. Next: the
+user accepts or changes the recommendations; only then start slice 1 on
+`codex/enum-data`. Key boundaries to review: required data without defaults,
+constructor callable values, small positional binding matches, and rejecting
+automatic JSON/CSV/typed-table conversion for data-carrying enums until a saved-data
+format is designed. Existing plain enums keep their behavior.
+
+No language implementation, settled specification, or website content changed.
+The focused review is in [`enum-source-review.md`](enum-source-review.md); its
+completed validation is recorded in the journal. The plan's Markdown links,
+own-line layout, and whitespace are checked separately from executable behavior;
+proposed syntax has not been compiled. The plan awaits acceptance; implementation
+has not started.
+
+Documentation checkpoint validation (2026-10-14): pinned Zig 0.16.0 toolchain
+probe and `zig build test -j1` in Debug passed, with localhost socket access for
+the HTTP tests. Markdown link/layout checks and `git diff --check` passed. The
+user requested a local commit of the four planning/review/status documents.
 
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
 the others have a validated commit each, with reproductions in the journal). Concurrency is

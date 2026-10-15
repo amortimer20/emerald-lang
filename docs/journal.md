@@ -5474,3 +5474,51 @@ QA branch pushed and PR #41 opened for review, without merging. CI passed on all
 commits: A5 run 37248824997, signature-help fix 37250268173, sweep tool 37251264040,
 formatter fix 37253398155. Final evidence/status updates are Markdown-only; the PR's
 current checks still need confirmation before Claude merges.
+
+## 2026-10-13: Data-carrying enum source review and proposed plan
+
+The user authorized Codex to plan this milestone despite the usual role split.
+After discussing enums from a C# starting point, the user found typed choice data,
+ordinary construction calls, and branch-local extraction in `case` readable. This
+was a working syntax direction, not acceptance of all behavior.
+
+The focused review against main `5fb9f92` is in `docs/enum-source-review.md`. It
+traced declarations, resolution, types, calls, case flow, runtime storage and
+ownership, equality/hashing/display, serializers, formatting, and editor support.
+Important constraints: alternatives currently compare evaluated expressions by
+equality; introducing branch names requires explicit resolution and lifetime work;
+enum key checks see no stored fields; JSON/CSV currently save only choice names
+and reconstruct values with no data. Those assumptions must be handled deliberately.
+
+Pinned Zig 0.16.0 passed the toolchain smoke probe and native build. Eight direct
+enum/case/JSON/CSV runs matched their existing output goldens, and four enum/case
+diagnostic checks matched after stripping CLI-only diagnostic codes. The first
+Debug full-suite run passed 560/562 tests; two HTTP-related tests failed at socket
+creation with sandbox `EPERM`. `zig build test -j1` passed with localhost access
+outside that restriction. This was a specific environment failure, not a rerun
+to hide an unexplained intermittent test. No language source changed afterward.
+
+`docs/enum-design-plan.md` now records nine proposed recommendations, plain-language
+teaching examples, diagnostics, implementation constraints, four runnable slices,
+and validation gates. Its boundaries include required data without defaults,
+constructor callable values, positional name/discard matches, and explicit
+rejection of automatic data-carrying enum serialization/typed-table fields until
+a representation is designed. These remain proposals pending the user's decision;
+the rewrite context is unchanged and implementation has not started.
+
+Planning checks cover relative Markdown links, own-line continuation layout, and
+whitespace. New syntax examples were not executed or treated as valid current
+programs. No new executable links, source, build/workflow files, or website content
+were changed. The planning documents are left uncommitted for user review.
+
+## 2026-10-14: Enum planning documentation checkpoint
+
+The user requested a local commit of the enum design plan, focused source review,
+handoff, and journal. The plan remains proposed; this checkpoint does not accept
+its recommendations or start implementation. The handoff now points to the
+proposed plan and records acceptance as the next step.
+
+Pre-commit validation passed: the pinned Zig 0.16.0 toolchain smoke probe, a fresh
+Debug `zig build test -j1` with localhost access for HTTP tests, relative Markdown
+links, code-fence/own-line layout checks, and `git diff --check`. No language
+source, build/workflow files, executable example links, or website content changed.
