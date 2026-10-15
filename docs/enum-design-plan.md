@@ -4,6 +4,10 @@ Status: proposed, 2026-10-13. The user asked Codex to write this plan, overridin
 the usual Claude/Codex division for this milestone. No implementation is authorized
 by this document until the user accepts its recommendations.
 
+Amended 2026-10-15 by Claude at the user's request: a data choice is no longer a
+value without a call (decision 2), and a binding name that is another position's
+data label is an error (decision 3). The reasons are in those sections.
+
 The user liked the declaration, construction, and `case` syntax below after
 working through examples from a C# enum starting point. Treat that as the working
 direction; the complete behavior and boundaries below are still recommendations.
@@ -54,8 +58,8 @@ implementation, not a report of an existing run.
 | Decision | Recommendation |
 | --- | --- |
 | 1. Declarations | Keep existing bare choices; add named, typed, required data in parentheses. No defaults or empty parentheses in this milestone. |
-| 2. Construction | Use ordinary positional/named calls. A choice with data can also be used as a callable value. |
-| 3. Reading data | Match an explicitly named choice in `case`; introduce positional names or `_`, available only in that branch. |
+| 2. Construction | Use ordinary positional/named calls. A choice with data is not a value until it is called, as a struct type is not; wrap it in a lambda to pass it along. |
+| 3. Reading data | Match an explicitly named choice in `case`; introduce positional names or `_`, available only in that branch. A name that is another position's data label is an error. |
 | 4. Matching and coverage | Data-choice matches select the choice itself, not equality of its contents. Preserve ordinary expression alternatives and existing exhaustiveness rules. |
 | 5. Values and members | Read-only data and bindings, ordinary value/reference semantics, existing enum methods and traits. Recursive data is allowed without new syntax. |
 | 6. Equality, keys, and display | Compare choice plus data by default; check every choice's data for key eligibility; display the choice and labelled contents. |
@@ -103,9 +107,10 @@ enum Action {
 **Reason:** students can read the information each choice needs directly from its
 declaration, without learning field bodies, constructors, or extra punctuation.
 
-## 2. Construction and callable values
+## 2. Construction
 
-**Recommendation: use Emerald's existing call rules.**
+**Recommendation: use Emerald's existing call rules, including the rule that a
+type's constructor is not a value.**
 
 ```emerald
 const first = Action.move(2, 3)
@@ -123,20 +128,15 @@ not return a choice-specific public type. Type-level setup keeps existing
 first-use ordering and diagnostics.
 
 `Action()` remains invalid. Calling `Action.wait()` is invalid and should suggest
-removing the parentheses. Referring to a data choice without a call obtains a
-callable, consistent with named functions:
+removing the parentheses. Writing a data choice without a call is an error, as
+writing a struct type without a call is today (`const make = Point` reports
+"`Point` is a type, not a value"). A program that needs to pass construction
+along writes a lambda:
 
 ```emerald
-const say: func(String): Action = Action.say
+const say: func(String): Action = { text => Action.say(text) }
 print(say("Hello!"))
 ```
-
-Calling that stored value takes positional arguments, as existing function values
-do; named arguments require the choice called by its declared name. Repeatedly
-obtaining the same choice constructor has the equality behavior of the same named
-function, not of separately created lambdas. Capturing the constructor retains
-its enum identity and REPL declaration origin. It captures no partially supplied
-data and is not an enum instance.
 
 Function-valued data may be supplied through the existing trailing-block call
 syntax when it is the final parameter. That remains an ordinary argument, not an
@@ -144,8 +144,11 @@ enum-specific body or initializer. No partial application, overloads, user-writt
 choice constructors, or validation blocks are added. A program needing validation
 can write a normal function that returns the enum.
 
-**Reason:** a special ban on callable values or ordinary call forms would make a
-choice look like a function but behave differently for no teaching benefit.
+**Reason:** the construction call is the same shape as a struct's, so it follows the
+struct's rule. A choice that could be stored without a call while a struct cannot
+would be the inconsistency. No teaching program needs it, and a lambda already says
+the same thing. Allowing it later is a small addition; removing it after 1.0 would
+break programs (principle 7).
 
 ## 3. Branch bindings
 
@@ -183,6 +186,13 @@ No call is executed to produce a comparison value for these alternatives.
 - A binding is always new. It never assigns an outer variable with the same name,
   or treats that name as a value to compare. A duplicate name such as `move(x, x)`
   is an error.
+- A binding name that is the declared label of a *different* position in the same
+  choice is an error. With `move(x: Int, y: Int)`, `when Action.move(y, x)` would
+  otherwise put the `x` value in a name called `y`, silently, since both are `Int`.
+  The name of a position's own label, any name that is no label of this choice,
+  and `_` are all accepted, so `move(x, y)`, `move(destination_x, destination_y)`,
+  and `move(_, y)` are fine. This is a check on names only; no labelled-binding
+  syntax is added.
 - A data-choice match is the only alternative in its `when` arm, even if every
   position is `_`. Separate branches avoid rules for merging different bindings.
   Existing comma-separated ordinary alternatives remain supported.
@@ -204,7 +214,9 @@ func describe(download: Download): String {
 
 **Reason:** "choose the possibility, then use its information" is one rule. No
 new optional access operator, unchecked extraction operation, or subtype test is
-needed.
+needed. Bindings are positional, so the swapped-label check catches the one
+positional mistake whose result has the right types and the wrong values, which
+nothing else in the checker would report.
 
 ## 4. Choice matching, ordinary alternatives, and coverage
 
@@ -234,9 +246,9 @@ case download {
 ```
 
 An ordinary function call such as `when expected_download()` still evaluates and
-compares its result by `==`. A call through a stored constructor variable is also
-an ordinary expression, not binding syntax; its arguments must refer to existing
-values. Only an explicitly resolved choice selects the binding form. A subjectless
+compares its result by `==`. A call through a stored lambda that builds a choice is
+also an ordinary expression, not binding syntax; its arguments must refer to
+existing values. Only an explicitly resolved choice selects the binding form. A subjectless
 case still requires Bool conditions and provides no choice-binding form.
 
 This adds one deliberate exception to section 6.3's equality-based alternatives:
@@ -421,7 +433,7 @@ implementation shortcut.
   completion includes it only in its branch, including a `then` expression.
 - Go to definition and references work for the enum, choices, written data-type
   annotations, named construction labels, and branch bindings.
-- Renaming a choice updates its construction, callable, and matching uses.
+- Renaming a choice updates its construction and matching uses.
   Renaming a declaration's data label updates named construction argument labels;
   it does not rename independently chosen branch names. Renaming a branch binding
   updates only that binding's uses and captures.
@@ -445,6 +457,7 @@ This milestone adds data to existing enums. It does not add:
   destructuring outside `case`, or subjectless choice matching;
 - choice subtypes, checked casts to a choice, or optional direct data properties;
 - choice-data defaults, overloads, custom constructors, setters, or annotations;
+- a data choice used as a value without a call;
 - integer backing, flags, implicit integer conversion, automatic choice lists,
   enum iteration, or automatic text parsing;
 - automatic data-carrying enum serialization, a package system, a new backend,
@@ -467,12 +480,14 @@ malformed declaration or binding.
 | `Download.finished()` | “`Download.finished` needs a value for `path`. Supply a String, such as `Download.finished("report.pdf")`.” |
 | `Action.move("left", 3)` | “This is String, but `x` of `Action.move` needs Int.” Point at the argument and suggest a whole number. |
 | `Download.waiting()` at a use | “`Download.waiting` is a value, so it takes no parentheses. Remove `()`.” |
+| `const say = Action.say` | “`Action.say` needs its data before it is a value. Call it, as in `Action.say("Hello!")`, or wrap it: `{ text => Action.say(text) }`.” |
 | Unknown/duplicate named arguments | Reuse the ordinary declared-call diagnostic, naming the choice and its data label. |
 | `download.path` with no declared property | “A Download does not always have a path. Handle `Download.finished(path)` in a `case` to read its data.” |
 | `when Download.finished` | “This choice carries data. Write `Download.finished(path)`, or `Download.finished(_)` to ignore it.” |
 | Wrong binding count | Name the choice, the required number of names, and the number provided; suggest names or `_` for every position. |
 | `when Action.move(0, y)` | “This position introduces a name, but `0` is a value. Use a name or `_`; check the value with `if` inside the branch.” |
 | `when Action.move(x, x)` | “`x` is already introduced by this match. Use different names, or `_` to ignore a position.” |
+| `when Action.move(y, x)` | “`y` is the second item of `Action.move`, but here it names the first. Write `Action.move(x, y)` in declaration order, or choose names that are not its labels.” Point at each misplaced name. |
 | A binding shadows a visible local | Retain the existing shadowing rule and recommend a different new name; do not silently treat it as assignment. |
 | Mixing a data match with comma alternatives | “A choice carrying data needs its own `when` arm. Give each choice a separate branch.” |
 | Reassigning/mutating a bound value | Explain that the name is read-only; suggest a `var` working copy for collection/struct changes. Class-object mutation retains ordinary behavior. |
@@ -497,9 +512,9 @@ constraints, not public syntax choices:
    after their resolution is complete. Forward declarations must not pass a check
    merely because their metadata is still empty; include later-file and mutually
    referring declarations in the tests.
-3. Reuse the shared argument binder and expected-type checker. A constructor
-   callable retains its enum descriptor/choice and source origin; it must not
-   acquire user-visible generic or native machinery.
+3. Reuse the shared argument binder and expected-type checker. A data choice
+   resolves only as a call's callee; it must not acquire user-visible generic or
+   native machinery.
 4. The parser must preserve ordinary expression alternatives without consulting
    symbol tables. Resolution distinguishes direct choice-match candidates from
    real calls before resolving the candidate names as variable reads. Checked
@@ -515,9 +530,24 @@ constraints, not public syntax choices:
 7. Update every relevant AST walker: height/nesting checks, mutation and capture
    analysis, case completion/flow, formatting, LSP traversal, and prelude AST
    serialization through its generator. Preserve AST-node keyed typed-call facts.
-8. Preserve REPL descriptor/code origins, captures escaping failed entries, and
-   existing native enum choice numbers. Test channel transmission with managed
-   and optional data. No scheduler changes are a prerequisite.
+8. Choices are type-level `const` fields today (`StructDeclaration.TypeField` with
+   `enum_value`), each initialized once to a shared value by `evaluateEnumValue`.
+   A data choice has no single value, so it cannot reuse that initializer. Do not
+   model it on `type_functions` either: a type-level function is already a value
+   (`const f = V.origin` runs on main `3e2d2bf`), which would let `Action.say`
+   through silently. A data choice read without a call must reach its own error
+   in `typeOfMember`, next to the existing "is a type, not a value" diagnostic.
+9. The swapped-label check belongs where binding names are first known: the
+   resolver's `walkCase`, which today walks every alternative as an ordinary
+   expression and opens no scope for a `then` arm. Coverage needs no new key:
+   record the choice's existing `Resolver.methodKey(enum, choice)` in
+   `checkAlternative`'s `covered` set, which `caseCoverage` already lists from.
+   The heap copies an instance's own `fields` length (`Heap.uniqueStruct`), so
+   per-choice data lengths need no layout change; the JSON and CSV guards are the
+   single `user.enumeration` acceptances in `Checker`'s two eligibility functions.
+10. Preserve REPL descriptor/code origins, captures escaping failed entries, and
+    existing native enum choice numbers. Test channel transmission with managed
+    and optional data. No scheduler changes are a prerequisite.
 
 ## Runnable implementation slices
 
@@ -529,8 +559,8 @@ behavior. Complete the milestone before presenting it as generally available.
 
 ### Slice 1: Data declarations, construction, and value safety
 
-- Add choice declarations, type metadata, direct construction and constructor
-  callable values, all ordinary allowed data types, ownership, display, equality,
+- Add choice declarations, type metadata, direct construction (and the error for
+  a data choice used without a call), all ordinary allowed data types, ownership, display, equality,
   hashing checks, and JSON/CSV/Console eligibility guards.
 - Extend enum declaration/call formatting and all traversals sufficiently that
   tools can consume these programs safely. Preserve existing plain enum behavior,
@@ -538,12 +568,12 @@ behavior. Complete the milestone before presenting it as generally available.
 - Until slice 2, diagnose direct data-choice matching as not yet supported on
   this implementation branch; do not temporarily give it equality-call semantics.
 - Runnable result: construct/print/compare `Download.finished("report.pdf")`,
-  call a captured constructor, and prove collection copy semantics through a
+  build one through a stored lambda, and prove collection copy semantics through a
   separately held source list. No extraction or future subsystem scaffolding.
 - Tests: argument ordering/names/widening/expected types, managed and recursive
   values, shared objects, equality/display, keys across every choice, serializer
   rejection at nested paths, native/plain enum compatibility, failed allocations,
-  REPL constructor persistence, and malformed declaration diagnostics. Include
+  REPL persistence of enum declarations, and malformed declaration diagnostics. Include
   user choices whose names resemble native operations; dispatch must follow the
   resolved declaration rather than a spelling collision.
 - Record the implemented part of accepted semantics in the rewrite context in
@@ -658,7 +688,7 @@ Wait here
 
 The teaching sequence is plain enum → choice with data → create a value → handle
 each choice with `case` → functions/lists → read-only data and working copies.
-Do not lead with recursion, custom hashing, callable constructors, or pattern
+Do not lead with recursion, custom hashing, or pattern
 terminology in beginner material.
 
 ## Validation
@@ -692,7 +722,8 @@ concern; this is not an interpreter-optimization milestone.
 ## Acceptance and next step
 
 Accept or change the nine recommendations, particularly required data without
-defaults, callable constructors, small positional binding matches, and deferring
+defaults, no data choice as a value without a call, small positional binding
+matches with the swapped-label check, and deferring
 automatic serialization. The user need not choose Zig data structures or compiler
 mechanics; routine implementation choices belong to the executor within these rules.
 

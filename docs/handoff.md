@@ -201,8 +201,10 @@ data-carrying enums for this milestone. [`enum-design-plan.md`](enum-design-plan
 is **proposed**, with nine recommendations, teaching examples, diagnostics,
 source-informed implementation constraints, and four runnable slices. Next: the
 user accepts or changes the recommendations; only then start slice 1 on
-`codex/enum-data`. Key boundaries to review: required data without defaults,
-constructor callable values, small positional binding matches, and rejecting
+`codex/enum-data`. Claude amended it on 2026-10-15 at the user's request: a data
+choice is not a value without a call (as a struct type is not), and a binding name
+that is another position's label is an error. Key boundaries to review: required
+data without defaults, small positional binding matches, and rejecting
 automatic JSON/CSV/typed-table conversion for data-carrying enums until a saved-data
 format is designed. Existing plain enums keep their behavior.
 
