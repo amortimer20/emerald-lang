@@ -378,6 +378,8 @@ methods_named: std.StringHashMapUnmanaged(std.ArrayList([]const u8)) = .empty,
 instance_members: NameSet = .empty,
 /// The member key of every section 12 enum value.
 enum_values: NameSet = .empty,
+/// The enum values that carry data (12), which a call builds.
+data_choices: NameSet = .empty,
 /// For each enum's key, its values as a reader would list them, for help text.
 enum_listings: KeyMap = .empty,
 /// While a type-level field's value is walked, the keys of that field and
@@ -782,6 +784,7 @@ fn hoistType(self: *Resolver, declaration: Ast.StructDeclaration, key: []const u
             try self.facts.type_members.put(self.arena, member_key, key);
             try self.facts.declarations.put(self.arena, member_key, .{ .file = self.file, .span = field.name_span });
             try self.enum_values.put(self.arena, member_key, {});
+            if (field.data != null) try self.data_choices.put(self.arena, member_key, {});
             if (listing.items.len > 0) try listing.appendSlice(self.arena, ", ");
             try listing.print(self.arena, "`{s}`", .{field.name});
         }
@@ -1769,10 +1772,46 @@ fn judgeNestedUses(self: *Resolver) Error!void {
 fn walkCase(self: *Resolver, case: *const Ast.Case) Error!void {
     if (case.subject) |subject| try self.walkExpression(subject);
     for (case.arms) |arm| {
-        for (arm.alternatives) |alternative| try self.walkExpression(alternative);
+        for (arm.alternatives) |alternative| {
+            if (case.subject != null and alternative.data == .call) {
+                const callee = alternative.data.call.callee;
+                try self.walkExpression(callee);
+                const key = self.facts.qualified.get(callee) orelse "";
+                if (self.data_choices.contains(key)) {
+                    try self.report(
+                        alternative.span,
+                        "matching a choice's data in `case` is not supported yet",
+                        .{},
+                        "Compare with a value built beforehand, or use `else`.",
+                    );
+                    continue;
+                }
+                try self.walkCallAfterCallee(alternative.data.call);
+                continue;
+            }
+            try self.walkExpression(alternative);
+        }
         try self.walkCaseBody(arm.body);
     }
     if (case.otherwise) |otherwise| try self.walkCaseBody(otherwise);
+}
+
+/// A call whose callee has been walked: what it reaches, then its arguments.
+fn walkCallAfterCallee(self: *Resolver, call: Ast.Expression.Call) Error!void {
+    if (self.current_function) |caller| {
+        if (call.callee.data == .name) {
+            const callee = call.callee.data.name;
+            if (self.lookup(callee)) |found| {
+                if (found.scope == module_scope and isCallable(found.binding.kind)) {
+                    try self.facts.calls.getPtr(caller).?.put(self.arena, found.key, {});
+                }
+            }
+        }
+        if (call.callee.data == .member and !self.facts.qualified.contains(call.callee)) {
+            try self.noteMemberCall(call.callee.data.member.name);
+        }
+    }
+    for (call.arguments) |argument| try self.walkExpression(argument);
 }
 
 fn walkCaseBody(self: *Resolver, body: Ast.Case.Body) Error!void {
@@ -2781,20 +2820,7 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
         },
         .call => |call| {
             try self.walkExpression(call.callee);
-            if (self.current_function) |caller| {
-                if (call.callee.data == .name) {
-                    const callee = call.callee.data.name;
-                    if (self.lookup(callee)) |found| {
-                        if (found.scope == module_scope and isCallable(found.binding.kind)) {
-                            try self.facts.calls.getPtr(caller).?.put(self.arena, found.key, {});
-                        }
-                    }
-                }
-                if (call.callee.data == .member and !self.facts.qualified.contains(call.callee)) {
-                    try self.noteMemberCall(call.callee.data.member.name);
-                }
-            }
-            for (call.arguments) |argument| try self.walkExpression(argument);
+            try self.walkCallAfterCallee(call);
         },
         .range => |range| {
             try self.walkExpression(range.start);

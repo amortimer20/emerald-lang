@@ -580,7 +580,25 @@ presenting it as generally available.
   resolved declaration rather than a spelling collision.
 - Record the implemented part of accepted semantics in the rewrite context in
   this change, clearly marking branch binding as the next slice.
-- Settled while building: pending.
+- Settled while building (Claude, 2026-10-15):
+  - A data choice stays an enum `TypeField` (keeping its position, key, symbol,
+    and coverage entry) with its items in `TypeField.data`. Type setup skips it;
+    `Interpreter.choices` builds it by member key, ahead of struct construction.
+    `Type.User.choice_data` holds the resolved item types, parallel to the
+    choices, and runtime `StructType.value_data` their names for display.
+  - Argument mistakes reuse the struct constructor's wording with the noun
+    "data item" (`` `Action.say` takes 1 argument, but this call passes 0 ``),
+    instead of the plan's "needs a value for `path`", so building a struct and
+    building a choice teach one rule.
+  - The formatter prints choice data on one line, as it prints every parameter
+    list, rather than preserving a multiline layout; no program needs one yet.
+  - Data item names get the same snake_case warning as parameters.
+  - "`Action` is an enum" style suggestions name a choice without data, or a
+    data choice as a call (`Shape.circle(...)`), never a data choice as a value.
+  - The dictionary-key refusal names the first ineligible item, as
+    `Guests.named.names`.
+  - Until slice 2, the resolver reports `when Download.finished(path)` as not yet
+    supported, instead of misreporting `path` as undefined.
 
 ### Slice 2: Case extraction and control flow
 

@@ -201,10 +201,12 @@ the only programming agent and implements, then self-reviews (AGENTS.md).
 [`enum-design-plan.md`](enum-design-plan.md) is **accepted** with all nine
 recommendations as amended on 2026-10-15: a data choice is not a value without a call
 (as a struct type is not), and a binding name that is another position's label is an
-error. Its implementation constraints 8 and 9 record a source check of where those go.
-Next: slice 1 (declarations, construction, display, equality, key and serializer
-guards) on `claude/enum-data`. Existing plain enums keep their behavior. The focused
-source review is in [`enum-source-review.md`](enum-source-review.md).
+error. **Slice 1 is done on `claude/enum-data`** (declarations, construction, display,
+equality, keys across every choice, JSON/CSV/table refusals, formatting; its settled
+notes are in the plan, and rewrite-context 12 records the behavior). Next: slice 2,
+`case` bindings, replacing slice 1's temporary "not supported yet" report for
+`when Download.finished(path)`. The branch is not merged; the website's enum, JSON,
+CSV, and table pages change when the milestone does.
 
 Documentation checkpoint validation (2026-10-14): pinned Zig 0.16.0 toolchain
 probe and `zig build test -j1` in Debug passed, with localhost socket access for

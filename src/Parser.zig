@@ -1049,6 +1049,23 @@ fn parseEnumValues(self: *Parser, type_name: Token, members: *StructMembers) Err
         const value = self.advance();
         const index: u32 = @intCast(members.type_fields.items.len);
         const value_name = try self.identifier(value);
+        var data: ?[]const Ast.Parameter = null;
+        var data_end: ?Source.Span = null;
+        if (self.check(.left_paren)) {
+            // A mistake in one choice's data resumes at the next line, as a
+            // member's does, so the enum's `}` still closes it.
+            if (self.parseChoiceData(value)) |parsed| {
+                data = parsed.items;
+                data_end = parsed.end;
+            } else |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.ParseFailed => {
+                    self.skipToNextStatement(.body);
+                    self.skipSeparators();
+                    continue;
+                },
+            }
+        }
         try members.type_fields.append(self.arena, .{
             .mutable = false,
             .name = value_name,
@@ -1056,6 +1073,8 @@ fn parseEnumValues(self: *Parser, type_name: Token, members: *StructMembers) Err
             .annotation = .{ .name = self.type_path, .span = type_name.span, .question_span = null },
             .initializer = try self.node(value.span, .{ .enum_value = .{ .type_name = self.type_path, .index = index } }),
             .enum_value = index,
+            .data = data,
+            .data_end = data_end,
         });
         if (self.match(.comma) != null) {
             self.skipSeparators();
@@ -1066,12 +1085,64 @@ fn parseEnumValues(self: *Parser, type_name: Token, members: *StructMembers) Err
     }
 }
 
+/// The `(path: String)` after a choice's name: its data items, each a name and
+/// a type, at least one, with no defaults. Null when the parentheses are empty,
+/// which is reported, so the choice is then one that carries no data.
+fn parseChoiceData(self: *Parser, choice: Token) Error!struct { items: ?[]const Ast.Parameter, end: Source.Span } {
+    const opening = self.advance();
+    if (self.check(.right_paren)) {
+        const closing = self.advance();
+        try self.note(
+            spanning(opening.span, closing.span),
+            "this choice carries no data",
+            try std.fmt.allocPrint(self.arena, "Write `{s}` without parentheses.", .{self.text(choice)}),
+        );
+        return .{ .items = null, .end = closing.span };
+    }
+    var items: std.ArrayList(Ast.Parameter) = .empty;
+    while (true) {
+        const name = self.peek();
+        if (name.kind != .identifier) {
+            return self.reportFmt(
+                name.span,
+                "expected a data item's name, found {s}",
+                .{name.kind.describe()},
+                "A data item is a name and a type, as in `path: String`.",
+            );
+        }
+        _ = self.advance();
+        const typed = try self.parseNamedType(name, .data);
+        if (self.check(.equal)) {
+            const equals = self.advance();
+            const default = try self.parseExpression();
+            try self.note(
+                spanning(equals.span, default.span),
+                "an enum's data items have no defaults",
+                try std.fmt.allocPrint(self.arena, "Each one gets its value when the choice is created. Remove the default and pass `{s}`, or write a function that supplies it.", .{self.text(name)}),
+            );
+        }
+        try items.append(self.arena, .{ .name = try self.identifier(name), .name_span = name.span, .annotation = typed.annotation });
+        if (self.match(.comma) == null) break;
+    }
+    const closing = self.peek();
+    if (closing.kind != .right_paren) {
+        return self.reportFmt(
+            closing.span,
+            "expected `)` to close this choice's data, found {s}",
+            .{closing.kind.describe()},
+            "Add the closing parenthesis, or check for a missing comma between data items.",
+        );
+    }
+    _ = self.advance();
+    return .{ .items = try items.toOwnedSlice(self.arena), .end = closing.span };
+}
+
 /// Whether the next member is a bare name, which in an enum is one of its
-/// values.
+/// values, or a name with its data in parentheses.
 fn startsEnumValue(self: *Parser) bool {
     if (!self.check(.identifier)) return false;
     const after = self.peekAfterNext().kind;
-    return after == .newline or after == .comma or after == .right_brace or after == .eof;
+    return after == .newline or after == .comma or after == .right_brace or after == .eof or after == .left_paren;
 }
 
 const StructMembers = struct {
@@ -2048,7 +2119,7 @@ fn parseParameter(self: *Parser) Error!Ast.Parameter {
     return .{ .name = try self.identifier(name), .name_span = name.span, .annotation = typed.annotation, .default = default };
 }
 
-const NamedTypeContext = enum { parameter, field };
+const NamedTypeContext = enum { parameter, field, data };
 const NamedType = struct { annotation: Ast.TypeExpression };
 
 /// Parses the common `name: Type` portion of a parameter or stored field.
@@ -2066,6 +2137,12 @@ fn parseNamedType(self: *Parser, name: Token, context: NamedTypeContext) Error!N
             "`{s}` needs a type before its body",
             .{self.text(name)},
             try std.fmt.allocPrint(self.arena, "A property states the type it gives, as in `const {s}: Float {{ ... }}`.", .{self.text(name)}),
+        );
+        if (context == .data) return self.reportFmt(
+            name.span,
+            "the data item `{s}` needs a type",
+            .{self.text(name)},
+            try std.fmt.allocPrint(self.arena, "Write `{s}: String`, or another type.", .{self.text(name)}),
         );
         return self.reportFmt(
             self.peek().span,

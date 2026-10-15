@@ -1,0 +1,12 @@
+diagnostics/enum-data-syntax.em:3:14: the data item `path` needs a type
+      finished(path)
+               ^^^^
+Write `path: String`, or another type.
+diagnostics/enum-data-syntax.em:4:12: this choice carries no data
+      waiting()
+             ^^
+Write `waiting` without parentheses.
+diagnostics/enum-data-syntax.em:5:28: an enum's data items have no defaults
+      failed(message: String = "unknown")
+                             ^^^^^^^^^^^
+Each one gets its value when the choice is created. Remove the default and pass `message`, or write a function that supplies it.

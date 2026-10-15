@@ -513,6 +513,12 @@ pub fn checkWithOptions(
         for (declaration.fields, user.fields[user.inherited..]) |field, checked_field| {
             try checker.validateKeyAnnotations(field.annotation, checked_field.type);
         }
+        for (declaration.type_fields) |field| {
+            const written = field.data orelse continue;
+            for (written, user.choice_data[field.enum_value.?]) |item, checked_item| {
+                try checker.validateKeyAnnotations(item.annotation, checked_item.type);
+            }
+        }
     }
 
     // An annotated type-level field's type is known before anything reads it.
@@ -1235,6 +1241,15 @@ fn registerStruct(
     }
 }
 
+/// A choice to show as an example of an enum's values: the first that is a
+/// value on its own, or else the first, as a call (12).
+fn exampleChoice(self: *Checker, declaration: Ast.StructDeclaration) Error![]const u8 {
+    for (declaration.type_fields) |field| {
+        if (field.enum_value != null and field.data == null) return field.name;
+    }
+    return std.fmt.allocPrint(self.arena, "{s}(...)", .{declaration.type_fields[0].name});
+}
+
 fn conformsToTextual(self: *Checker, user: *const Type.User) bool {
     const textual = self.structs.get(Resolver.preludeKey("Textual")) orelse return false;
     return user.conformsTo(textual.user orelse return false);
@@ -1260,6 +1275,38 @@ fn checkStructDeclaration(self: *Checker, key: []const u8, declaration: Ast.Stru
     }
     user.fields = fields;
     user.inherited = inherited.len;
+
+    // Section 12: each choice's data, resolved as parameter types are. A
+    // choice that carries none has an empty list, so a value's position
+    // indexes this directly.
+    if (declaration.enumeration) {
+        var choice_data: std.ArrayList([]const Type.User.Field) = .empty;
+        for (declaration.type_fields) |field| {
+            if (field.enum_value == null) continue;
+            const written = field.data orelse {
+                try choice_data.append(self.arena, &.{});
+                continue;
+            };
+            const items = try self.arena.alloc(Type.User.Field, written.len);
+            for (written, items, 0..) |item, *checked, position| {
+                try self.checkSnakeCase(item.name, item.name_span, "data item");
+                for (written[0..position]) |earlier| {
+                    if (!std.mem.eql(u8, earlier.name, item.name)) continue;
+                    try self.reportWithHelp(
+                        item.name_span,
+                        "`{s}.{s}` already has a data item named `{s}`",
+                        .{ user.display_name, field.name, item.name },
+                        "Give each of a choice's data items its own name.",
+                        .{},
+                    );
+                    break;
+                }
+                checked.* = .{ .name = item.name, .type = try self.resolveTypeExpression(item.annotation), .mutable = false, .owner = key };
+            }
+            try choice_data.append(self.arena, items);
+        }
+        user.choice_data = choice_data.items;
+    }
 
     // Every member shares one name space, since `value.name` has to mean one
     // of them. They are compared in the order they are written, so the one
@@ -4690,7 +4737,7 @@ fn reportTypeAsValue(self: *Checker, span: Source.Span, written: []const u8, bin
             "`{s}` is an enum, not a value",
             .{written},
             "Write one of the values it lists, such as `{s}.{s}`.",
-            .{ written, declared.type_fields[0].name },
+            .{ written, try self.exampleChoice(declared) },
         );
     }
     try self.report(
@@ -6297,6 +6344,23 @@ fn requireEligibleKey(self: *Checker, key: Type, span: Source.Span) Error!void {
         );
         return;
     }
+    // Section 12: name the data item that keeps an enum from being a key,
+    // since every other enum can be one.
+    if (key.kind == .struct_value and key.user.?.enumeration and !key.optional) {
+        const user = key.user.?;
+        const declaration = self.struct_declarations.get(user.name).?;
+        for (user.choice_data, 0..) |items, variant| for (items) |item| {
+            if (item.type.eligibleKey(traits.equatable, traits.hashable)) continue;
+            try self.reportWithHelp(
+                span,
+                "{f} cannot be a dictionary key, because `{s}.{s}.{s}` is {f}",
+                .{ key, user.display_name, declaration.type_fields[variant].name, item.name, item.type },
+                "Every data item of every choice must be a valid key type for the enum to be a key: a number, a `Bool`, a `String`, an enum, or a tuple or struct made only from those.",
+                .{},
+            );
+            return;
+        };
+    }
     try self.report(
         span,
         "{f} cannot be a dictionary key",
@@ -6856,6 +6920,23 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
         return .invalid;
     };
     if (self.type_fields.get(reference.key)) |field| {
+        // Section 12: a choice that carries data is built by a call, as a
+        // struct is, so its name alone is no value.
+        if (field.field.data) |data| {
+            var names: std.ArrayList(u8) = .empty;
+            for (data, 0..) |item, position| {
+                if (position > 0) try names.appendSlice(self.arena, ", ");
+                try names.appendSlice(self.arena, item.name);
+            }
+            try self.reportWithHelp(
+                expression.span,
+                "`{s}` needs its data before it is a value",
+                .{reference.display},
+                "Call it, as in `{s}(...)`, or wrap the call in a block: `{{ {s} => {s}({s}) }}`.",
+                .{ reference.display, names.items, reference.display, names.items },
+            );
+            return .invalid;
+        }
         try self.settleTypeField(reference.key);
         // Section 7.1, for section 10.4's setup: reading the field may be
         // what sets up the type, and that reads whatever its fields' values do.
@@ -10114,6 +10195,44 @@ fn typeOfCall(
         return .invalid;
     }
 
+    // Section 12: `Download.finished("report.pdf")` builds a value of the
+    // enum, its arguments matched to the choice's data as a struct's are to
+    // its fields.
+    if (self.type_fields.get(reference.key)) |field| if (field.field.enum_value != null) {
+        const enum_type = self.structs.get(field.type_key).?;
+        if (!self.in_function) {
+            try self.checkCapturesOf(expression.span, try Resolver.typeSetupKey(self.arena, field.type_key), name, "this");
+        }
+        if (field.field.data == null) {
+            try self.report(
+                call.callee.span,
+                "`{s}` is a value, so it takes no parentheses",
+                .{name},
+                "Remove `()`.",
+            );
+            try self.typeArguments(call.arguments);
+            return enum_type;
+        }
+        const items = enum_type.user.?.choice_data[field.field.enum_value.?];
+        const types = try self.arena.alloc(Type, items.len);
+        const names = try self.arena.alloc([]const u8, items.len);
+        const defaults = try self.arena.alloc(bool, items.len);
+        for (items, types, names, defaults) |item, *t, *n, *d| {
+            t.* = item.type;
+            n.* = item.name;
+            d.* = false;
+        }
+        try self.checkArguments(call, name, .{
+            .types = types,
+            .names = names,
+            .has_default = defaults,
+            .noun = "data item",
+            .mismatch_help = "Pass a value of the data item's declared type, or convert it first.",
+            .arity_help = "Pass one value for each data item, in declaration order, or name them.",
+        });
+        return enum_type;
+    };
+
     if (binding.is_type) {
         if (!self.in_function) try self.checkCaptures(expression.span, reference.key, name);
         const declaration = self.struct_declarations.get(reference.key).?;
@@ -10134,7 +10253,7 @@ fn typeOfCall(
                 "`{s}` is an enum, so it cannot be constructed",
                 .{name},
                 "Its values are the ones it lists. Write one of them, such as `{s}.{s}`.",
-                .{ name, declaration.type_fields[0].name },
+                .{ name, try self.exampleChoice(declaration) },
             );
             try self.typeArguments(call.arguments);
             return binding.type;
@@ -10316,11 +10435,32 @@ fn typeOfTaskBlockCall(self: *Checker, call: Ast.Expression.Call, name: []const 
 const JsonEncodeIssue = struct {
     type: Type,
     own_constructor: bool = false,
+    /// Section 12: an enum whose choices carry data, which saving only the
+    /// choice's name would lose.
+    carries_data: bool = false,
     /// A stored-field path, when this refusal came from inside a struct. The
     /// field is the useful correction: it points at the declaration the
     /// programmer changes rather than at an opaque call site.
     field_path: []const u8 = "",
 };
+
+/// Section 12: a plain enum is saved as its choice's name; one whose choices
+/// carry data is refused, even when a value holds a choice without any, since
+/// the static type decides.
+fn dataEnumIssue(value: Type, field_path: []const u8) ?JsonEncodeIssue {
+    if (!value.user.?.carriesData()) return null;
+    return .{ .type = value, .field_path = field_path, .carries_data = true };
+}
+
+/// Reports an enum carrying data where saving or showing it as a choice name
+/// would lose that data. `doing` completes "cannot be ...".
+fn reportCarriesData(self: *Checker, span: Source.Span, issue: JsonEncodeIssue, doing: []const u8, help: []const u8) Error!void {
+    if (issue.field_path.len > 0) {
+        try self.report(span, "field `{s}` cannot be {s}, because {f} carries data", .{ issue.field_path, doing, issue.type }, help);
+    } else {
+        try self.report(span, "{f} carries data, so it cannot be {s}", .{ issue.type, doing }, help);
+    }
+}
 
 /// The checker half of `Json.encode` and `Csv.encode` (15.9, 15.11). It
 /// retains each declaration's argument names and defaults so a typed encoder
@@ -10349,6 +10489,10 @@ fn typeOfTypedEncode(self: *Checker, call: Ast.Expression.Call, name: []const u8
     if (value.kind == .invalid) return .string;
     const issue = if (csv) try self.csvEncodeIssue(value, "") else try self.jsonEncodeIssue(value, "");
     if (issue) |found_issue| {
+        if (found_issue.carries_data) {
+            try self.reportCarriesData(call.arguments[bound[0].?].span, found_issue, if (csv) "written as CSV" else "written as JSON", "Saving only the choice's name would lose its data. Convert it first, with a `case` that builds a plain struct or text.");
+            return .string;
+        }
         if (found_issue.field_path.len > 0) {
             if (csv) {
                 try self.report(
@@ -10409,6 +10553,10 @@ fn typeOfConsoleTable(self: *Checker, call: Ast.Expression.Call, name: []const u
     const text_rows = value.kind == .list and value.element.?.kind == .list and value.element.?.element.?.kind == .string;
     if (text_rows) return .string;
     if (try self.csvEncodeIssue(value, "")) |issue| {
+        if (issue.carries_data) {
+            try self.reportCarriesData(call.arguments[bound[0].?].span, issue, "shown in a table", "A table cell shows one choice's name, which would lose its data. Convert it first, with a `case` that builds text.");
+            return .string;
+        }
         if (issue.field_path.len > 0) {
             try self.report(call.arguments[bound[0].?].span, "field `{s}` of {f} cannot be shown in a table because it is {f}", .{ issue.field_path, value, issue.type }, "Table columns can show text, whole numbers, numbers, true or false, enums, dates and times, and optional values.");
         } else {
@@ -10461,6 +10609,10 @@ fn typeOfTypedDecode(self: *Checker, call: Ast.Expression.Call, name: []const u8
     if (target.kind == .invalid) return .invalid;
     const issue = if (csv) try self.csvDecodeIssue(target, "") else try self.jsonDecodeIssue(target, "");
     if (issue) |found_issue| {
+        if (found_issue.carries_data) {
+            try self.reportCarriesData(target_expression.span, found_issue, if (csv) "read from CSV" else "read from JSON", "A saved choice name has no data to build it from. Read plain values, then build the enum from them with a function.");
+            return .invalid;
+        }
         if (found_issue.own_constructor) {
             if (found_issue.field_path.len > 0) {
                 try self.report(
@@ -10512,7 +10664,7 @@ fn jsonEncodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?J
         },
         .struct_value => {
             const user = value.user.?;
-            if (user.enumeration) return null;
+            if (user.enumeration) return dataEnumIssue(value, field_path);
             if (user.class or user.trait) return .{ .type = value, .field_path = field_path };
             if (jsonTextualType(user.name)) return null;
             if (self.jsonVisiting(user.name)) return null;
@@ -10545,7 +10697,8 @@ fn jsonDecodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?J
         },
         .struct_value => {
             const user = value.user.?;
-            if (user.enumeration or jsonTextualType(user.name)) return null;
+            if (user.enumeration) return dataEnumIssue(value, field_path);
+            if (jsonTextualType(user.name)) return null;
             if (user.class or user.trait) return .{ .type = value, .field_path = field_path };
             if (self.constructors.contains(user.name)) return .{ .type = value, .field_path = field_path, .own_constructor = true };
             if (self.jsonVisiting(user.name)) return null;
@@ -10698,7 +10851,8 @@ fn csvCellFieldIssue(self: *Checker, value: Type, field_path: []const u8) Error!
         .string, .int, .float, .bool => return null,
         .struct_value => {
             const user = value.user.?;
-            if (user.enumeration or csvTextualType(user.name)) return null;
+            if (user.enumeration) return dataEnumIssue(value, field_path);
+            if (csvTextualType(user.name)) return null;
             return .{ .type = value, .field_path = field_path };
         },
         else => return .{ .type = value, .field_path = field_path },

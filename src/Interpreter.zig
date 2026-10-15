@@ -172,6 +172,16 @@ pub const RunError = std.mem.Allocator.Error || std.Io.Writer.Error;
 /// initialization-cycle error".
 const ModuleState = enum { pending, running, done, failed };
 
+/// What building one enum choice that carries data needs: the enum, which
+/// value it is, and its data items' names for argument binding.
+const Choice = struct {
+    descriptor: *const Value.StructType,
+    variant: u32,
+    names: []const []const u8,
+    /// Never true, since a data item has no default; kept for the binder.
+    has_default: []const bool,
+};
+
 /// Section 10.4's type-level fields "follow the same lazy rule" as a file's
 /// bindings, one type at a time.
 const TypeSetup = struct {
@@ -299,6 +309,9 @@ structs: std.StringHashMapUnmanaged(*const Value.StructType) = .empty,
 /// Section 10.4: every struct with type-level fields, by its key, and how far
 /// setting them up has got.
 type_setups: std.StringHashMapUnmanaged(TypeSetup) = .empty,
+/// Section 12: each enum choice that carries data, by its member key, as
+/// `Download.finished(...)` reaches it.
+choices: std.StringHashMapUnmanaged(Choice) = .empty,
 /// The structs that declare their own constructor (10.2), by the same keys.
 constructors: std.StringHashMapUnmanaged(Constructor) = .empty,
 /// Every struct's declaration and what calling its generated constructor
@@ -399,6 +412,7 @@ pub const Session = struct {
         trait_infos: @FieldType(Interpreter, "trait_infos"),
         overrides: @FieldType(Interpreter, "overrides"),
         type_setups: @FieldType(Interpreter, "type_setups"),
+        choices: @FieldType(Interpreter, "choices"),
 
         fn read(interpreter: *Interpreter) Declarations {
             var result: Declarations = undefined;
@@ -762,6 +776,11 @@ pub const Session = struct {
         for (declaration.type_functions) |function| {
             const member_key = Resolver.methodKey(self.interpreter.arena, key, function.member) catch return;
             _ = self.interpreter.functions.remove(member_key);
+        }
+        for (declaration.type_fields) |field| {
+            if (field.data == null) continue;
+            const member_key = Resolver.methodKey(self.interpreter.arena, key, field.name) catch return;
+            _ = self.interpreter.choices.remove(member_key);
         }
         _ = self.interpreter.structs.remove(key);
         if (self.interpreter.type_setups.fetchRemove(key)) |setup| {
@@ -2435,9 +2454,27 @@ fn registerStruct(self: *Interpreter, checked_structs: *const Checker.Structs, d
     for (declaration.type_fields) |field| {
         if (field.enum_value != null) try values.append(self.arena, field.name);
     }
+    const value_data = try self.arena.alloc([]const Value.StructType.Field, checked.user.?.choice_data.len);
+    for (checked.user.?.choice_data, value_data, 0..) |items, *runtime, variant| {
+        const converted = try self.arena.alloc(Value.StructType.Field, items.len);
+        for (items, converted) |item, *field| field.* = .{ .name = item.name, .kind = kindOf(item.type) };
+        runtime.* = converted;
+        if (items.len == 0) continue;
+        const names = try self.arena.alloc([]const u8, items.len);
+        for (items, names) |item, *name| name.* = item.name;
+        const has_default = try self.arena.alloc(bool, items.len);
+        @memset(has_default, false);
+        try self.choices.put(self.arena, try Resolver.methodKey(self.arena, type_key, values.items[variant]), .{
+            .descriptor = descriptor,
+            .variant = @intCast(variant),
+            .names = names,
+            .has_default = has_default,
+        });
+    }
     descriptor.* = .{
         .session_entry = self.codeOrigin(self.task.state.file, declaration.name_span),
         .values = values.items,
+        .value_data = value_data,
         .name = type_key,
         .display_name = checked.user.?.display_name,
         .class = checked.user.?.class,
@@ -2651,6 +2688,9 @@ fn setUpType(self: *Interpreter, type_key: []const u8, member: ?[]const u8, span
     }
 
     for (setup.fields) |field| {
+        // Section 12: a choice carrying data is built by each call, so there
+        // is no one value to set up.
+        if (field.data != null) continue;
         const value = try self.evaluate(field.initializer);
         const kind: Value.Kind = if (field.annotation) |annotation| declaredKind(annotation) else value.kind();
         const key = try Resolver.methodKey(self.arena, type_key, field.name);
@@ -3843,6 +3883,7 @@ fn evaluateCallInner(
         if (isFilesystemKey(key)) return self.callFilesystem(expression.span, key, call);
         if (Resolver.mathFunction(key) != null) return self.callMath(call, key);
         try self.reach(key, call.callee.span);
+        if (self.choices.get(key)) |choice| return self.constructChoice(call, choice);
         if (self.structs.get(key)) |descriptor| return self.constructStruct(expression.span, key, descriptor, call);
         if (self.functions.contains(key)) return self.callFunction(expression.span, key, call);
         return self.callValue(expression.span, call);
@@ -6919,6 +6960,17 @@ fn callSleep(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call) E
 fn random(self: *Interpreter) std.Random {
     if (self.random_engine == null) self.random_engine = std.Random.DefaultPrng.init(@intFromPtr(self) ^ 0xa0761d6478bd642f);
     return self.random_engine.?.random();
+}
+
+/// Section 12's `Download.finished("report.pdf")`: the arguments, bound as
+/// for any call, become the value's data.
+fn constructChoice(self: *Interpreter, call: Ast.Expression.Call, choice: Choice) Error!Value {
+    const bound = try self.evaluateBound(call, choice.names, choice.has_default);
+    std.debug.assert(bound.omitted == null);
+    for (bound.values, choice.descriptor.value_data[choice.variant]) |*item, metadata| item.* = widen(item.*, metadata.kind);
+    const instance = try self.heap.createStruct(choice.descriptor, bound.values);
+    instance.variant = choice.variant;
+    return .{ .data = .{ .struct_value = instance } };
 }
 
 fn constructStruct(

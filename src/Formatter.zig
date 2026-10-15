@@ -721,7 +721,7 @@ const Printer = struct {
                 .method => |m| if (m.abstract_span == null) m.body.span.end else if (m.return_annotation) |r| r.span.end else m.name_span.end,
                 .property => |p| if (p.setter) |setter| setter.body.span.end else if (p.getter.abstract_span == null) p.getter.body.span.end else p.annotation.span.end,
                 .type_function => |t| t.declaration.body.span.end,
-                .type_field => |t| if (t.enum_value != null) t.name_span.end else t.initializer.span.end,
+                .type_field => |t| if (t.data_end) |data_end| data_end.end else if (t.enum_value != null) t.name_span.end else t.initializer.span.end,
                 .nested_type => |t| t.span.end,
             };
         }
@@ -791,7 +791,7 @@ const Printer = struct {
             if (run_end - index > 1 and self.isPlainOneLineRun(member.start(), members.items[run_end - 1].end())) {
                 for (members.items[index..run_end], 0..) |value, i| {
                     if (i > 0) try self.write(", ");
-                    try self.write(value.type_field.name);
+                    try self.printTypeField(value.type_field, s.name);
                 }
                 index = run_end;
             } else {
@@ -933,6 +933,12 @@ const Printer = struct {
     fn printTypeField(self: *Printer, t: Ast.StructDeclaration.TypeField, struct_name: []const u8) PrintError!void {
         if (t.enum_value != null) {
             try self.write(t.name);
+            // Section 12's data, printed as a parameter list is.
+            if (t.data) |data| {
+                try self.write("(");
+                try self.printParameters(data);
+                try self.write(")");
+            }
             return;
         }
         try self.write(if (t.mutable) "var " else "const ");

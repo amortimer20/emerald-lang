@@ -78,6 +78,10 @@ pub const StructType = struct {
     /// Section 12: an enum's values, in the order it lists them. Empty for
     /// every other type.
     values: []const []const u8 = &.{},
+    /// Section 12: for an enum, each value's data items, parallel to
+    /// `values`; empty for a value that carries none. An instance's `fields`
+    /// hold the data of the value it is, in this order.
+    value_data: []const []const Field = &.{},
 
     /// Whether a value of this type is also one of the type named `key`: this
     /// type, one it extends, or a trait it adopts (4.4).
@@ -327,9 +331,18 @@ pub fn writeThrough(self: Value, writer: *std.Io.Writer, quoted: bool, textual: 
             if (@TypeOf(textual) != void) {
                 if (try textual.writeTextual(self, writer)) return;
             }
-            // Section 15.1: an enum value shows its qualified name.
+            // Section 15.1: an enum value shows its qualified name, then
+            // any data it carries, labelled as a struct's fields are.
             if (instance.descriptor.values.len > 0) {
-                return writer.print("{s}.{s}", .{ instance.descriptor.display_name, instance.descriptor.values[instance.variant] });
+                try writer.print("{s}.{s}", .{ instance.descriptor.display_name, instance.descriptor.values[instance.variant] });
+                if (instance.fields.len == 0) return;
+                try writer.writeAll("(");
+                for (instance.fields, instance.descriptor.value_data[instance.variant], 0..) |value, item, index| {
+                    if (index != 0) try writer.writeAll(", ");
+                    try writer.print("{s}: ", .{item.name});
+                    try value.writeThrough(writer, true, textual);
+                }
+                return writer.writeAll(")");
             }
             try writer.print("{s}(", .{instance.descriptor.display_name});
             for (instance.fields, instance.descriptor.fields, 0..) |value, field, index| {

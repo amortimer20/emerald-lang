@@ -2441,9 +2441,41 @@ enum's name, `Direction.north`, including inside the enum's own methods, and sha
 of names with the enum's other members. An enum is never constructed, extended, or adopted,
 may have type-level functions and fields, and is an eligible dictionary key (8.3).
 
-Associated values, per-case payloads, raw integer backing controls, flags enums, and
-implicit integer conversions are deferred. This keeps `enum` understandable as a closed
-set before considering algebraic data types.
+A choice may carry data, written as a short parameter list of named, typed, required items:
+
+```emerald
+enum Download {
+    waiting
+    finished(path: String)
+    failed(message: String)
+}
+
+var download = Download.waiting
+download = Download.finished("report.pdf")
+print(download) # Download.finished(path: "report.pdf")
+```
+
+Every value still has the enum's type; a choice is not a type of its own. A choice with data
+is built by an ordinary call, positional or named, under 7.3's rules, and its arguments run
+once in the order written. It is not a value without a call, just as a struct type is not
+(`const make = Action.move` is an error); a block such as `{ x, y => Action.move(x, y) }`
+passes construction along. A choice without data is never called (`Download.waiting()` is
+an error), and a choice with data is never written `finished()`. Data items have no
+defaults. They are read-only and follow ordinary value semantics: an enum holding a list
+keeps its own copy.
+
+Equality compares the enum, the choice, and then the data, item by item. Display shows the
+choice, then its labelled data, as a struct shows its fields. An enum carrying data is a
+dictionary or set key only when every data item of every choice is a key type (8.3); a
+recursive enum, such as a chain whose `link` holds the next link, is not. JSON, CSV, and
+typed `Console.table` rows refuse an enum that carries data (15.6, 15.9, 15.11), since a
+choice name cannot hold its data; a program converts it first.
+
+Reading a choice's data in `case` (`when Download.finished(path)`) is accepted in
+[the enum plan](enum-design-plan.md) and is being implemented; until it lands, a `case`
+compares with an already built value by `==` as any alternative does. Raw integer backing
+controls, flags enums, implicit integer conversions, and general pattern matching are
+deferred. This keeps `enum` understandable as a closed set with one way to read its data.
 
 ## 13. Errors and resources
 
@@ -3222,7 +3254,7 @@ visible as Floats) and refuses `NaN` and infinity.
 
 `Json.encode(value, pretty: false)` writes compact text by default or two-space-indented text
 with `pretty: true`. It accepts `Json`, `String`, `Int`, `Float`, `Bool`, an optional (absent
-as JSON null), `List`, `Dict[String, _]`, an enum (as its value name), `Date`, `Time`,
+as JSON null), `List`, `Dict[String, _]`, an enum without data (as its value name), `Date`, `Time`,
 `DateTime`, `Instant`, or a plain struct whose public stored fields are all encodable,
 including a struct that holds itself, such as a tree. Dictionary insertion order and struct
 declaration order become object key order. A private field (10.5) is the struct's own
@@ -3231,7 +3263,7 @@ byte data, non-string-keyed dictionary, or unsupported struct field is a checkin
 non-finite Float is a runtime `JsonError` because only its value is invalid.
 
 `Json.decode(text, as: Type)` has the matching accepted type family: `String`, `Int`, `Float`,
-`Bool`, optionals, `List`, `Dict[String, _]`, an enum, `Json`, `Date`, `Time`, `DateTime`,
+`Bool`, optionals, `List`, `Dict[String, _]`, an enum without data, `Json`, `Date`, `Time`, `DateTime`,
 `Instant`, or a plain struct made from those values. The type after `as:` is source type syntax,
 not a runtime type object, and the checker gives the call that type; it is recognized only in a
 call written `Json.decode` (or `Emerald.Json.decode`), so `as:` names an ordinary argument in
@@ -3302,7 +3334,7 @@ one grapheme as `separator:`. `Csv.format(rows, separator:)` writes text rows wi
 quoting and `\n` line endings, without a final newline.
 
 `Csv.decode(text, as: List[Record], separator:)` reads a known plain struct. Its public fields
-match header names and may be `String`, `Int`, `Float`, `Bool`, an enum, `Date`, `Time`,
+match header names and may be `String`, `Int`, `Float`, `Bool`, an enum without data, `Date`, `Time`,
 `DateTime`, `Instant`, or an optional of one of those. Extra columns are ignored; a missing
 column or empty cell takes a field default or optional absence when it has one, while an empty
 `String` is `""`; another missing or empty required field is a `CsvError`. Bool cells accept
@@ -3978,7 +4010,7 @@ The following are deliberately outside the initial implementation:
 - nested optionals;
 - variadic functions;
 - `protected` and type-level visibility controls;
-- enum payloads and algebraic pattern matching;
+- algebraic pattern matching beyond section 12's whole-choice `case` match;
 - general user-defined `Iterable` and `for` integration;
 - a package registry and package manager;
 - multicore/parallel execution, detached tasks, channel `select`, and wider concurrency APIs;
@@ -4278,6 +4310,8 @@ recorded in their normative sections:
 | Regex options (15.4) | Named arguments, `Regex('abc', ignore_case: true, multiline: true)`; inline flags such as `(?i)` are refused with a message naming the argument | Reads as English, matches how `Console.style` takes options, and keeps one way to say it. |
 | What `\d` and a set match (15.4) | `\d` is ASCII 0–9 while `\w` is Unicode; a set decides by a grapheme's first code point in NFC | A Unicode `\d` matches digits `to_int` refuses, so `Regex('\d+')` then `to_int()` could fail on text that matched. Deciding sets in NFC means a character matches the same way however it is encoded: `[a-z]` never matches `é`. |
 | Empty regex matches (15.4) | As Go and Rust: no empty match where the previous match ended, no empty repetition round, `\B` matches an empty text, and an empty match at the very start or end of a text splits nothing off | These keep every repetition finite and every result small and predictable, and make an empty pattern split between every grapheme. Python's `re` differs on the first three; the differential tool leaves those cases out. |
+| An enum choice carrying data as a value (12) | An error, as a struct type is; a block passes construction along | The call has a struct's shape, so it follows the struct's rule; a choice storable without a call while a struct is not would be the inconsistency. No teaching program needed it, and adding it later is cheap where removing it after 1.0 is not. |
+| Saving an enum that carries data (12, 15.9, 15.11) | JSON, CSV, and typed table rows refuse it at checking, by its static type | A choice name cannot hold the data, so encoding would lose it and decoding could not build it. A saved format needs its own small design: tags, data names, and compatibility. |
 | Checking literal regex patterns (15.4) | When `Regex(...)`'s pattern is a string literal, the checker compiles it with the runtime's own code and reports a mistake at the character inside the literal | Principle 4 of the regex plan: an error is caught before the program runs, and the LSP shows it while typing, with no chance of the checker and runtime disagreeing. |
 
 ## 23. Consistency rules for future work

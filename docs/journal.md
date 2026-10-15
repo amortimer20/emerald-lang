@@ -5522,3 +5522,43 @@ Pre-commit validation passed: the pinned Zig 0.16.0 toolchain smoke probe, a fre
 Debug `zig build test -j1` with localhost access for HTTP tests, relative Markdown
 links, code-fence/own-line layout checks, and `git diff --check`. No language
 source, build/workflow files, executable example links, or website content changed.
+
+## 2026-10-15: Codex retired; the enum plan amended and accepted
+
+The user phased out Codex: Claude now plans, implements on `claude/*` branches,
+reviews its own work before a pull request, and merges after the full gate and green
+CI (AGENTS.md). Before accepting the enum plan, the user asked Claude whether it fits
+Emerald. It does: it lets the checker rule out a "finished" download with no path and
+reports a forgotten choice, using parameter-list declarations, ordinary calls, and the
+existing `case`. Two parts were changed first. A data choice is no longer a value
+without a call, matching `const make = Point`, which is rejected; a type-level
+function, by contrast, already is a value, so the implementation must not borrow that
+path. A binding name that is another position's label is an error, so
+`when Action.move(y, x)` cannot swap two `Int`s silently. The user accepted all nine
+recommendations as amended.
+
+## 2026-10-15: Enum data slice 1, declarations and construction
+
+`claude/enum-data` adds choice data declarations, construction by positional or
+named call, display with labelled data, equality and hashing of the data, dictionary
+and set keys checked across every choice, and refusals for JSON, CSV, and typed
+`Console.table` rows. A data choice stays an enum type field carrying its items, so
+member names, coverage, symbols, and the prelude serializer needed no new shape; type
+setup skips it, and the interpreter builds it through a `choices` map by member key.
+Runtime equality and hashing already compared an enum value's variant and stored
+values, and the heap already copies an instance's own field count, so neither changed.
+
+Review while building found two bugs that would otherwise have shipped. The
+formatter's one-line run of enum values wrote bare names, so `{ end, link(number:
+Int, next: Chain) }` lost its data on formatting. The "`Action` is an enum" hints
+suggested the first choice even when it carries data, which is now itself an error;
+they now prefer a choice without data, or show a call. A choice's parse error also
+resumes at the next line, as a member's does, rather than reporting the enum's `}`.
+Self-review of the diff found the new `choices` map missing from the REPL's
+rolled-back declarations and from `removeStruct`, so a failed or replaced enum could
+have kept its constructors; both now include it, beside `structs` and `type_setups`.
+
+An LSP sweep over a data-enum document (hover, completion, definition, references,
+and signature help at every position: 1,320 requests, plus document symbols) found no
+errors on a Debug build. Slice 2 replaces the temporary "not supported yet" report for
+`when Download.finished(path)` with real bindings.
