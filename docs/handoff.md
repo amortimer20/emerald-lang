@@ -191,23 +191,24 @@ last checked.
 
 Next: the work before 1.0 (roadmap items 3 onward; revised 2026-10-11: the implementation stays in
 Zig, networking folds into completing the initial standard library, no web framework, and multicore,
-Godot bindings, and a debugger come after 1.0). Item 3: the enum plan is accepted and
-being built (below); the clean-generics plan still needs the user's decisions. Still open from the QA pass: B4
+Godot bindings, and a debugger come after 1.0). Item 3: the enum plan is built and merged
+(below); the clean-generics plan, the parenthesis-free header block, and a deprecation story
+still need the user's decisions. Still open from the QA pass: B4
 (reading the site) and B5 (reproducing the red "not defined" editor errors) were not reported;
 the flaky-test cause is settled (the exact-work test). The Zig 0.17 upgrade waits for 0.17.1.
 
-**Current work: data-carrying enums (accepted 2026-10-15).** Codex is retired; Claude is
-the only programming agent and implements, then self-reviews (AGENTS.md).
-[`enum-design-plan.md`](enum-design-plan.md) is **accepted** with all nine
-recommendations as amended on 2026-10-15: a data choice is not a value without a call
-(as a struct type is not), and a binding name that is another position's label is an
-error. **All four slices are built and self-reviewed on `claude/enum-data`**: declarations,
-construction, display, equality, keys across every choice, JSON/CSV/table refusals,
-formatting, `case` matches that name a choice's data, editor support, `examples/enum-data.em`,
-the guide and reference updates, and fuzz templates. Settled notes and the ten items the
-branch review found are in the plan; rewrite-context 6.3 and 12 record the behavior. Next:
-merge the pull request once CI is green, then update the website's enum, case, JSON, CSV, and
-table pages with the release that ships it, and remove the worktree.
+**Data-carrying enums are merged (PR #42, `8bdc35e`, 2026-10-16).**
+[`enum-design-plan.md`](enum-design-plan.md) was accepted 2026-10-15 with all nine
+recommendations and two amendments (a data choice is not a value without a call, as a
+struct type is not; a binding name that is another position's label is an error). All four
+slices shipped: declarations, construction, display, equality, keys across every choice,
+JSON/CSV/table refusals, formatting, `case` matches that name a choice's data, editor support,
+`examples/enum-data.em`, the guide and reference updates, and fuzz templates. The plan's
+settled notes and the ten items the whole-branch review found record the details;
+rewrite-context 6.3 and 12 record the behavior. **Next for this feature:** the website's enum,
+case, JSON, CSV, and table pages change with the release that ships it, and its release notes
+should list the feature and the `Set` fix (a set of a later-declared type holding a list was
+accepted before).
 
 **Known editor gap (predates the enum plan):** named labels at call sites are not
 tracked, so renaming a struct field leaves `Point(x: 1)` unchanged and breaks it.
