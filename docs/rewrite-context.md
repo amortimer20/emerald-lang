@@ -858,7 +858,9 @@ case direction {
 
 Subject cases evaluate their subject once, test alternatives from top to bottom using
 `==`, execute the first match, and never fall through. Commas allow several alternatives
-in one arm. A statement case may omit `else`, in which case no match does nothing. Range,
+in one arm. A statement case may omit `else`, in which case no match does nothing. The one
+alternative that is not compared by `==` is section 12's choice match,
+`when Download.finished(path)`, which selects by choice and names its data. Range,
 destructuring, class, and user-defined matching remain deferred.
 
 A value-producing case uses `then` and requires exhaustive coverage:
@@ -2471,11 +2473,33 @@ recursive enum, such as a chain whose `link` holds the next link, is not. JSON, 
 typed `Console.table` rows refuse an enum that carries data (15.6, 15.9, 15.11), since a
 choice name cannot hold its data; a program converts it first.
 
-Reading a choice's data in `case` (`when Download.finished(path)`) is accepted in
-[the enum plan](enum-design-plan.md) and is being implemented; until it lands, a `case`
-compares with an already built value by `==` as any alternative does. Raw integer backing
-controls, flags enums, implicit integer conversions, and general pattern matching are
-deferred. This keeps `enum` understandable as a closed set with one way to read its data.
+A `case` reads a choice's data by naming it:
+
+```emerald
+func describe(download: Download): String {
+    return case download {
+        when Download.waiting then "Waiting"
+        when Download.finished(path) then "Saved to #{path}"
+        when Download.failed(message) then "Failed: #{message}"
+    }
+}
+```
+
+`when Download.finished(path)` selects every `finished` value, whatever its data and
+whatever custom equality says, and introduces one read-only name per data item, in
+declaration order, visible only in that arm's block or `then` value. `_` ignores a
+position. The names need not be the labels, but a name that is another position's label is
+an error, since `when Action.move(y, x)` would otherwise hold the `x` value in `y`. Each
+position takes a new name: no values, named arguments, nested patterns, or guards; a further
+decision is an `if` inside the arm. A choice match needs its arm to itself, covers its whole
+choice for exhaustiveness, and makes a second match of the same choice an error. A choice
+carrying data written without names (`when Download.finished`) is an error that shows the
+match. Every other alternative, including `when wanted` for a value built beforehand, still
+compares by `==`, and an optional subject still needs `when nothing` or `else`.
+
+Raw integer backing controls, flags enums, implicit integer conversions, and general
+pattern matching are deferred. This keeps `enum` understandable as a closed set with one
+way to read its data.
 
 ## 13. Errors and resources
 
@@ -4311,6 +4335,7 @@ recorded in their normative sections:
 | What `\d` and a set match (15.4) | `\d` is ASCII 0–9 while `\w` is Unicode; a set decides by a grapheme's first code point in NFC | A Unicode `\d` matches digits `to_int` refuses, so `Regex('\d+')` then `to_int()` could fail on text that matched. Deciding sets in NFC means a character matches the same way however it is encoded: `[a-z]` never matches `é`. |
 | Empty regex matches (15.4) | As Go and Rust: no empty match where the previous match ended, no empty repetition round, `\B` matches an empty text, and an empty match at the very start or end of a text splits nothing off | These keep every repetition finite and every result small and predictable, and make an empty pattern split between every grapheme. Python's `re` differs on the first three; the differential tool leaves those cases out. |
 | An enum choice carrying data as a value (12) | An error, as a struct type is; a block passes construction along | The call has a struct's shape, so it follows the struct's rule; a choice storable without a call while a struct is not would be the inconsistency. No teaching program needed it, and adding it later is cheap where removing it after 1.0 is not. |
+| Naming matched data (6.3, 12) | By position, one new read-only name or `_` each, in the arm only; a name that is another position's label is an error | Positional names keep the match as short as the declaration. Allowing any name keeps a clash with an outer local avoidable, and refusing a swapped label catches the one positional mistake whose types still check. Selecting by choice rather than `==` keeps coverage explainable without a pattern language. |
 | Saving an enum that carries data (12, 15.9, 15.11) | JSON, CSV, and typed table rows refuse it at checking, by its static type | A choice name cannot hold the data, so encoding would lose it and decoding could not build it. A saved format needs its own small design: tags, data names, and compatibility. |
 | Checking literal regex patterns (15.4) | When `Regex(...)`'s pattern is a string literal, the checker compiles it with the runtime's own code and reports a mistake at the character inside the literal | Principle 4 of the regex plan: an error is caught before the program runs, and the LSP shows it while typing, with no chance of the checker and runtime disagreeing. |
 

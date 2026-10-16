@@ -74,6 +74,10 @@ type_path: []const u8 = "",
 has_base: bool = false,
 /// Whether a section 12 enum's body is being parsed.
 in_enum: bool = false,
+/// Whether a subject `case`'s alternatives are being parsed, where `_` may
+/// stand for a data position a match ignores (12), as in
+/// `when Download.finished(_)`.
+in_case_alternative: bool = false,
 /// Recursion that opens no delimiter: prefix `-` and `not`, the right side of
 /// `**`, and `else if`. Bounded separately so that it cannot eat into the 256
 /// delimiters section 3.4 promises, and so a very long chain of any of them is
@@ -2748,7 +2752,14 @@ fn parseCaseArms(self: *Parser, opening: Token, subjectless: bool, parts: *CaseP
         _ = self.advance();
         var alternatives: std.ArrayList(*const Ast.Expression) = .empty;
         while (true) {
-            try alternatives.append(self.arena, if (subjectless) try self.parseHeaderCondition() else try self.parseHeaderExpression());
+            if (subjectless) {
+                try alternatives.append(self.arena, try self.parseHeaderCondition());
+            } else {
+                const outer = self.in_case_alternative;
+                self.in_case_alternative = true;
+                defer self.in_case_alternative = outer;
+                try alternatives.append(self.arena, try self.parseHeaderExpression());
+            }
             const comma = self.match(.comma) orelse break;
             if (subjectless) {
                 return self.report(
@@ -3994,6 +4005,10 @@ fn parseLambda(self: *Parser) Error!*const Ast.Expression {
     const opening = self.advance();
     try self.nest(opening.span);
     defer self.unnest();
+    // A block's body is ordinary code, even inside a `case` alternative.
+    const saved_alternative = self.in_case_alternative;
+    self.in_case_alternative = false;
+    defer self.in_case_alternative = saved_alternative;
 
     const saved_condition = self.in_condition;
     self.in_condition = false;
@@ -4279,6 +4294,18 @@ fn parsePrimary(self: *Parser) Error!*const Ast.Expression {
         .identifier => {
             _ = self.advance();
             return self.node(token.span, .{ .name = try self.identifier(token) });
+        },
+        // Section 12: a data position a `case` match ignores. The resolver
+        // refuses it anywhere else in the alternative.
+        .underscore => {
+            if (!self.in_case_alternative) return self.reportFmt(
+                token.span,
+                "expected an expression, found {s}",
+                .{token.kind.describe()},
+                "An expression is a number, a name, or something built from them.",
+            );
+            _ = self.advance();
+            return self.node(token.span, .{ .name = "_" });
         },
         .keyword_true, .keyword_false => {
             _ = self.advance();

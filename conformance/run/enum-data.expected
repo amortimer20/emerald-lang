@@ -23,4 +23,22 @@ Outcome.ok(value: 5)
 Turn(move: Game.Move.step(by: 2))
 Note.text(body: "hi")
 Note.text(body: nothing)
+Waiting
+Saved to report.pdf
+Failed: disk full
+12.0
+Move to 2, 3
+Hello!
+Wait here
+down 2
+["Ada", "Grace"]
+Guests.named(names: ["Ada"])
+6
+starts with 7
+kept!
+no download
+(empty)
+equal to blank
+the blank choice
+caught disk full
 the wanted file

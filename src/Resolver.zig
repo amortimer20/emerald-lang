@@ -102,6 +102,18 @@ test "display keys hide prelude internals but keep project namespaces" {
 /// this one find what the resolver decided about it.
 pub const Site = struct { file: u32, start: u32 };
 
+/// Section 12's `when Download.finished(path)`: which choice an alternative
+/// matches, and what each of its data positions is called in the arm.
+pub const ChoiceMatch = struct {
+    /// The choice's member key, as `Download::finished` is written.
+    key: []const u8,
+    /// One per data position, in order: the name it introduces, or null for
+    /// a position written `_`.
+    names: []const ?Name,
+
+    pub const Name = struct { text: []const u8, span: Source.Span };
+};
+
 /// Where a declaration is written: its file and its name's span, for go to
 /// definition and find references (18.5).
 pub const Target = struct { file: u32, span: Source.Span };
@@ -175,6 +187,9 @@ pub const Facts = struct {
     /// checker and the interpreter read this rather than folding the chain
     /// again, so `Shapes.area` is decided in exactly one place.
     qualified: std.AutoHashMapUnmanaged(*const Ast.Expression, []const u8) = .empty,
+    /// Every `case` alternative that matches an enum choice carrying data
+    /// (12), which is not a call: it selects the choice and names its data.
+    choice_matches: std.AutoHashMapUnmanaged(*const Ast.Expression, ChoiceMatch) = .empty,
     /// The file each module-level key is declared in, which is the unit section
     /// 14.1 initializes lazily.
     owner: std.StringHashMapUnmanaged(u32) = .empty,
@@ -301,7 +316,7 @@ fn isPreludeKey(key: []const u8) bool {
 /// `later_parameter` is a parameter seen from a default before it, which section
 /// 7.3 says cannot read it: it is in scope only so that the name is reported
 /// rather than quietly resolving to something outside the function.
-pub const BindingKind = enum { variable, parameter, loop_variable, function, type, self_value, later_parameter };
+pub const BindingKind = enum { variable, parameter, loop_variable, match_binding, function, type, self_value, later_parameter };
 
 const Binding = struct {
     mutable: bool,
@@ -378,8 +393,12 @@ methods_named: std.StringHashMapUnmanaged(std.ArrayList([]const u8)) = .empty,
 instance_members: NameSet = .empty,
 /// The member key of every section 12 enum value.
 enum_values: NameSet = .empty,
-/// The enum values that carry data (12), which a call builds.
-data_choices: NameSet = .empty,
+/// Every name a `case` match introduced (12), with its choice's key, so a
+/// use of one after its arm can say where it was visible.
+match_names: std.StringHashMapUnmanaged([]const u8) = .empty,
+/// The enum values that carry data (12), which a call builds, with their
+/// data items, whose labels a `case` match is checked against.
+data_choices: std.StringHashMapUnmanaged([]const Ast.Parameter) = .empty,
 /// For each enum's key, its values as a reader would list them, for help text.
 enum_listings: KeyMap = .empty,
 /// While a type-level field's value is walked, the keys of that field and
@@ -784,7 +803,7 @@ fn hoistType(self: *Resolver, declaration: Ast.StructDeclaration, key: []const u
             try self.facts.type_members.put(self.arena, member_key, key);
             try self.facts.declarations.put(self.arena, member_key, .{ .file = self.file, .span = field.name_span });
             try self.enum_values.put(self.arena, member_key, {});
-            if (field.data != null) try self.data_choices.put(self.arena, member_key, {});
+            if (field.data) |data| try self.data_choices.put(self.arena, member_key, data);
             if (listing.items.len > 0) try listing.appendSlice(self.arena, ", ");
             try listing.print(self.arena, "`{s}`", .{field.name});
         }
@@ -1772,28 +1791,158 @@ fn judgeNestedUses(self: *Resolver) Error!void {
 fn walkCase(self: *Resolver, case: *const Ast.Case) Error!void {
     if (case.subject) |subject| try self.walkExpression(subject);
     for (case.arms) |arm| {
+        var matched: ?ChoiceMatch = null;
         for (arm.alternatives) |alternative| {
             if (case.subject != null and alternative.data == .call) {
-                const callee = alternative.data.call.callee;
-                try self.walkExpression(callee);
-                const key = self.facts.qualified.get(callee) orelse "";
-                if (self.data_choices.contains(key)) {
-                    try self.report(
-                        alternative.span,
-                        "matching a choice's data in `case` is not supported yet",
-                        .{},
-                        "Compare with a value built beforehand, or use `else`.",
-                    );
+                const call = alternative.data.call;
+                try self.walkExpression(call.callee);
+                const key = self.facts.qualified.get(call.callee) orelse "";
+                if (self.data_choices.get(key)) |data| {
+                    // Section 12: a choice match names its data rather than
+                    // building a value, and needs its arm to itself, so the
+                    // names it introduces are the arm's only new ones.
+                    if (arm.alternatives.len > 1) {
+                        try self.report(
+                            alternative.span,
+                            "a choice carrying data needs its own `when` arm",
+                            .{},
+                            "Give each choice a separate branch, so each names only its own data.",
+                        );
+                        continue;
+                    }
+                    matched = try self.choiceMatch(alternative, call, key, data);
+                    try self.facts.choice_matches.put(self.arena, alternative, matched.?);
                     continue;
                 }
-                try self.walkCallAfterCallee(alternative.data.call);
+                try self.walkCallAfterCallee(call);
                 continue;
             }
             try self.walkExpression(alternative);
         }
+        const names = if (matched) |found| found.names else {
+            try self.walkCaseBody(arm.body);
+            continue;
+        };
+        // The data's names are visible in the arm's block or value only.
+        try self.push();
+        defer self.pop();
+        for (names) |maybe| {
+            const name = maybe orelse continue;
+            try self.scopes.items[self.scopes.items.len - 1].put(self.arena, name.text, .{
+                .mutable = false,
+                .span = name.span,
+                .kind = .match_binding,
+            });
+            try self.match_names.put(self.arena, name.text, matched.?.key);
+        }
         try self.walkCaseBody(arm.body);
     }
     if (case.otherwise) |otherwise| try self.walkCaseBody(otherwise);
+}
+
+/// Checks `Action.move(x, y)` as a match of the choice `key`: one new name or
+/// `_` per data item, none a label of another position. Each mistake is
+/// reported, and every position that still names something usable is kept,
+/// so the arm does not then report its names as undefined.
+fn choiceMatch(
+    self: *Resolver,
+    alternative: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    key: []const u8,
+    data: []const Ast.Parameter,
+) Error!ChoiceMatch {
+    const display = try displayKey(self.arena, key);
+    if (call.names.len > 0 or call.trailing) {
+        for (call.arguments, 0..) |argument, index| {
+            const label = if (index < call.names.len) call.names[index] else null;
+            if (label != null or (call.trailing and index + 1 == call.arguments.len)) {
+                try self.reportWithHelpFmt(
+                    if (label) |named| named.span else argument.span,
+                    "a match names `{s}`'s data by position",
+                    .{display},
+                    "Write one name or `_` for each data item, in declaration order, as in `{s}({s})`.",
+                    .{ display, try labelList(self.arena, data) },
+                );
+                break;
+            }
+        }
+    }
+    const names = try self.arena.alloc(?ChoiceMatch.Name, call.arguments.len);
+    for (call.arguments, names, 0..) |argument, *name, position| {
+        name.* = null;
+        if (argument.data != .name) {
+            try self.report(
+                argument.span,
+                "this position introduces a name, but it is written as a value",
+                .{},
+                "Use a name, or `_` to ignore it; check the value with `if` inside the branch.",
+            );
+            continue;
+        }
+        const text = argument.data.name;
+        if (std.mem.eql(u8, text, "_")) continue;
+        const repeated = for (names[0..position]) |earlier| {
+            const seen = earlier orelse continue;
+            if (std.mem.eql(u8, seen.text, text)) break true;
+        } else false;
+        if (repeated) {
+            try self.report(
+                argument.span,
+                "`{s}` is already introduced by this match",
+                .{text},
+                "Use different names, or `_` to ignore a position.",
+            );
+            continue;
+        }
+        // Section 12, amended: a name that is another position's label
+        // would silently hold the wrong item, since bindings go by position.
+        for (data, 0..) |item, label_position| {
+            if (label_position == position or !std.mem.eql(u8, item.name, text)) continue;
+            try self.reportWithHelpFmt(
+                argument.span,
+                "`{s}` is the {s} item of `{s}`, but here it names the {s}",
+                .{ text, ordinal(label_position), display, ordinal(position) },
+                "Write `{s}({s})` in declaration order, or choose names that are not its labels.",
+                .{ display, try labelList(self.arena, data) },
+            );
+            break;
+        }
+        if (self.visibleLocal(text) != null) {
+            try self.report(
+                argument.span,
+                "`{s}` is already declared",
+                .{text},
+                "Give the matched data a name of its own.",
+            );
+            continue;
+        }
+        name.* = .{ .text = text, .span = argument.span };
+    }
+    if (call.arguments.len != data.len) {
+        try self.reportWithHelpFmt(
+            alternative.span,
+            "`{s}` carries {d} data item{s}, but this match names {d}",
+            .{ display, data.len, if (data.len == 1) "" else "s", call.arguments.len },
+            "Write one name or `_` for each, in declaration order, as in `{s}({s})`.",
+            .{ display, try labelList(self.arena, data) },
+        );
+    }
+    return .{ .key = key, .names = names };
+}
+
+/// `x, y`: a choice's data labels, as a match in declaration order writes them.
+fn labelList(arena: std.mem.Allocator, data: []const Ast.Parameter) Error![]const u8 {
+    var text: std.ArrayList(u8) = .empty;
+    for (data, 0..) |item, position| {
+        if (position > 0) try text.appendSlice(arena, ", ");
+        try text.appendSlice(arena, item.name);
+    }
+    return text.items;
+}
+
+fn ordinal(position: usize) []const u8 {
+    const words = [_][]const u8{ "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth" };
+    return if (position < words.len) words[position] else "next";
 }
 
 /// A call whose callee has been walked: what it reaches, then its arguments.
@@ -2161,6 +2310,12 @@ fn reportReadOnly(
             "`{s}` cannot be reassigned",
             .{name},
             "A loop variable takes each value in turn. Copy it into a `var` if you need one that changes.",
+        ),
+        .match_binding => try self.report(
+            span,
+            "`{s}` cannot be reassigned",
+            .{name},
+            "It holds data the matched choice carries. Copy it into a `var` if you need a version that changes.",
         ),
         .function => try self.report(
             span,
@@ -2761,8 +2916,21 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
             // Section 10.7's `super` is the object itself, seen as its base
             // class, and the parser has already said where it may appear.
             if (std.mem.eql(u8, name, "super")) return;
+            // Section 12: `_` stands for an ignored position in a `case`
+            // match, and is never a value.
+            if (std.mem.eql(u8, name, "_")) return self.report(
+                expression.span,
+                "`_` cannot be used as a value",
+                .{},
+                "It only stands for a data item a `case` match ignores, as in `when Download.finished(_)`.",
+            );
             try self.checkAmbiguous(name, expression.span);
             const found = self.lookup(name) orelse {
+                if (self.match_names.get(name)) |key| return self.reportUndefined(
+                    expression.span,
+                    name,
+                    try std.fmt.allocPrint(self.arena, "The `{s}` match names `{s}` only inside its own arm. Use it there, or declare a variable before the `case` and assign it in the arm.", .{ try displayKey(self.arena, key), name }),
+                );
                 return self.reportUndefined(
                     expression.span,
                     name,

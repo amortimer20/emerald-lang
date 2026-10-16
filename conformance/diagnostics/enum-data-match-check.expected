@@ -1,0 +1,24 @@
+diagnostics/enum-data-match-check.em:13:13: this `case` gives no value for `Action.say`
+  const sum = case action {
+              ^^^^
+A `case` that produces a value needs one for every possible subject. Add an arm for each, or `else then ...` after the last arm.
+diagnostics/enum-data-match-check.em:21:10: an earlier arm already handles every `Action.say`
+      when Action.say(again) {
+           ^^^^^^^^^^^^^^^^^
+Remove this arm, or make the further decision with `if` inside the earlier one.
+diagnostics/enum-data-match-check.em:24:10: `Action.say` carries data, so a match names it
+      when Action.say {
+           ^^^^^^^^^^
+Write `Action.say(text)`, or `Action.say(_)` to ignore it.
+diagnostics/enum-data-match-check.em:31:10: `when` matches a choice of Other here, but the subject is Action
+      when Other.pick(n) {
+           ^^^^^^^^^^^^^
+Match one of the subject's own choices, or `case` on a value of type Other.
+diagnostics/enum-data-match-check.em:37:1: warning: this `case` does not cover `Action.say` or `Action.wait`
+  case action {
+  ^^^^
+Add an arm for each, or `else { }` to accept the gap deliberately.
+diagnostics/enum-data-match-check.em:49:9: `names` holds data the matched choice carries, so it cannot change
+          names.append("Grace")
+          ^^^^^
+Copy it into a `var` and change the copy, as in `var changed = names`.

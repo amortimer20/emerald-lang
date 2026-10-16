@@ -118,6 +118,167 @@ notes.send(Note.text(nothing))
 print(notes.receive())
 print(notes.receive())
 
+# `case` names a choice's data, in its own arm only.
+func describe(download: Download): String {
+    return case download {
+        when Download.waiting then "Waiting"
+        when Download.finished(path) then "Saved to #{path}"
+        when Download.failed(message) then "Failed: #{message}"
+    }
+}
+
+print(describe(Download.waiting))
+print(describe(Download.finished("report.pdf")))
+print(describe(Download.failed("disk full")))
+
+func area(shape: Shape): Float {
+    return case shape {
+        when Shape.circle(radius) then Math.pi * radius * radius
+        when Shape.rectangle(width, height) then width * height
+    }
+}
+
+print(area(Shape.rectangle(width: 4.0, height: 3.0)))
+
+for action in [Action.move(2, 3), Action.say("Hello!"), Action.wait] {
+    case action {
+        when Action.move(x, y) {
+            print("Move to #{x}, #{y}")
+        }
+        when Action.say(text) {
+            print(text)
+        }
+        when Action.wait {
+            print("Wait here")
+        }
+    }
+}
+
+# `_` ignores a position; names need not be the labels.
+case Action.move(1, 2) {
+    when Action.move(_, down) {
+        print("down #{down}")
+    }
+    else {
+        print("other")
+    }
+}
+
+# A working copy changes; the enum's own data does not.
+case guests {
+    when Guests.named(names) {
+        var updated = names
+        updated.append("Grace")
+        print(updated)
+    }
+}
+print(guests)
+
+# Recursion, returns, and definite assignment through matches.
+func total(chain: Chain): Int {
+    case chain {
+        when Chain.end {
+            return 0
+        }
+        when Chain.link(number, rest) {
+            return number + total(rest)
+        }
+    }
+}
+
+print(total(Chain.link(1, Chain.link(2, Chain.link(3, Chain.end)))))
+
+func first(chain: Chain): String {
+    var result: String
+    case chain {
+        when Chain.end {
+            result = "empty"
+        }
+        when Chain.link(number, _) {
+            result = "starts with #{number}"
+        }
+    }
+    return result
+}
+
+print(first(Chain.link(7, Chain.end)))
+
+# A block made in an arm keeps the data it names.
+var later: List[func(): String] = []
+for action in [Action.say("kept"), Action.wait] {
+    case action {
+        when Action.say(text) {
+            later.append({ => "#{text}!" })
+        }
+        else {
+        }
+    }
+}
+print(later[0]())
+
+# An optional subject: a match never matches `nothing`.
+const missing: Download? = nothing
+case missing {
+    when Download.finished(path) {
+        print(path)
+    }
+    when nothing {
+        print("no download")
+    }
+    else {
+        print("not finished")
+    }
+}
+
+# Optional data stays optional when named.
+case Note.text(nothing) {
+    when Note.text(body) {
+        print(body.or("(empty)"))
+    }
+}
+
+# A match selects by choice, whatever custom equality says; `==` does not.
+enum Tag with Equatable {
+    named(text: String)
+    blank
+
+    @override
+    func equals(other: Tag): Bool {
+        return true
+    }
+}
+
+case Tag.named("x") {
+    when Tag.blank {
+        print("equal to blank")
+    }
+    else {
+        print("not blank")
+    }
+}
+case Tag.blank {
+    when Tag.named(text) {
+        print("named #{text}")
+    }
+    when Tag.blank {
+        print("the blank choice")
+    }
+}
+
+# An error raised inside an arm leaves through it.
+try {
+    case Download.failed("disk full") {
+        when Download.failed(message) {
+            raise RuntimeError(message)
+        }
+        else {
+        }
+    }
+}
+catch error: RuntimeError {
+    print("caught #{error.message}")
+}
+
 # `case` compares with a value built beforehand by `==`.
 const wanted = Download.finished("report.pdf")
 case download {

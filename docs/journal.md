@@ -5562,3 +5562,20 @@ An LSP sweep over a data-enum document (hover, completion, definition, reference
 and signature help at every position: 1,320 requests, plus document symbols) found no
 errors on a Debug build. Slice 2 replaces the temporary "not supported yet" report for
 `when Download.finished(path)` with real bindings.
+
+## 2026-10-15: Enum data slice 2, `case` matches
+
+`when Download.finished(path)` now selects a choice and names its data in that arm,
+in block and `then` arms alike, with `_` for an ignored position. Matching is by choice,
+not `==`, so custom equality never decides it; every other alternative still compares by
+`==`. All three of the plan's teaching programs produce their intended output, as do a
+block escaping its arm with the data it names, an optional subject, optional data, an
+error raised inside an arm, recursion over a recursive enum, and definite assignment and
+return coverage through matches.
+
+Reading the first diagnostics run showed cascades: a match with one mistake left its
+names undefined in the body. Matches are now always recorded, binding what is usable.
+Three messages read badly and were reworded ("a Other value", "`names` names data",
+"A `Action.move` match"). An LSP sweep over a document with matches and an unfinished
+`when Action.mo` (1,860 requests at every position, plus symbols) found no errors on a
+Debug build; the editor features for matches belong to slice 3.

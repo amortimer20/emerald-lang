@@ -2340,25 +2340,66 @@ fn executeIteration(self: *Interpreter, loop: Ast.For, value: Value) Error!bool 
 /// Section 6.3: the arm a `case` runs, or null when none matches and it has
 /// no `else`. The subject is evaluated once, and each alternative in order
 /// until one matches.
-fn chooseArm(self: *Interpreter, case: *const Ast.Case) Error!?Ast.Case.Body {
+fn chooseArm(self: *Interpreter, case: *const Ast.Case) Error!?ChosenArm {
     const subject: ?Value = if (case.subject) |written| try self.evaluate(written) else null;
-    defer if (subject) |value| self.heap.release(value);
+    // A choice match keeps the subject, whose data its names then hold.
+    var kept = false;
+    defer if (subject) |value| if (!kept) self.heap.release(value);
     for (case.arms) |arm| {
         for (arm.alternatives) |alternative| {
+            // Section 12: a choice match selects by the choice alone,
+            // whatever its data or any custom equality says.
+            if (subject) |value| if (self.facts.choice_matches.get(alternative)) |found| {
+                const choice = self.choices.get(found.key).?;
+                if (value.data != .struct_value) continue;
+                const instance = value.data.struct_value;
+                if (instance.descriptor != choice.descriptor or instance.variant != choice.variant) continue;
+                kept = true;
+                return .{ .body = arm.body, .match = .{ .subject = value, .names = found.names } };
+            };
             const matched = if (subject) |value| blk: {
                 const candidate = try self.evaluate(alternative);
                 defer self.heap.release(candidate);
                 break :blk try Value.equals(self.gpa, value, candidate, self.equatable(alternative.span));
             } else try self.condition(alternative);
-            if (matched) return arm.body;
+            if (matched) return .{ .body = arm.body };
         }
     }
-    return case.otherwise;
+    const otherwise = case.otherwise orelse return null;
+    return .{ .body = otherwise };
+}
+
+/// The arm `chooseArm` chose, and for a choice match, the subject it holds
+/// and the names its data takes in that arm.
+const ChosenArm = struct {
+    body: Ast.Case.Body,
+    match: ?Match = null,
+
+    const Match = struct { subject: Value, names: []const ?Resolver.ChoiceMatch.Name };
+};
+
+/// Section 12: gives a choice match's names their data, in a new scope the
+/// caller pops after the arm. Takes over the subject.
+fn bindChoiceMatch(self: *Interpreter, match: ChosenArm.Match) Error!void {
+    defer self.heap.release(match.subject);
+    const scope = try self.pushScope();
+    errdefer self.popScope();
+    for (match.names, match.subject.data.struct_value.fields) |maybe, value| {
+        const name = maybe orelse continue;
+        const held = Heap.retain(value);
+        scope.bindings.put(self.gpa, name.text, .{ .kind = value.kind(), .value = held }) catch |err| {
+            self.heap.release(held);
+            return err;
+        };
+    }
 }
 
 fn executeCase(self: *Interpreter, case: *const Ast.Case) Error!void {
     const arm = try self.chooseArm(case) orelse return;
-    try self.executeBlock(arm.block);
+    const match = arm.match orelse return self.executeBlock(arm.body.block);
+    try self.bindChoiceMatch(match);
+    defer self.popScope();
+    try self.executeBlock(arm.body.block);
 }
 
 fn executeConditional(self: *Interpreter, conditional: Ast.If) Error!void {
@@ -2933,8 +2974,10 @@ fn evaluateByNode(self: *Interpreter, expression: *const Ast.Expression) Error!V
         },
         .case_expression => |case| blk: {
             const arm = try self.chooseArm(case) orelse unreachable;
+            if (arm.match) |match| try self.bindChoiceMatch(match);
+            defer if (arm.match != null) self.popScope();
             // An `Int` arm of a `case` that gives `Float` gives a `Float` (4.4).
-            const value = try self.evaluate(arm.value);
+            const value = try self.evaluate(arm.body.value);
             break :blk widen(value, kindOf(self.literal_types.get(expression).?));
         },
         else => unreachable,

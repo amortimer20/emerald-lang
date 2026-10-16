@@ -615,7 +615,25 @@ presenting it as generally available.
   value arms; custom equality versus choice selection; recursive contents; cleanup
   on raises/returns/cancellation; managed data/closure cycles under the test allocator.
 - Complete the accepted enum/case specification and decision-table notes.
-- Settled while building: pending.
+- Settled while building (Claude, 2026-10-15):
+  - The parser reads `_` as a name only inside a subject `case`'s alternatives
+    (a flag cleared inside blocks); the resolver refuses `_` anywhere a value is
+    read, so `when double(_)` explains itself.
+  - `Resolver.Facts.choice_matches` maps each match alternative to its choice key
+    and names. A match with a mistake is still recorded, binding every position
+    that names something usable, so its arm does not cascade into "not defined".
+  - Bound names are a new local kind, `match_binding`, with its own read-only
+    messages in the resolver and checker.
+  - A swapped label is reported at each misplaced name, and a repeated name only
+    as repeated, not also as swapped.
+  - A name used after its arm says which match named it and where it is
+    visible; this also works across REPL entries.
+  - A match whose choice belongs to another enum than the subject's is an error;
+    `when Download.finished` without names counts as covering its choice, so the
+    error is not followed by a coverage complaint.
+  - The interpreter's `chooseArm` returns the matched subject with the names;
+    both case forms bind them in a scope around the arm, which popScope and the
+    error path release.
 
 ### Slice 3: Editor experience
 

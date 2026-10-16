@@ -10,3 +10,12 @@ enum Broken {
 }
 const crash = [1][5]
 Broken.named("x")
+case Shape.circle(2) {
+    when Shape.circle(radius) {
+        print(radius * 2)
+    }
+    when Shape.dot {
+        print("dot")
+    }
+}
+radius

@@ -10,4 +10,9 @@ Pass a value of the data item's declared type, or convert it first.
                 ^^^^^^
 Valid indices are 0 through 0.
 > Broken.named(text: "x")
+> . . . . . . . 4.0
+> repl:1:1: `radius` is not defined
+  radius
+  ^^^^^^
+The `Shape.circle` match names `radius` only inside its own arm. Use it there, or declare a variable before the `case` and assign it in the arm.
 > 

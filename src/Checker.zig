@@ -187,7 +187,7 @@ const StructSite = struct {
 
 /// Why a binding may or may not change. Each reason gets its own correction,
 /// because the fix for a `const` is not the fix for a parameter.
-const Mutability = enum { variable, constant, parameter, loop_variable };
+const Mutability = enum { variable, constant, parameter, loop_variable, match_binding };
 
 const Scope = std.StringHashMapUnmanaged(Binding);
 
@@ -3849,6 +3849,13 @@ fn requireMutable(self: *Checker, name: []const u8, span: Source.Span, binding: 
             "`{s}` is a loop variable, so a change to it would be lost",
             .{name},
             "It holds a copy of one element. To change the list itself, loop over its indices and assign through them.",
+        ),
+        .match_binding => try self.reportWithHelp(
+            span,
+            "`{s}` holds data the matched choice carries, so it cannot change",
+            .{name},
+            "Copy it into a `var` and change the copy, as in `var changed = {s}`.",
+            .{name},
         ),
     }
 }
@@ -9764,7 +9771,29 @@ fn checkCase(self: *Checker, case: *const Ast.Case, expected: ?Type) Error!Type 
                 self.narrow(alternative, true);
             }
         }
-        if (try self.checkCaseBody(arm.body, expected, &results, &result_spans)) {
+        // Section 12: a choice match's names hold its data, typed by the
+        // choice's declaration, in this arm only.
+        const matched = if (arm.alternatives.len == 1) self.facts.choice_matches.get(arm.alternatives[0]) else null;
+        if (matched) |found| {
+            try self.pushScope();
+            const field = self.type_fields.get(found.key).?;
+            const items = self.structs.get(field.type_key).?.user.?.choice_data[field.field.enum_value.?];
+            const scope = self.scopes.items[self.scopes.items.len - 1];
+            // A match with the wrong count was reported; bind what lines up.
+            const count = @min(found.names.len, items.len);
+            for (found.names[0..count], items[0..count]) |maybe, item| {
+                const name = maybe orelse continue;
+                try scope.put(self.arena, name.text, .{
+                    .type = item.type,
+                    .declared = item.type,
+                    .assigned = true,
+                    .mutability = .match_binding,
+                });
+            }
+        }
+        const completes = try self.checkCaseBody(arm.body, expected, &results, &result_spans);
+        if (matched != null) _ = self.scopes.pop();
+        if (completes) {
             try finishing.append(self.arena, try self.snapshot());
         }
     }
@@ -9909,6 +9938,49 @@ fn checkAlternative(
     subject: Type,
     covered: *std.StringHashMapUnmanaged(void),
 ) Error!void {
+    // Section 12: `when Download.finished(path)` selects a choice. Its data
+    // is named, not compared, so nothing here is evaluated.
+    if (self.facts.choice_matches.get(alternative)) |found| {
+        const field = self.type_fields.get(found.key).?;
+        const enum_type = self.structs.get(field.type_key).?;
+        const payload = subject.payload();
+        if (payload.kind != .invalid and !(payload.kind == .struct_value and payload.user == enum_type.user)) {
+            try self.reportWithHelp(
+                alternative.span,
+                "`when` matches a choice of {f} here, but the subject is {f}",
+                .{ enum_type, subject },
+                "Match one of the subject's own choices, or `case` on a value of type {f}.",
+                .{enum_type},
+            );
+            return;
+        }
+        return self.coverAlternative(alternative, found.key, try Resolver.displayKey(self.arena, found.key), covered);
+    }
+    // A choice carrying data, written without its names, would compare with
+    // something that is not a value.
+    if (alternative.data == .name or alternative.data == .member) {
+        if (try self.referenceOf(alternative)) |reference| if (self.type_fields.get(reference.key)) |field| if (field.field.data) |data| {
+            var names: std.ArrayList(u8) = .empty;
+            var ignored: std.ArrayList(u8) = .empty;
+            for (data, 0..) |item, position| {
+                if (position > 0) {
+                    try names.appendSlice(self.arena, ", ");
+                    try ignored.appendSlice(self.arena, ", ");
+                }
+                try names.appendSlice(self.arena, item.name);
+                try ignored.appendSlice(self.arena, "_");
+            }
+            try self.reportWithHelp(
+                alternative.span,
+                "`{s}` carries data, so a match names it",
+                .{reference.display},
+                "Write `{s}({s})`, or `{s}({s})` to ignore it.",
+                .{ reference.display, names.items, reference.display, ignored.items },
+            );
+            try covered.put(self.arena, reference.key, {});
+            return;
+        };
+    }
     const actual = try self.typeOfExpected(alternative, subject);
     if (!equatable(subject, actual)) {
         try self.reportWithHelp(
@@ -9924,13 +9996,36 @@ fn checkAlternative(
         return;
     }
     const key = try self.knownAlternative(alternative) orelse return;
+    return self.coverAlternative(alternative, key, null, covered);
+}
+
+/// Records that an arm matches the known alternative `key`, unless an earlier
+/// one already does. `choice` names a choice match, whose earlier arm handled
+/// every value of that choice (12).
+fn coverAlternative(
+    self: *Checker,
+    alternative: *const Ast.Expression,
+    key: []const u8,
+    choice: ?[]const u8,
+    covered: *std.StringHashMapUnmanaged(void),
+) Error!void {
     if (covered.contains(key)) {
-        try self.report(
-            alternative.span,
-            "an earlier arm already matches this",
-            .{},
-            "Arms are tried from the top and the first match runs, so this one never could. Remove it.",
-        );
+        if (choice) |display| {
+            try self.reportWithHelp(
+                alternative.span,
+                "an earlier arm already handles every `{s}`",
+                .{display},
+                "Remove this arm, or make the further decision with `if` inside the earlier one.",
+                .{},
+            );
+        } else {
+            try self.report(
+                alternative.span,
+                "an earlier arm already matches this",
+                .{},
+                "Arms are tried from the top and the first match runs, so this one never could. Remove it.",
+            );
+        }
         return;
     }
     try covered.put(self.arena, key, {});
