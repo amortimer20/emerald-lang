@@ -4,10 +4,15 @@ Status: proposed, 2026-10-16 (rewritten twice the same day after the user's disc
 Claude wrote this plan at the user's request. Nothing in it is decided until the user
 accepts or changes each recommendation. Nothing is built.
 
-**Every program in this plan is a proposed example. None has been compiled by today's
-Emerald** (and the machine this was written on had no Zig installed, so claims about today's
-behavior come from the docs and source, not a run). Intended output is a requirement for any
-implementation, not a report of a run.
+**Every program in this plan is a proposed example, and none compiles today: each uses
+generic syntax.** To check the rest of the syntax, each program in section 7 was also run
+with its type parameters replaced by concrete types (`T` as `String` or `Int`) on
+`Emerald 0.7.0-dev` (main `8477bd4`, 2026-10-16). Two mistakes in the first drafts surfaced
+and are fixed below (`empty?` needs parentheses, and an `if` expression's `else` cannot start
+a new line); after those, all nine ran and printed what they should. What has not been
+tested is anything that depends on the generics themselves: inference, constraints, and the
+erased runtime. Intended output is a requirement for any implementation, not a report of a
+generic run.
 
 The user's requirement, recorded 2026-10-02: generics must be clean, easy to read, and easy
 to work with, and must not make the language messy. The user is apprehensive about adding
@@ -123,10 +128,22 @@ Suggested wording (a proposal): "`Stack[T]` declares a type that works with any 
 which Emerald does not support yet." with the help "Write one class for each kind of item,
 such as `IntStack`, or keep the items in a `List`."
 
-I have not checked what today's parser reports for either form; the first step is to build it
-and look, add a conformance case in `diagnostics/`, and confirm that `[` after a declared name
-is not otherwise valid, in a type, a function, or a method. Rewrite-context 11.3 and 21 are
-updated in the same change to say the syntax is reserved.
+**What today's parser does (checked 2026-10-16).** Every declaration form is already a syntax
+error, so no program can use it and reservation costs nothing; what is wrong is the wording:
+
+| Source | Today's message |
+| --- | --- |
+| `class Stack[T] {` , `enum Chain[T] {` | `expected `{` after `Stack`, found [` (the hint teaches a class body) |
+| `func largest[T](...)`, a method `mapped[U](...)` | `expected `(` after `largest`, found [` (the hint teaches parameters) |
+| `const s: Stack[Int] = Stack()` with a user type | `expected the end of the line, found [` |
+| `Stack[Int]()` as an expression | `` `Int` is not defined `` (parsed as indexing; a name that exists would be misread) |
+
+The messages blame the wrong thing, and the last is the real hazard for later: `Stack[Int]()`
+parses as indexing `Stack`, so a call-site type argument could never be added without
+changing its meaning, which supports 5.4's choice to never write one. The reservation
+change replaces the four messages above with the proposed wording and adds a `diagnostics/`
+case for each. Rewrite-context 11.3 and 21 are updated in the same change to say the syntax
+is reserved.
 
 ## 5. The design, if the gate is met
 
@@ -329,7 +346,8 @@ variable"; where a word is needed it is "type" or "the kind of item".
 
 Read them without this plan beside you. Does each beat the copy-and-paste version? Syntax
 follows section 5 and the current language (`case ... when ... then`, `const` members,
-`return ... if` guards); none has been compiled. Programs 6 and 7 are the stress tests: the
+`return ... if` guards); with concrete types in place of the parameters, all nine ran (see the
+top). Programs 6 and 7 are the stress tests: the
 first because it is a constrained, recursive enum with a recursive method, the second because
 it has two parameters and a block.
 
@@ -399,7 +417,7 @@ class History[T] {
     }
 
     func undo() {
-        return if self._undo.empty?
+        return if self._undo.empty?()
         self.current = self._undo.remove_last()
     }
 }
@@ -414,7 +432,7 @@ print(text.current)
 
 ```emerald
 func largest[T with Ordered](items: List[T]): T? {
-    if items.empty? {
+    if items.empty?() {
         return nothing
     }
     var best = items[0]
@@ -454,17 +472,20 @@ enum Tree[T with Ordered] {
     branch(left: Tree[T], item: T, right: Tree[T])
 
     func inserted(value: T): Tree[T] {
-        return case self {
-            when Tree.empty then Tree.branch(Tree.empty, value, Tree.empty)
-            when Tree.branch(left, item, right) then
-                if value < item then Tree.branch(left.inserted(value), item, right)
-                else Tree.branch(left, item, right.inserted(value))
+        case self {
+            when Tree.empty {
+                return Tree.branch(Tree.empty, value, Tree.empty)
+            }
+            when Tree.branch(left, item, right) {
+                return Tree.branch(left.inserted(value), item, right) if value < item
+                return Tree.branch(left, item, right.inserted(value))
+            }
         }
     }
 }
 
 var words: Tree[String] = Tree.empty
-words = words.inserted("pear")
+words = words.inserted("pear").inserted("fig")
 ```
 
 **7. A method with its own type, and a block**

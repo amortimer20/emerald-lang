@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-10-14. This is the live status a session starts from. Keep it to the current
+Updated: 2026-10-16. This is the live status a session starts from. Keep it to the current
 milestone, next work, active rough edges, and recent validation. Completed-slice narrative
 belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 [`docs/rewrite-context.md`](rewrite-context.md).
@@ -192,7 +192,10 @@ last checked.
 Next: the work before 1.0 (roadmap items 3 onward; revised 2026-10-11: the implementation stays in
 Zig, networking folds into completing the initial standard library, no web framework, and multicore,
 Godot bindings, and a debugger come after 1.0). Item 3: the enum plan is built and merged
-(below); the clean-generics plan, the parenthesis-free header block, and a deprecation story
+(below); the clean-generics plan is now written, [`generics-design-plan.md`](generics-design-plan.md)
+(proposed 2026-10-16, not accepted: it recommends an evidence gate before building and reserving
+the `[T]` syntax now, with `[T]`/`[T with Trait]` as the design if built); the parenthesis-free
+header block and a deprecation story
 still need the user's decisions. Still open from the QA pass: B4
 (reading the site) and B5 (reproducing the red "not defined" editor errors) were not reported;
 the flaky-test cause is settled (the exact-work test). The Zig 0.17 upgrade waits for 0.17.1.
