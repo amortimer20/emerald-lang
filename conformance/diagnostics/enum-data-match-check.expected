@@ -1,4 +1,4 @@
-diagnostics/enum-data-match-check.em:13:13: this `case` gives no value for `Action.say`
+diagnostics/enum-data-match-check.em:13:13: this `case` gives no value for `Action.say(_)`
   const sum = case action {
               ^^^^
 A `case` that produces a value needs one for every possible subject. Add an arm for each, or `else then ...` after the last arm.
@@ -14,7 +14,7 @@ diagnostics/enum-data-match-check.em:31:10: `when` matches a choice of Other her
       when Other.pick(n) {
            ^^^^^^^^^^^^^
 Match one of the subject's own choices, or `case` on a value of type Other.
-diagnostics/enum-data-match-check.em:37:1: warning: this `case` does not cover `Action.say` or `Action.wait`
+diagnostics/enum-data-match-check.em:37:1: warning: this `case` does not cover `Action.say(_)` or `Action.wait`
   case action {
   ^^^^
 Add an arm for each, or `else { }` to accept the gap deliberately.

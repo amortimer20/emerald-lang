@@ -40,7 +40,7 @@ no records.
 ## Csv.decode(text: String, as: Type, separator: String = ",") -> Type
 
 Reads known columns into `List[Record]`, where `Record` is a plain struct with its generated
-constructor. A public field can be `String`, `Int`, `Float`, `Bool`, an enum, `Date`, `Time`,
+constructor. A public field can be `String`, `Int`, `Float`, `Bool`, an enum without data, `Date`, `Time`,
 `DateTime`, `Instant`, or an optional of one of those. Columns match public field names; extra
 columns are ignored. Private fields are never read and therefore need defaults.
 
@@ -64,7 +64,7 @@ starts or ends with a space.
 Writes a typed `List` of plain structs. The result begins with the public field names in
 declaration order, then one row per record; an empty typed list still produces that header.
 Private fields are never written. The field vocabulary is the same as `decode`; absent optionals
-write an empty cell, enums write their value names, and date/time values use their ordinary ISO
+write an empty cell, enums without data write their value names, and date/time values use their ordinary ISO
 text. `Float` keeps Emerald's normal spelling, so `2.0` stays `2.0`.
 
 The first argument is checked at each call because Emerald has no one written type that means

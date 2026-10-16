@@ -2349,7 +2349,7 @@ fn chooseArm(self: *Interpreter, case: *const Ast.Case) Error!?ChosenArm {
         for (arm.alternatives) |alternative| {
             // Section 12: a choice match selects by the choice alone,
             // whatever its data or any custom equality says.
-            if (subject) |value| if (self.facts.choice_matches.get(alternative)) |found| {
+            if (subject) |value| if (alternative.data == .call) if (self.facts.choice_matches.get(alternative)) |found| {
                 const choice = self.choices.get(found.key).?;
                 if (value.data != .struct_value) continue;
                 const instance = value.data.struct_value;
@@ -2674,7 +2674,8 @@ fn setUpType(self: *Interpreter, type_key: []const u8, member: ?[]const u8, span
             // its fields are set up is not a cycle; reading a field it has
             // not got to yet is.
             const reached = member orelse return;
-            if (self.functions.contains(reached)) return;
+            // Building a choice that carries data reads no field (12).
+            if (self.functions.contains(reached) or self.choices.contains(reached)) return;
             if (self.module.get(reached)) |slot| {
                 // Taken by a changing method is not unset: the read raises
                 // that instead.

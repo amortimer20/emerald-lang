@@ -5600,3 +5600,18 @@ Six framed LSP conformance cases (hover, signature help, completion after a dot 
 inside an arm, hover on a match's name, definition through choice data) run 50 times
 each, and two unit tests cover references. Sweeps over four documents (6,150
 requests at every position) found no errors on a Debug build.
+
+## 2026-10-15: Enum data slice 4, and review of the whole branch
+
+Slice 4 adds `examples/enum-data.em`, a "Choices that carry data" section in the
+language guide, enum-without-data wording in the JSON, CSV, Dict, Set, and Console
+references, and two fuzz templates (a valid program and one with checking mistakes),
+with `enum`, `case`, and `when` among the random atoms.
+
+The first `/code-review` ran from the main checkout and so reviewed only the commit
+retiring Codex; its ten documentation findings (AGENTS.md rules that contradicted each
+other, stale status in the handoff, plan, and source review) were fixed. Run again
+against the branch, it found ten real items, listed in the plan's review section. Two
+were bugs a student could hit: a type-level field built from its own enum's data
+choice failed at run time, and a `Set` of a later-declared type was accepted unchecked,
+a hole that also let a set of a later struct holding a list through before this work.

@@ -3123,7 +3123,7 @@ fn onSignatureHelp(server: *Server, gpa: std.mem.Allocator, uri: []const u8, pos
             const target = analysis.resolved.facts.declarations.get(resolved_key);
             // Section 12: a choice carrying data is built like a generated
             // constructor, from its data items.
-            if (target) |found| if (findChoice(analysis.parsed, found)) |owner| if (owner.choice.data != null) {
+            if (target) |found| if (findChoiceSite(analysis.parsed, found)) |owner| if (owner.item == null and owner.choice.data != null) {
                 const definition_source = if (found.file < analysis.files.len) &analysis.files[found.file].source else source_for_file;
                 try signatures.append(arena, try choiceSignature(arena, definition_source, owner.enum_name, owner.choice, signatureCallName(source_for_file, call.callee), active));
             };
@@ -3472,42 +3472,42 @@ fn choiceSignature(gpa: std.mem.Allocator, source: *const Source, enum_name: []c
     };
 }
 
-/// Whether `target` is the name of an enum choice's data item (12). Calls name
-/// these labels (`finished(path: ...)`), and those uses are not tracked, so a
-/// rename would change the declaration alone.
-fn isChoiceDataItem(parsed: []const Parser.Parsed, target: Resolver.Target) bool {
-    if (target.file >= parsed.len) return false;
-    for (parsed[target.file].program.statements) |statement| switch (statement.data) {
-        .struct_declaration => |declaration| if (choiceDataItemWithin(declaration, target.span.start)) return true,
-        else => {},
-    };
-    return false;
-}
+/// What a target names inside an enum (12): one of its choices, or one of a
+/// choice's data items, with the enum's name.
+const ChoiceSite = struct {
+    enum_name: []const u8,
+    choice: Ast.StructDeclaration.TypeField,
+    /// The data item named, when the target is one rather than the choice.
+    item: ?Ast.Parameter = null,
+};
 
-fn choiceDataItemWithin(declaration: Ast.StructDeclaration, start: u32) bool {
-    for (declaration.type_fields) |field| if (field.data) |data| for (data) |item| {
-        if (item.name_span.start == start) return true;
-    };
-    for (declaration.types) |nested| if (choiceDataItemWithin(nested.declaration, start)) return true;
-    return false;
-}
-
-/// The enum choice whose name `target` is, with its enum's name (12).
-fn findChoice(parsed: []const Parser.Parsed, target: Resolver.Target) ?struct { enum_name: []const u8, choice: Ast.StructDeclaration.TypeField } {
+/// The enum choice, or choice data item, whose name `target` is. Rename uses
+/// the item case: calls name these labels (`finished(path: ...)`), and those
+/// uses are not tracked, so a rename would change the declaration alone.
+fn findChoiceSite(parsed: []const Parser.Parsed, target: Resolver.Target) ?ChoiceSite {
     if (target.file >= parsed.len) return null;
     for (parsed[target.file].program.statements) |statement| switch (statement.data) {
-        .struct_declaration => |declaration| if (findChoiceWithin(declaration, target.span.start)) |found| return .{ .enum_name = found.enum_name, .choice = found.choice },
+        .struct_declaration => |declaration| if (choiceSiteWithin(declaration, target.span.start)) |found| return found,
         else => {},
     };
     return null;
 }
 
-fn findChoiceWithin(declaration: Ast.StructDeclaration, start: u32) ?struct { enum_name: []const u8, choice: Ast.StructDeclaration.TypeField } {
+fn choiceSiteWithin(declaration: Ast.StructDeclaration, start: u32) ?ChoiceSite {
     if (declaration.enumeration) for (declaration.type_fields) |field| {
-        if (field.enum_value != null and field.name_span.start == start) return .{ .enum_name = declaration.name, .choice = field };
+        if (field.enum_value == null) continue;
+        if (field.name_span.start == start) return .{ .enum_name = declaration.name, .choice = field };
+        if (field.data) |data| for (data) |item| {
+            if (item.name_span.start == start) return .{ .enum_name = declaration.name, .choice = field, .item = item };
+        };
     };
-    for (declaration.types) |nested| if (findChoiceWithin(nested.declaration, start)) |found| return .{ .enum_name = found.enum_name, .choice = found.choice };
+    for (declaration.types) |nested| if (choiceSiteWithin(nested.declaration, start)) |found| return found;
     return null;
+}
+
+fn isChoiceDataItem(parsed: []const Parser.Parsed, target: Resolver.Target) bool {
+    const found = findChoiceSite(parsed, target) orelse return false;
+    return found.item != null;
 }
 
 fn renderedType(gpa: std.mem.Allocator, value: Type) ![]const u8 {

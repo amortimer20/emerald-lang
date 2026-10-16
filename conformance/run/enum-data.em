@@ -279,6 +279,16 @@ catch error: RuntimeError {
     print("caught #{error.message}")
 }
 
+# A type-level field can be built from one of its enum's own choices.
+enum Report {
+    empty
+    saved(path: String)
+
+    const Report.fallback = Report.saved("default.txt")
+}
+
+print(Report.fallback)
+
 # `case` compares with a value built beforehand by `==`.
 const wanted = Download.finished("report.pdf")
 case download {

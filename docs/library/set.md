@@ -3,7 +3,8 @@
 A `Set[T]` records whether it has seen each of its elements, once, in the order it first saw
 them — insertion order for iteration and display, though equality compares membership rather
 than order (8.4). An element needs the same stable-equality eligibility as a `Dict` key
-(8.3): numbers, `Bool`, `String`, enum values, and tuples of those — never a mutable
+(8.3): numbers, `Bool`, `String`, enum values (when any data their choices carry is eligible
+too), and tuples of those — never a mutable
 collection or a class object, since something that could change after it is stored could
 never be found again.
 

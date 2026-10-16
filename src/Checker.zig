@@ -2305,6 +2305,7 @@ fn validateKeyAnnotations(self: *Checker, annotation: Ast.TypeExpression, resolv
         try self.validateKeyAnnotations(key.*, resolved.key.?.*);
         try self.validateKeyAnnotations(annotation.element.?.*, resolved.element.?.*);
     } else if (annotation.element) |element| {
+        if (annotation.set) try self.requireEligibleMember(resolved.element.?.*, annotation.span);
         try self.validateKeyAnnotations(element.*, resolved.element.?.*);
     } else if (annotation.positions) |positions| {
         for (positions, resolved.elements) |position, checked| {
@@ -5710,7 +5711,7 @@ fn resolveWrittenType(self: *Checker, annotation: Ast.TypeExpression) Error!Type
 
     if (annotation.set) {
         const member = try self.resolveTypeExpression(annotation.element.?.*);
-        try self.requireEligibleMember(member, annotation.span);
+        if (!self.resolving_struct_fields) try self.requireEligibleMember(member, annotation.span);
         return Type.setOf(self.arena, member);
     }
 
@@ -6351,29 +6352,46 @@ fn requireEligibleKey(self: *Checker, key: Type, span: Source.Span) Error!void {
         );
         return;
     }
-    // Section 12: name the data item that keeps an enum from being a key,
-    // since every other enum can be one.
-    if (key.kind == .struct_value and key.user.?.enumeration and !key.optional) {
-        const user = key.user.?;
-        const declaration = self.struct_declarations.get(user.name).?;
-        for (user.choice_data, 0..) |items, variant| for (items) |item| {
-            if (item.type.eligibleKey(traits.equatable, traits.hashable)) continue;
-            try self.reportWithHelp(
-                span,
-                "{f} cannot be a dictionary key, because `{s}.{s}.{s}` is {f}",
-                .{ key, user.display_name, declaration.type_fields[variant].name, item.name, item.type },
-                "Every data item of every choice must be a valid key type for the enum to be a key: a number, a `Bool`, a `String`, an enum, or a tuple or struct made only from those.",
-                .{},
-            );
-            return;
-        };
-    }
+    if (try self.explainDataEnumKey(key, span, "a dictionary key")) return;
     try self.report(
         span,
         "{f} cannot be a dictionary key",
         .{key},
         "A key must be a number, a `Bool`, a `String`, an enum value, or a tuple or struct made only from valid key types. Lists, other mutable collections, and class objects cannot be keys.",
     );
+}
+
+/// Section 12: names the data item that keeps an enum from being a dictionary
+/// key or a set's element, since an enum without data always can be one.
+/// Returns whether it reported.
+fn explainDataEnumKey(self: *Checker, key: Type, span: Source.Span, what: []const u8) Error!bool {
+    if (key.kind != .struct_value or !key.user.?.enumeration or key.optional) return false;
+    const traits = self.equatableAndHashable();
+    const user = key.user.?;
+    const declaration = self.struct_declarations.get(user.name).?;
+    for (user.choice_data, 0..) |items, variant| for (items) |item| {
+        if (item.type.eligibleKey(traits.equatable, traits.hashable)) continue;
+        const choice = declaration.type_fields[variant].name;
+        if (item.type.kind == .struct_value and item.type.user == user) {
+            try self.reportWithHelp(
+                span,
+                "{f} cannot be {s}, because `{s}.{s}.{s}` holds another {f}",
+                .{ key, what, user.display_name, choice, item.name, key },
+                "An enum that holds itself through its data cannot be a key, as a struct that holds itself cannot.",
+                .{},
+            );
+        } else {
+            try self.reportWithHelp(
+                span,
+                "{f} cannot be {s}, because `{s}.{s}.{s}` is {f}",
+                .{ key, what, user.display_name, choice, item.name, item.type },
+                "Every data item of every choice must itself be a valid key type: a number, a `Bool`, a `String`, an enum, or a tuple or struct made only from those.",
+                .{},
+            );
+        }
+        return true;
+    };
+    return false;
 }
 
 fn adoptsEquatableWithoutHashable(user: *const Type.User, traits: EquatableTraits) bool {
@@ -6451,6 +6469,7 @@ fn requireEligibleMember(self: *Checker, member: Type, span: Source.Span) Error!
         );
         return;
     }
+    if (try self.explainDataEnumKey(member, span, "held by a set")) return;
     try self.report(
         span,
         "a set cannot hold {f}",
@@ -6930,17 +6949,13 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
         // Section 12: a choice that carries data is built by a call, as a
         // struct is, so its name alone is no value.
         if (field.field.data) |data| {
-            var names: std.ArrayList(u8) = .empty;
-            for (data, 0..) |item, position| {
-                if (position > 0) try names.appendSlice(self.arena, ", ");
-                try names.appendSlice(self.arena, item.name);
-            }
+            const names = try Resolver.labelList(self.arena, data);
             try self.reportWithHelp(
                 expression.span,
                 "`{s}` needs its data before it is a value",
                 .{reference.display},
                 "Call it, as in `{s}(...)`, or wrap the call in a block: `{{ {s} => {s}({s}) }}`.",
-                .{ reference.display, names.items, reference.display, names.items },
+                .{ reference.display, names, reference.display, names },
             );
             return .invalid;
         }
@@ -9962,22 +9977,12 @@ fn checkAlternative(
     // something that is not a value.
     if (alternative.data == .name or alternative.data == .member) {
         if (try self.referenceOf(alternative)) |reference| if (self.type_fields.get(reference.key)) |field| if (field.field.data) |data| {
-            var names: std.ArrayList(u8) = .empty;
-            var ignored: std.ArrayList(u8) = .empty;
-            for (data, 0..) |item, position| {
-                if (position > 0) {
-                    try names.appendSlice(self.arena, ", ");
-                    try ignored.appendSlice(self.arena, ", ");
-                }
-                try names.appendSlice(self.arena, item.name);
-                try ignored.appendSlice(self.arena, "_");
-            }
             try self.reportWithHelp(
                 alternative.span,
                 "`{s}` carries data, so a match names it",
                 .{reference.display},
-                "Write `{s}({s})`, or `{s}({s})` to ignore it.",
-                .{ reference.display, names.items, reference.display, ignored.items },
+                "Write `{s}({s})`, or `{s}{s}` to ignore it.",
+                .{ reference.display, try Resolver.labelList(self.arena, data), reference.display, try ignoredPositions(self.arena, data.len) },
             );
             try covered.put(self.arena, reference.key, {});
             return;
@@ -10082,7 +10087,10 @@ fn caseCoverage(self: *Checker, subject: ?Type, covered: *const std.StringHashMa
             if (field.enum_value == null) continue;
             const key = try Resolver.methodKey(self.arena, payload.user.?.name, field.name);
             if (!covered.contains(key)) {
-                try names.append(self.arena, try std.fmt.allocPrint(self.arena, "{s}.{s}", .{ payload.user.?.display_name, field.name }));
+                // A choice carrying data is covered by a match, as
+                // `Download.finished(_)`, never by its bare name (12).
+                const ignored = if (field.data) |data| try ignoredPositions(self.arena, data.len) else "";
+                try names.append(self.arena, try std.fmt.allocPrint(self.arena, "{s}.{s}{s}", .{ payload.user.?.display_name, field.name, ignored }));
             }
         }
     } else {
@@ -10094,6 +10102,15 @@ fn caseCoverage(self: *Checker, subject: ?Type, covered: *const std.StringHashMa
         try missing.print(self.arena, "`{s}`", .{name});
     }
     return .{ .complete = names.items.len == 0, .missing = missing.items };
+}
+
+/// `(_, _)`: a match of a choice with `count` data items that ignores them all.
+fn ignoredPositions(arena: std.mem.Allocator, count: usize) Error![]const u8 {
+    var text: std.ArrayList(u8) = .empty;
+    try text.append(arena, '(');
+    for (0..count) |position| try text.appendSlice(arena, if (position == 0) "_" else ", _");
+    try text.append(arena, ')');
+    return text.items;
 }
 
 /// Whether `==` can compare the two, by the rules `typeOfComparison` applies.

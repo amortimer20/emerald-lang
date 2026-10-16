@@ -29,7 +29,7 @@ Its values are the ones it lists. Write one of them, such as `Action.wait`.
 diagnostics/enum-data.em:24:17: Guests cannot be a dictionary key, because `Guests.named.names` is List[String]
   var seats: Dict[Guests, Int] = []
                   ^^^^^^
-Every data item of every choice must be a valid key type for the enum to be a key: a number, a `Bool`, a `String`, an enum, or a tuple or struct made only from those.
+Every data item of every choice must itself be a valid key type: a number, a `Bool`, a `String`, an enum, or a tuple or struct made only from those.
 diagnostics/enum-data.em:30:27: field `action` cannot be written as JSON, because Action carries data
   const saved = Json.encode(Turn(Action.wait))
                             ^^^^^^^^^^^^^^^^^

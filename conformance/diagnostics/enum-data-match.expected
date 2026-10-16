@@ -42,3 +42,7 @@ diagnostics/enum-data-match.em:66:7: `across` is not defined
   print(across)
         ^^^^^^
 The `Action.move` match names `across` only inside its own arm. Use it there, or declare a variable before the `case` and assign it in the arm.
+diagnostics/enum-data-match.em:80:12: `across_first` is not defined
+      return across_first
+             ^^^^^^^^^^^^
+Check the spelling, or declare it before this line.

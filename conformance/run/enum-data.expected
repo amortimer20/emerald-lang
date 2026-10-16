@@ -41,4 +41,5 @@ no download
 equal to blank
 the blank choice
 caught disk full
+Report.saved(path: "default.txt")
 the wanted file

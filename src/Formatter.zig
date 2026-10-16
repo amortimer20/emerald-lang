@@ -276,6 +276,12 @@ const Printer = struct {
     /// waiting to be flushed as a later statement's leading trivia, which
     /// would otherwise strand it on its own line before something it was
     /// never written to describe.
+    /// Whether the next unprinted comment is written after `start`.
+    fn commentStartsBefore(self: *Printer, start: u32) bool {
+        if (self.trivia_cursor >= self.trivia.len) return true;
+        return self.trivia[self.trivia_cursor].span.start < start;
+    }
+
     fn printTrailingComment(self: *Printer, after: u32) PrintError!void {
         if (self.trivia_cursor >= self.trivia.len) return;
         const item = self.trivia[self.trivia_cursor];
@@ -806,7 +812,11 @@ const Printer = struct {
                 }
                 index += 1;
             }
-            try self.printTrailingComment(members.items[index - 1].end());
+            // A comment written inside the next member, as in a choice's data
+            // on the same line (12), belongs to that member, not this one.
+            if (index == members.items.len or self.commentStartsBefore(members.items[index].start())) {
+                try self.printTrailingComment(members.items[index - 1].end());
+            }
             try self.write("\n");
         }
         _ = try self.flushTrivia(end);

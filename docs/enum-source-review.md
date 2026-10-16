@@ -2,6 +2,10 @@
 
 Reviewed: 2026-10-13, main `5fb9f92`, pinned Zig 0.16.0.
 
+Superseded as a status record: the plan this fed was accepted on 2026-10-15 and is
+implemented on `claude/enum-data`. Read [the plan](enum-design-plan.md) for what was
+decided and built; this file is kept for the evidence below.
+
 This is implementation evidence for the forthcoming design plan, not an accepted
 language specification. The user authorized Codex to write this plan despite the
 usual division of roles. No language implementation changed during this review.

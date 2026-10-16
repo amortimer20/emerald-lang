@@ -20,3 +20,8 @@ case Action.wait {
 }
 const label = case Action.wait { when Action.say( text ) then text
     else then "" }
+
+enum Spread {
+    waiting, finished(path: String # the path
+    ), failed(code: Int)
+}

@@ -10,7 +10,8 @@ data label is an error (decision 3). The reasons are in those sections.
 
 The user liked the declaration, construction, and `case` syntax below after
 working through examples from a C# enum starting point. Treat that as the working
-direction; the complete behavior and boundaries below are still recommendations.
+direction; the behavior and boundaries below were its recommendations, accepted
+2026-10-15 as amended.
 The source evidence is in [enum-source-review.md](enum-source-review.md), checked
 against main `5fb9f92`. Rewrite-context sections 6.3, 8.3, 8.4, 10.5, 12, and
 15.9–15.11 remain the current specification until accepted behavior is implemented.
@@ -411,8 +412,7 @@ display, but do not suggest it as an automatic lossless decoder format.
 The diagnostic explains that saving only the choice name would lose its data and
 suggests explicit conversion. A future automatic representation needs a separate
 small design covering tags, data names, missing fields, and compatibility. This is
-a visible limitation to accept or change before implementation, not a silent
-implementation shortcut.
+a visible, accepted limitation, not a silent implementation shortcut.
 
 ## 8. Formatting and editor support
 
@@ -687,7 +687,44 @@ presenting it as generally available.
 - Update handoff and journal, and the website pages whose claims changed.
   Keep automatic serialization and generics deferred rather than silently expanding
   this milestone.
-- Settled while building: pending.
+- Settled while building (Claude, 2026-10-15):
+  - `examples/enum-data.em` tours downloads, shapes (with a computed `area`),
+    game actions with `_`, and a working copy, in the teaching order above.
+    The language guide's Enums section gains "Choices that carry data", and the
+    JSON, CSV, Dict, Set, and Console references name enums without data where
+    they listed enums.
+  - The fuzz runner gains a valid template (a recursive chain built in a loop,
+    matches with `_`, optional data, named construction) and one that parses
+    but makes the checking mistakes (repeated item, swapped and repeated names,
+    a value position, a mixed arm, a choice used as a value, JSON encoding);
+    `enum`, `case`, and `when` join its random atoms.
+  - The website changes with the release that ships this, not with the merge,
+    as for earlier language features.
+
+### Review of the whole branch (Claude, 2026-10-15)
+
+`/code-review` at high effort over `claude/enum-data` found ten items, each
+reproduced or confirmed and fixed with a regression case:
+
+1. Building a data choice from its own enum's type-level setup failed at run
+   time ("still being set up"); setup now lets a choice through.
+2. A `Set` element was checked when its type was resolved, before a later
+   declaration's data or fields existed, so `Set[Download]` (and `Set[Bag]` for
+   a later struct holding a list, a pre-existing bug) was accepted. Set
+   elements are now checked with dictionary keys, once every type is complete.
+3. A recursive enum is refused as a key, as the plan decided, but its message
+   contradicted itself; it now says the item holds another of the same enum.
+4. Sets now share the dictionary's data-item explanation.
+5. The "only inside its own arm" hint applied across functions; it is now kept
+   to the function the match is in.
+6. Coverage warnings listed a data choice by its bare name, which is an error to
+   write; they now show `Download.finished(_)`.
+7. Every `case` alternative paid a hash lookup; only call-shaped ones do now.
+8. Three copies of the data-label list became `Resolver.labelList`.
+9. Two near-identical LSP walks became `findChoiceSite`.
+10. A comment inside a choice's data, in a comma-separated run, moved to the
+    previous choice; a member now takes a trailing comment only when it starts
+    before the next member does.
 
 ## Teaching acceptance programs
 
@@ -761,8 +798,8 @@ language source. The suite required localhost access outside the sandbox. This
 plan introduces no executable feature; its code examples are not claimed to run.
 Check new/changed Markdown links, own-line `else`/`catch`/`finally` layout, and
 `git diff --check` before handing it back. A Markdown commit requires the local
-Debug gate under AGENTS.md. Committing the proposed plan does not accept its
-decisions or authorize implementation; pushing is a separate action.
+Debug gate under AGENTS.md. (When proposed, committing the plan did not accept it;
+the user accepted it on 2026-10-15.)
 
 Implementation validation for every slice, on pinned Zig 0.16.0 and with `-j1`:
 

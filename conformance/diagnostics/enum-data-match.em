@@ -64,3 +64,18 @@ case action {
     }
 }
 print(across)
+
+func first(move: Action): Int {
+    case move {
+        when Action.move(across_first, _) {
+            return across_first
+        }
+        else {
+        }
+    }
+    return 0
+}
+
+func second(): Int {
+    return across_first
+}

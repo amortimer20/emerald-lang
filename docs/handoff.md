@@ -191,8 +191,8 @@ last checked.
 
 Next: the work before 1.0 (roadmap items 3 onward; revised 2026-10-11: the implementation stays in
 Zig, networking folds into completing the initial standard library, no web framework, and multicore,
-Godot bindings, and a debugger come after 1.0). Item 3, the design plans for enums that carry data
-and clean generics, needs the user's decisions first. Still open from the QA pass: B4
+Godot bindings, and a debugger come after 1.0). Item 3: the enum plan is accepted and
+being built (below); the clean-generics plan still needs the user's decisions. Still open from the QA pass: B4
 (reading the site) and B5 (reproducing the red "not defined" editor errors) were not reported;
 the flaky-test cause is settled (the exact-work test). The Zig 0.17 upgrade waits for 0.17.1.
 
@@ -213,11 +213,6 @@ pages change when the milestone does.
 tracked, so renaming a struct field leaves `Point(x: 1)` unchanged and breaks it.
 Renaming an enum choice's data label is refused for the same reason. A fix tracks
 labels in the references walk for both.
-
-Documentation checkpoint validation (2026-10-14): pinned Zig 0.16.0 toolchain
-probe and `zig build test -j1` in Debug passed, with localhost socket access for
-the HTTP tests. Markdown link/layout checks and `git diff --check` passed. The
-user requested a local commit of the four planning/review/status documents.
 
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
 the others have a validated commit each, with reproductions in the journal). Concurrency is
@@ -423,7 +418,7 @@ compiler), or the compiler depends on it.
    website's pages are checked against a real build by `scripts/check-outputs.py` in
    `emerald-website`; rerun it against the build under test. Finish it before the 0.7.0 release.
    **The pass is scoped (the user, 2026-10-04): one chunk at a time, no rush.** Website prose is
-   Claude's alone; Codex does not edit it.
+   Claude's alone (Codex, then working on the project, did not edit it).
 
    QA checklist for 0.7.0 (tick each as it lands; built from what changed since 0.6.0):
 

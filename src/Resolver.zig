@@ -104,6 +104,8 @@ pub const Site = struct { file: u32, start: u32 };
 
 /// Section 12's `when Download.finished(path)`: which choice an alternative
 /// matches, and what each of its data positions is called in the arm.
+const MatchedName = struct { key: []const u8, function: ?[]const u8 };
+
 pub const ChoiceMatch = struct {
     /// The choice's member key, as `Download::finished` is written.
     key: []const u8,
@@ -395,9 +397,10 @@ methods_named: std.StringHashMapUnmanaged(std.ArrayList([]const u8)) = .empty,
 instance_members: NameSet = .empty,
 /// The member key of every section 12 enum value.
 enum_values: NameSet = .empty,
-/// Every name a `case` match introduced (12), with its choice's key, so a
-/// use of one after its arm can say where it was visible.
-match_names: std.StringHashMapUnmanaged([]const u8) = .empty,
+/// Every name a `case` match introduced (12), with its choice's key and the
+/// function it was in, so a use of one after its arm, in that function, can
+/// say where it was visible.
+match_names: std.StringHashMapUnmanaged(MatchedName) = .empty,
 /// The enum values that carry data (12), which a call builds, with their
 /// data items, whose labels a `case` match is checked against.
 data_choices: std.StringHashMapUnmanaged([]const Ast.Parameter) = .empty,
@@ -1835,7 +1838,7 @@ fn walkCase(self: *Resolver, case: *const Ast.Case) Error!void {
                 .span = name.span,
                 .kind = .match_binding,
             });
-            try self.match_names.put(self.arena, name.text, matched.?.key);
+            try self.match_names.put(self.arena, name.text, .{ .key = matched.?.key, .function = self.current_function });
         }
         try self.walkCaseBody(arm.body);
     }
@@ -1935,8 +1938,13 @@ fn choiceMatch(
     return .{ .key = key, .names = names };
 }
 
+fn sameFunction(a: ?[]const u8, b: ?[]const u8) bool {
+    if (a == null or b == null) return a == null and b == null;
+    return std.mem.eql(u8, a.?, b.?);
+}
+
 /// `x, y`: a choice's data labels, as a match in declaration order writes them.
-fn labelList(arena: std.mem.Allocator, data: []const Ast.Parameter) Error![]const u8 {
+pub fn labelList(arena: std.mem.Allocator, data: []const Ast.Parameter) Error![]const u8 {
     var text: std.ArrayList(u8) = .empty;
     for (data, 0..) |item, position| {
         if (position > 0) try text.appendSlice(arena, ", ");
@@ -2931,10 +2939,10 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
             );
             try self.checkAmbiguous(name, expression.span);
             const found = self.lookup(name) orelse {
-                if (self.match_names.get(name)) |key| return self.reportUndefined(
+                if (self.match_names.get(name)) |matched| if (sameFunction(matched.function, self.current_function)) return self.reportUndefined(
                     expression.span,
                     name,
-                    try std.fmt.allocPrint(self.arena, "The `{s}` match names `{s}` only inside its own arm. Use it there, or declare a variable before the `case` and assign it in the arm.", .{ try displayKey(self.arena, key), name }),
+                    try std.fmt.allocPrint(self.arena, "The `{s}` match names `{s}` only inside its own arm. Use it there, or declare a variable before the `case` and assign it in the arm.", .{ try displayKey(self.arena, matched.key), name }),
                 );
                 return self.reportUndefined(
                     expression.span,

@@ -113,7 +113,9 @@ empty string, or just the header when one is supplied.
 
 The same method accepts a list of plain structs. Public fields become the header in declaration
 order, numeric columns (and their headers) are right-aligned, and values display as `print` would; `nothing` is an
-empty cell. A struct-row table cannot also receive `header:`. See
+empty cell. A field may be text, a number, `Bool`, an enum without data, a date or time, or an
+optional of one; an enum whose choices carry data is refused, since a cell would show only the
+choice's name. A struct-row table cannot also receive `header:`. See
 [`conformance/run/console-struct-table.em`](../../conformance/run/console-struct-table.em).
 
 ### Console.panel(text: String, title: String? = nothing, color: Console.Color? = nothing) -> String
