@@ -111,7 +111,9 @@ pub const ChoiceMatch = struct {
     /// a position written `_`.
     names: []const ?Name,
 
-    pub const Name = struct { text: []const u8, span: Source.Span };
+    /// `expression` is the name as written in the match, which tools treat
+    /// as its declaration.
+    pub const Name = struct { text: []const u8, span: Source.Span, expression: *const Ast.Expression };
 };
 
 /// Where a declaration is written: its file and its name's span, for go to
@@ -1916,7 +1918,10 @@ fn choiceMatch(
             );
             continue;
         }
-        name.* = .{ .text = text, .span = argument.span };
+        name.* = .{ .text = text, .span = argument.span, .expression = argument };
+        // Go to definition, references, and rename find a binding through
+        // its uses' targets; the name in the match is its own declaration.
+        try self.facts.expression_targets.put(self.arena, argument, .{ .file = self.file, .span = argument.span });
     }
     if (call.arguments.len != data.len) {
         try self.reportWithHelpFmt(

@@ -647,7 +647,31 @@ presenting it as generally available.
 - Check the sibling extension grammar and integration suite. Any extension changes
   use that repo's instructions and a separate branch/review. Record concrete
   companion work in the handoff.
-- Settled while building: pending.
+- Settled while building (Claude, 2026-10-15):
+  - Hover, completion, and signature help present a data choice as the call
+    that builds it, `finished(path: String): Download`, with its `##` comment;
+    completion inserts `finished($0)`. A choice without data stays
+    `waiting: Download`. A data item's hover leaves out the choice's comment,
+    which it shares a line with.
+  - A match's names are their own declaration targets (`expression_targets`)
+    and are typed by the checker, so hover, definition, references, and rename
+    work from either the match or a use; the references walk treats them as
+    declarations, never also as uses.
+  - Completion offers a match's names only in its own arm, block or `then`,
+    typed (`saved: String`). Hover on a name shows its type, as for any local;
+    read-only status is not shown, since no local hover shows mutability.
+  - Types written in choice data (`place: Place`) take part in definition,
+    references, and rename.
+  - **Gap, deferred:** named labels at call sites (`finished(path: ...)`) are
+    not tracked, for choices or for struct constructors (`Point(x: 1)`), which
+    already had this gap. Renaming a data label is therefore refused with an
+    explanation rather than changing the declaration alone. Renaming a struct
+    field still leaves its named constructor labels unchanged; that predates
+    this plan and is recorded in the handoff.
+  - Signature help inside an unfinished match header gives nothing, since the
+    patched header is not a complete match.
+  - The VS Code extension needs no change: its grammar colours tokens without
+    enum-body rules.
 
 ### Slice 4: Teaching material and milestone integration
 

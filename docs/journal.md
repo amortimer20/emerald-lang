@@ -5579,3 +5579,24 @@ Three messages read badly and were reworded ("a Other value", "`names` names dat
 "A `Action.move` match"). An LSP sweep over a document with matches and an unfinished
 `when Action.mo` (1,860 requests at every position, plus symbols) found no errors on a
 Debug build; the editor features for matches belong to slice 3.
+
+## 2026-10-15: Enum data slice 3, editor support
+
+Measuring the language server first showed most navigation already worked for
+choices: references and rename on a choice reached its construction and match sites.
+What was missing: hover and completion described a data choice as `finished:
+Download`; a match's names had no hover, references, or rename at their declaration
+and were not offered in completion; signature help knew nothing of choice data; and
+types written in choice data were invisible to navigation. Each is fixed.
+
+Two things found on the way. Recording a match's name as its own target made
+references and rename list it twice, once as declaration and once as a use, and
+duplicate rename edits are invalid; the references walk now visits only a match's
+choice. And making data items declarations exposed that named labels at call sites
+are untracked, for struct constructors as much as choices, so a data-label rename
+is refused rather than allowed to break every named call.
+
+Six framed LSP conformance cases (hover, signature help, completion after a dot and
+inside an arm, hover on a match's name, definition through choice data) run 50 times
+each, and two unit tests cover references. Sweeps over four documents (6,150
+requests at every position) found no errors on a Debug build.

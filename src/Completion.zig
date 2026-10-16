@@ -16,6 +16,8 @@ pub const Item = struct {
     declaration: ?emerald.Ast.Statement = null,
     parameter: ?emerald.Ast.Parameter = null,
     lambda_parameter: ?emerald.Ast.Expression.LambdaParameter = null,
+    /// A name a `case` match introduces (12), as written in the match.
+    match_name: ?*const emerald.Ast.Expression = null,
     owned_label: bool = false,
 
     pub fn jsonStringify(self: Item, out: *std.json.Stringify) !void {
@@ -158,6 +160,31 @@ pub fn field(gpa: std.mem.Allocator, source: *const emerald.Source, label: []con
         try gpa.dupe(u8, label);
     item.documentation = try documentation(gpa, source, span);
     try humanizePrelude(gpa, &item, source);
+    return item;
+}
+
+/// Section 12's enum value, as `waiting: Download`, or for one that carries
+/// data, as the call that builds it, `finished(path: String): Download`, which
+/// completion inserts with its parentheses.
+pub fn choice(gpa: std.mem.Allocator, source: *const emerald.Source, enum_name: []const u8, value: emerald.Ast.StructDeclaration.TypeField) !Item {
+    var item: Item = .{ .label = value.name, .kind = 20 };
+    errdefer item.deinit(gpa);
+    const data = value.data orelse {
+        item.detail = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ value.name, enum_name });
+        item.documentation = try documentation(gpa, source, value.name_span);
+        return item;
+    };
+    var detail: std.Io.Writer.Allocating = .init(gpa);
+    defer detail.deinit();
+    try detail.writer.print("{s}(", .{value.name});
+    for (data, 0..) |parameter, index| {
+        if (index != 0) try detail.writer.writeAll(", ");
+        try detail.writer.print("{s}: {s}", .{ parameter.name, annotationText(source, parameter.annotation) });
+    }
+    try detail.writer.print("): {s}", .{enum_name});
+    item.detail = try detail.toOwnedSlice();
+    item.documentation = try documentation(gpa, source, value.name_span);
+    try insertion(gpa, &item, true);
     return item;
 }
 

@@ -1978,6 +1978,8 @@ fn findTypeInStatement(statement: Ast.Statement, file: u32, offset: u32, analysi
             }
             for (s.type_fields) |tf| {
                 if (tf.annotation) |ann| if (checkTypeExpr(ann, file, offset, analysis)) |t| return t;
+                // Section 12's data types, as `place: Place` writes them.
+                if (tf.data) |data| for (data) |item| if (checkTypeExpr(item.annotation, file, offset, analysis)) |t| return t;
             }
             for (s.types) |nested| if (findTypeInStatement(nestedStatement(nested), file, offset, analysis)) |t| return t;
         },
@@ -2160,6 +2162,9 @@ fn findDeclNameInStatement(statement: Ast.Statement, file: u32, offset: u32) ?Re
             }
             for (s.type_fields) |tf| {
                 if (offset >= tf.name_span.start and offset <= tf.name_span.end) return .{ .file = file, .span = tf.name_span };
+                if (tf.data) |data| for (data) |item| {
+                    if (offset >= item.name_span.start and offset <= item.name_span.end) return .{ .file = file, .span = item.name_span };
+                };
             }
             for (s.types) |nested| if (findDeclNameInStatement(nestedStatement(nested), file, offset)) |t| return t;
         },
@@ -2534,6 +2539,7 @@ fn collectReferencesInStruct(
         // An enum value's annotation is synthesized, spanning the enum's own
         // name, so it is not a reference someone wrote.
         if (tf.enum_value == null) if (tf.annotation) |ann| try collectReferencesInTypeExpression(gpa, analysis, target, file, ann, out);
+        if (tf.data) |data| for (data) |item| try collectReferencesInTypeExpression(gpa, analysis, target, file, item.annotation, out);
         try collectReferencesInExpression(gpa, analysis, target, file, tf.initializer, out);
     }
     for (s.types) |nested| try collectReferencesInStruct(gpa, analysis, target, file, nested.declaration, out);
@@ -2549,7 +2555,15 @@ fn collectReferencesInCase(
 ) std.mem.Allocator.Error!void {
     if (case.subject) |subject| try collectReferencesInExpression(gpa, analysis, target, file, subject, out);
     for (case.arms) |arm| {
-        for (arm.alternatives) |alt| try collectReferencesInExpression(gpa, analysis, target, file, alt, out);
+        for (arm.alternatives) |alt| {
+            // Section 12: a choice match's names are declarations, found
+            // through `includeDeclaration`; only its choice is a reference.
+            if (analysis.resolved.facts.choice_matches.contains(alt)) {
+                try collectReferencesInExpression(gpa, analysis, target, file, alt.data.call.callee, out);
+                continue;
+            }
+            try collectReferencesInExpression(gpa, analysis, target, file, alt, out);
+        }
         switch (arm.body) {
             .block => |b| try collectReferencesInStatements(gpa, analysis, target, file, b.statements, out),
             .value => |v| try collectReferencesInExpression(gpa, analysis, target, file, v, out),
@@ -2729,7 +2743,7 @@ fn onPrepareRename(server: *Server, gpa: std.mem.Allocator, uri: []const u8, pos
         try respond(gpa, out, id, null);
         return;
     }
-    if (isAnnotatedOperatorAt(&analysis, loaded.index, offset)) {
+    if (isAnnotatedOperatorAt(&analysis, loaded.index, offset) or isChoiceDataItem(analysis.parsed, target)) {
         try respond(gpa, out, id, null);
         return;
     }
@@ -2788,6 +2802,10 @@ fn onRename(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: 
     // rename cannot edit the declaration or present a complete edit set.
     if (target.file >= loaded.project.files.len) {
         try respondError(gpa, out, id, invalid_params_code, "a built-in name cannot be renamed");
+        return;
+    }
+    if (isChoiceDataItem(analysis.parsed, target)) {
+        try respondError(gpa, out, id, invalid_params_code, "an enum choice's data label cannot be renamed yet, since calls that name it are not tracked");
         return;
     }
     if (isAnnotatedOperatorAt(&analysis, loaded.index, offset)) {
@@ -3097,6 +3115,18 @@ fn onSignatureHelp(server: *Server, gpa: std.mem.Allocator, uri: []const u8, pos
                 const info = try catalogSignature(arena, found, signature, catalogActiveParameter(signature, active));
                 try signatures.append(arena, info);
             }
+        }
+    }
+
+    if (signatures.items.len == 0) {
+        if (key) |resolved_key| {
+            const target = analysis.resolved.facts.declarations.get(resolved_key);
+            // Section 12: a choice carrying data is built like a generated
+            // constructor, from its data items.
+            if (target) |found| if (findChoice(analysis.parsed, found)) |owner| if (owner.choice.data != null) {
+                const definition_source = if (found.file < analysis.files.len) &analysis.files[found.file].source else source_for_file;
+                try signatures.append(arena, try choiceSignature(arena, definition_source, owner.enum_name, owner.choice, signatureCallName(source_for_file, call.callee), active));
+            };
         }
     }
 
@@ -3414,6 +3444,72 @@ fn generatedConstructorSignature(gpa: std.mem.Allocator, source: *const Source, 
     return .{ .label = try gpa.dupe(u8, label.written()), .parameters = parameters, .activeParameter = if (parameters.len == 0) null else @min(active, @as(u32, @intCast(parameters.len - 1))) };
 }
 
+/// Section 12's `Download.finished(path: String): Download`, with the choice's
+/// `##` documentation.
+fn choiceSignature(gpa: std.mem.Allocator, source: *const Source, enum_name: []const u8, choice: Ast.StructDeclaration.TypeField, name: []const u8, active: ActiveArgument) !SignatureInformation {
+    const data = choice.data.?;
+    // A named argument highlights the item it names, wherever it is written.
+    var highlighted = active.index;
+    if (active.name) |written| for (data, 0..) |item, position| {
+        if (std.mem.eql(u8, item.name, written)) highlighted = @intCast(position);
+    };
+    const parameters = try gpa.alloc(SignatureParameterInformation, data.len);
+    var label: std.Io.Writer.Allocating = .init(gpa);
+    defer label.deinit();
+    try label.writer.print("{s}(", .{name});
+    for (data, parameters, 0..) |item, *parameter, index| {
+        if (index != 0) try label.writer.writeAll(", ");
+        const text = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ item.name, source.text[item.annotation.span.start..writtenTypeEnd(item.annotation)] });
+        parameter.* = .{ .label = text };
+        try label.writer.writeAll(text);
+    }
+    try label.writer.print("): {s}", .{enum_name});
+    return .{
+        .label = try gpa.dupe(u8, label.written()),
+        .documentation = try Completion.documentation(gpa, source, choice.name_span),
+        .parameters = parameters,
+        .activeParameter = @min(highlighted, @as(u32, @intCast(data.len - 1))),
+    };
+}
+
+/// Whether `target` is the name of an enum choice's data item (12). Calls name
+/// these labels (`finished(path: ...)`), and those uses are not tracked, so a
+/// rename would change the declaration alone.
+fn isChoiceDataItem(parsed: []const Parser.Parsed, target: Resolver.Target) bool {
+    if (target.file >= parsed.len) return false;
+    for (parsed[target.file].program.statements) |statement| switch (statement.data) {
+        .struct_declaration => |declaration| if (choiceDataItemWithin(declaration, target.span.start)) return true,
+        else => {},
+    };
+    return false;
+}
+
+fn choiceDataItemWithin(declaration: Ast.StructDeclaration, start: u32) bool {
+    for (declaration.type_fields) |field| if (field.data) |data| for (data) |item| {
+        if (item.name_span.start == start) return true;
+    };
+    for (declaration.types) |nested| if (choiceDataItemWithin(nested.declaration, start)) return true;
+    return false;
+}
+
+/// The enum choice whose name `target` is, with its enum's name (12).
+fn findChoice(parsed: []const Parser.Parsed, target: Resolver.Target) ?struct { enum_name: []const u8, choice: Ast.StructDeclaration.TypeField } {
+    if (target.file >= parsed.len) return null;
+    for (parsed[target.file].program.statements) |statement| switch (statement.data) {
+        .struct_declaration => |declaration| if (findChoiceWithin(declaration, target.span.start)) |found| return .{ .enum_name = found.enum_name, .choice = found.choice },
+        else => {},
+    };
+    return null;
+}
+
+fn findChoiceWithin(declaration: Ast.StructDeclaration, start: u32) ?struct { enum_name: []const u8, choice: Ast.StructDeclaration.TypeField } {
+    if (declaration.enumeration) for (declaration.type_fields) |field| {
+        if (field.enum_value != null and field.name_span.start == start) return .{ .enum_name = declaration.name, .choice = field };
+    };
+    for (declaration.types) |nested| if (findChoiceWithin(nested.declaration, start)) |found| return .{ .enum_name = found.enum_name, .choice = found.choice };
+    return null;
+}
+
 fn renderedType(gpa: std.mem.Allocator, value: Type) ![]const u8 {
     var writer: std.Io.Writer.Allocating = .init(gpa);
     defer writer.deinit();
@@ -3562,6 +3658,11 @@ fn onBareCompletion(server: *Server, gpa: std.mem.Allocator, uri: []const u8, po
     for (Resolver.prelude) |name| try addCompletionOnce(gpa, &seen, &items, name);
     try collectNamespaceMembersSeen(gpa, &analysis, "", &seen, &items);
     for (items.items) |*item| {
+        // The checker typed a choice match's names from the choice's data.
+        if (item.match_name) |written| if (analysis.checked.expression_types.get(written)) |info| {
+            item.detail = try std.fmt.allocPrint(gpa, "{s}: {f}", .{ item.label, info.type });
+            continue;
+        };
         if (item.lambda_parameter) |parameter| {
             item.* = try Completion.field(gpa, &analysis.files[loaded.index].source, item.label, parameter.name_span, parameter.annotation, null, null, 6);
             continue;
@@ -3695,6 +3796,7 @@ fn collectLocalCandidatesInStatements(
         .case_statement => |case| {
             for (case.arms) |arm| if (arm.body == .block and spanContains(arm.body.block.span, cursor)) {
                 try collectLocalCandidatesInStatements(gpa, arm.body.block.statements, cursor, seen, out);
+                try addMatchNames(gpa, arm, seen, out);
                 break :nested;
             };
             if (case.otherwise) |otherwise| if (otherwise == .block and spanContains(otherwise.block.span, cursor)) {
@@ -3840,9 +3942,26 @@ fn collectLambdaCandidatesInExpression(gpa: std.mem.Allocator, expression: *cons
             .expression => |part_expression| if (try collectLambdaCandidatesInExpression(gpa, part_expression, cursor, seen, out)) return true,
         },
         .type_test => |test_expression| return collectLambdaCandidatesInExpression(gpa, test_expression.value, cursor, seen, out),
+        .case_expression => |case| for (case.arms) |arm| if (arm.body == .value and spanContains(arm.body.value.span, cursor)) {
+            _ = try collectLambdaCandidatesInExpression(gpa, arm.body.value, cursor, seen, out);
+            try addMatchNames(gpa, arm, seen, out);
+            return true;
+        },
         else => {},
     }
     return false;
+}
+
+/// Section 12: the names a choice match gives its arm. Only the syntax tree is
+/// at hand here, so any single call alternative's bare-name arguments count;
+/// for an ordinary call those names are visible anyway.
+fn addMatchNames(gpa: std.mem.Allocator, arm: Ast.Case.Arm, seen: *std.StringHashMapUnmanaged(void), out: *std.ArrayList(CompletionItem)) std.mem.Allocator.Error!void {
+    if (arm.alternatives.len != 1 or arm.alternatives[0].data != .call) return;
+    for (arm.alternatives[0].data.call.arguments) |argument| {
+        if (argument.data != .name or std.mem.eql(u8, argument.data.name, "_") or seen.contains(argument.data.name)) continue;
+        try addCompletionOnce(gpa, seen, out, argument.data.name);
+        out.items[out.items.len - 1].match_name = argument;
+    }
 }
 
 fn spanContains(span: Source.Span, offset: u32) bool {
@@ -4214,7 +4333,10 @@ fn enrichTypeMembers(server: *Server, gpa: std.mem.Allocator, analysis: *const e
             break;
         };
         for (s.type_fields) |field| if (std.mem.eql(u8, field.name, item.label)) {
-            const described = try Completion.field(gpa, source, item.label, field.name_span, field.annotation, field.initializer, null, if (field.enum_value != null) 20 else 10);
+            const described = if (field.enum_value != null)
+                try Completion.choice(gpa, source, s.name, field)
+            else
+                try Completion.field(gpa, source, item.label, field.name_span, field.annotation, field.initializer, null, 10);
             item.deinit(gpa);
             item.* = described;
             break;
@@ -4310,7 +4432,16 @@ fn describeStructTarget(gpa: std.mem.Allocator, analysis: *const emerald.Analysi
     for (declaration.type_functions) |function| if (function.member_span.start == start) {
         return try describeFunction(gpa, analysis, file, function.declaration, function.declaration.name, 2);
     };
+    for (declaration.type_fields) |field| if (field.data) |data| for (data) |item| if (item.name_span.start == start) {
+        var described = try Completion.field(gpa, source, item.name, item.name_span, item.annotation, null, null, 5);
+        // A data item shares its choice's line, so the `##` above documents
+        // the choice, not the item.
+        if (described.documentation) |text| gpa.free(text);
+        described.documentation = null;
+        return described;
+    };
     for (declaration.type_fields) |field| if (field.name_span.start == start) {
+        if (field.enum_value != null) return try Completion.choice(gpa, source, declaration.name, field);
         return try Completion.field(gpa, source, field.name, field.name_span, field.annotation, field.initializer, null, 10);
     };
     for (declaration.types) |nested| {
@@ -4851,6 +4982,87 @@ test "collectReferencesInStatements finds every read of a variable, but not its 
     const second_use: u32 = @intCast(std.mem.indexOf(u8, text, "total + 1").?);
     try testing.expectEqual(first_use, sites.items[0].span.start);
     try testing.expectEqual(second_use, sites.items[1].span.start);
+}
+
+test "a case match's names are declarations: definition reaches them, references find each use once" {
+    const gpa = testing.allocator;
+    const text =
+        "enum Download {\n" ++
+        "    waiting\n" ++
+        "    finished(path: String)\n" ++
+        "}\n" ++
+        "case Download.waiting {\n" ++
+        "    when Download.finished(saved) {\n" ++
+        "        print(saved)\n" ++
+        "        print(saved.upper())\n" ++
+        "    }\n" ++
+        "    else {\n" ++
+        "    }\n" ++
+        "}\n";
+    var source = try Source.init(gpa, "t.em", text);
+    defer source.deinit(gpa);
+    var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+
+    var analysis = (try emerald.analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+
+    const declared: u32 = @intCast(std.mem.indexOf(u8, text, "saved)").?);
+    const use: u32 = @intCast(std.mem.indexOf(u8, text, "saved)\n").?);
+    const from_use = (try definitionAt(gpa, &analysis, 0, use + 1)).?;
+    try testing.expectEqual(declared, from_use.span.start);
+    const from_declaration = (try definitionAt(gpa, &analysis, 0, declared)).?;
+    try testing.expectEqual(declared, from_declaration.span.start);
+
+    var sites: std.ArrayList(Resolver.Target) = .empty;
+    defer sites.deinit(gpa);
+    try collectReferencesInStatements(gpa, &analysis, from_declaration, 0, analysis.parsed[0].program.statements, &sites);
+    try testing.expectEqual(@as(usize, 2), sites.items.len);
+    try testing.expectEqual(@as(u32, @intCast(std.mem.indexOf(u8, text, "saved)\n").?)), sites.items[0].span.start);
+    try testing.expectEqual(@as(u32, @intCast(std.mem.indexOf(u8, text, "saved.upper").?)), sites.items[1].span.start);
+}
+
+test "references to a choice reach its construction and its match, and to a type its use in choice data" {
+    const gpa = testing.allocator;
+    const text =
+        "struct Place {\n" ++
+        "    const name: String\n" ++
+        "}\n" ++
+        "enum Download {\n" ++
+        "    waiting\n" ++
+        "    finished(place: Place)\n" ++
+        "}\n" ++
+        "const d = Download.finished(Place(\"x\"))\n" ++
+        "case d {\n" ++
+        "    when Download.finished(_) {\n" ++
+        "        print(1)\n" ++
+        "    }\n" ++
+        "    else {\n" ++
+        "    }\n" ++
+        "}\n";
+    var source = try Source.init(gpa, "t.em", text);
+    defer source.deinit(gpa);
+    var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+
+    var analysis = (try emerald.analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+
+    const choice = (try definitionAt(gpa, &analysis, 0, @intCast(std.mem.indexOf(u8, text, "finished(place").?))).?;
+    var sites: std.ArrayList(Resolver.Target) = .empty;
+    defer sites.deinit(gpa);
+    try collectReferencesInStatements(gpa, &analysis, choice, 0, analysis.parsed[0].program.statements, &sites);
+    try testing.expectEqual(@as(usize, 2), sites.items.len);
+    try testing.expectEqual(@as(u32, @intCast(std.mem.indexOf(u8, text, "finished(Place").?)), sites.items[0].span.start);
+    try testing.expectEqual(@as(u32, @intCast(std.mem.indexOf(u8, text, "finished(_)").?)), sites.items[1].span.start);
+
+    const in_data: u32 = @intCast(std.mem.indexOf(u8, text, "Place)\n}").?);
+    const place = (try definitionAt(gpa, &analysis, 0, in_data)).?;
+    try testing.expectEqual(@as(u32, @intCast(std.mem.indexOf(u8, text, "Place {").?)), place.span.start);
+    sites.clearRetainingCapacity();
+    try collectReferencesInStatements(gpa, &analysis, place, 0, analysis.parsed[0].program.statements, &sites);
+    try testing.expectEqual(@as(usize, 2), sites.items.len);
+    try testing.expectEqual(in_data, sites.items[0].span.start);
 }
 
 test "collectReferencesInStatements finds named and operator uses of an annotated method" {

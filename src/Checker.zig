@@ -9789,6 +9789,8 @@ fn checkCase(self: *Checker, case: *const Ast.Case, expected: ?Type) Error!Type 
                     .assigned = true,
                     .mutability = .match_binding,
                 });
+                // So hover on the name in the match shows the data's type.
+                try self.expression_types.put(self.arena, name.expression, .{ .file = self.file, .type = item.type });
             }
         }
         const completes = try self.checkCaseBody(arm.body, expected, &results, &result_spans);
