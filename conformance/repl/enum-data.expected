@@ -1,0 +1,18 @@
+Emerald REPL. Type `:help` for commands; Ctrl-D exits.
+> . . . > Shape.circle(radius: 1.0)
+> true
+> repl:1:14: this is String, but data item `radius` of `Shape.circle` needs Float
+  Shape.circle("big")
+               ^^^^^
+Pass a value of the data item's declared type, or convert it first.
+> . . > repl:1:15: index 5 is outside this list, which has 1 element
+  const crash = [1][5]
+                ^^^^^^
+Valid indices are 0 through 0.
+> Broken.named(text: "x")
+> . . . . . . . 4.0
+> repl:1:1: `radius` is not defined
+  radius
+  ^^^^^^
+The `Shape.circle` match names `radius` only inside its own arm. Use it there, or declare a variable before the `case` and assign it in the arm.
+> 

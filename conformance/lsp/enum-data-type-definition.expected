@@ -1,0 +1,17 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "uri": "file:///document.em",
+    "range": {
+      "start": {
+        "line": 0,
+        "character": 7
+      },
+      "end": {
+        "line": 0,
+        "character": 12
+      }
+    }
+  }
+}

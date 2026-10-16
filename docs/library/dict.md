@@ -2,8 +2,9 @@
 
 A `Dict[K, V]` maps keys to values and preserves insertion order for iteration and display,
 even though equality compares contents rather than order (8.4). A key must have stable
-equality and hashing: numbers, `Bool`, `String`, enum values, and tuples or structs built
-only from those — never a mutable collection or a class object, and never a NaN `Float`
+equality and hashing: numbers, `Bool`, `String`, enum values (for an enum whose choices carry
+data, only when every data item could itself be a key), and tuples or structs built only from
+those — never a mutable collection or a class object, and never a NaN `Float`
 (directly or nested). Assigning replaces a value in place, keeping its position; removing and
 reinserting the same key moves it to the end.
 

@@ -115,6 +115,18 @@ pub const User = struct {
     fields: []const Field = &.{},
     /// How many of `fields` come from base classes.
     inherited: usize = 0,
+    /// Section 12: for an enum, each choice's data items in the order the
+    /// choices are listed, empty for a choice that carries none. Not fields:
+    /// no value of the enum has them all, so no field lookup sees them.
+    choice_data: []const []const Field = &.{},
+
+    /// Whether this is an enum with at least one choice that carries data.
+    pub fn carriesData(self: *const User) bool {
+        for (self.choice_data) |items| {
+            if (items.len > 0) return true;
+        }
+        return false;
+    }
 
     pub const Field = struct {
         name: []const u8,
@@ -314,6 +326,11 @@ fn eligibleKeyInner(self: Type, seen: *[256]*const User, depth: usize, equatable
             for (user.fields) |field| {
                 if (!field.type.eligibleKeyInner(seen, depth + 1, equatable, hashable)) break :blk false;
             }
+            // Section 8.3 for an enum carrying data: every choice's data, not
+            // only the choice a value happens to hold, decides the type.
+            for (user.choice_data) |items| for (items) |item| {
+                if (!item.type.eligibleKeyInner(seen, depth + 1, equatable, hashable)) break :blk false;
+            };
             break :blk true;
         },
         .nothing, .range, .list, .dictionary, .set, .task, .channel, .function => false,

@@ -1,0 +1,44 @@
+diagnostics/enum-data.em:9:27: `Shape.circle` already has a data item named `radius`
+      circle(radius: Float, radius: Float)
+                            ^^^^^^
+Give each of a choice's data items its own name.
+diagnostics/enum-data.em:12:11: `Action.say` takes 1 argument, but this call passes 0
+  const a = Action.say()
+            ^^^^^^^^^^
+Pass one value for each data item, in declaration order, or name them.
+diagnostics/enum-data.em:13:23: this is String, but data item `x` of `Action.move` needs Int
+  const b = Action.move("left", 3)
+                        ^^^^^^
+Pass a value of the data item's declared type, or convert it first.
+diagnostics/enum-data.em:14:29: `Action.move` has no data item named `z`
+  const c = Action.move(x: 1, z: 2)
+                              ^
+Check the spelling against the declaration.
+diagnostics/enum-data.em:15:11: `Action.wait` is a value, so it takes no parentheses
+  const d = Action.wait()
+            ^^^^^^^^^^^
+Remove `()`.
+diagnostics/enum-data.em:16:11: `Action.move` needs its data before it is a value
+  const e = Action.move
+            ^^^^^^^^^^^
+Call it, as in `Action.move(...)`, or wrap the call in a block: `{ x, y => Action.move(x, y) }`.
+diagnostics/enum-data.em:17:11: `Action` is an enum, so it cannot be constructed
+  const f = Action()
+            ^^^^^^
+Its values are the ones it lists. Write one of them, such as `Action.wait`.
+diagnostics/enum-data.em:24:17: Guests cannot be a dictionary key, because `Guests.named.names` is List[String]
+  var seats: Dict[Guests, Int] = []
+                  ^^^^^^
+Every data item of every choice must itself be a valid key type: a number, a `Bool`, a `String`, an enum, or a tuple or struct made only from those.
+diagnostics/enum-data.em:30:27: field `action` cannot be written as JSON, because Action carries data
+  const saved = Json.encode(Turn(Action.wait))
+                            ^^^^^^^^^^^^^^^^^
+Saving only the choice's name would lose its data. Convert it first, with a `case` that builds a plain struct or text.
+diagnostics/enum-data.em:31:29: field `action` cannot be shown in a table, because Action carries data
+  const shown = Console.table([Turn(Action.wait)])
+                              ^^^^^^^^^^^^^^^^^^^
+A table cell shows one choice's name, which would lose its data. Convert it first, with a `case` that builds text.
+diagnostics/enum-data.em:32:36: Action carries data, so it cannot be read from JSON
+  const read = Json.decode("[]", as: List[Action])
+                                     ^^^^^^^^^^^^
+A saved choice name has no data to build it from. Read plain values, then build the enum from them with a function.

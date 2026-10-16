@@ -1,0 +1,48 @@
+diagnostics/enum-data-match.em:15:22: `y` is the second item of `Action.move`, but here it names the first
+      when Action.move(y, x) {
+                       ^
+Write `Action.move(x, y)` in declaration order, or choose names that are not its labels.
+diagnostics/enum-data-match.em:15:25: `x` is the first item of `Action.move`, but here it names the second
+      when Action.move(y, x) {
+                          ^
+Write `Action.move(x, y)` in declaration order, or choose names that are not its labels.
+diagnostics/enum-data-match.em:18:10: a choice carrying data needs its own `when` arm
+      when Action.say(words), Action.wait {
+           ^^^^^^^^^^^^^^^^^
+Give each choice a separate branch, so each names only its own data.
+diagnostics/enum-data-match.em:23:25: `a` is already introduced by this match
+      when Action.move(a, a) {
+                          ^
+Use different names, or `_` to ignore a position.
+diagnostics/enum-data-match.em:26:21: `text` is already declared
+      when Action.say(text) {
+                      ^^^^
+Give the matched data a name of its own.
+diagnostics/enum-data-match.em:33:22: this position introduces a name, but it is written as a value
+      when Action.move(0, y) {
+                       ^
+Use a name, or `_` to ignore it; check the value with `if` inside the branch.
+diagnostics/enum-data-match.em:36:21: a match names `Action.say`'s data by position
+      when Action.say(text: t) {
+                      ^^^^
+Write one name or `_` for each data item, in declaration order, as in `Action.say(text)`.
+diagnostics/enum-data-match.em:43:10: `Action.move` carries 2 data items, but this match names 1
+      when Action.move(only) {
+           ^^^^^^^^^^^^^^^^^
+Write one name or `_` for each, in declaration order, as in `Action.move(x, y)`.
+diagnostics/enum-data-match.em:47:9: `words` cannot be reassigned
+          words = "changed"
+          ^^^^^
+It holds data the matched choice carries. Copy it into a `var` if you need a version that changes.
+diagnostics/enum-data-match.em:53:17: `_` cannot be used as a value
+      when double(_) {
+                  ^
+It only stands for a data item a `case` match ignores, as in `when Download.finished(_)`.
+diagnostics/enum-data-match.em:66:7: `across` is not defined
+  print(across)
+        ^^^^^^
+The `Action.move` match names `across` only inside its own arm. Use it there, or declare a variable before the `case` and assign it in the arm.
+diagnostics/enum-data-match.em:80:12: `across_first` is not defined
+      return across_first
+             ^^^^^^^^^^^^
+Check the spelling, or declare it before this line.

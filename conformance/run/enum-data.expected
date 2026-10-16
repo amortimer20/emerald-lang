@@ -1,0 +1,45 @@
+Download.waiting
+Download.finished(path: "report.pdf")
+Action.move(x: 2, y: 3)
+Shape.circle(radius: 2.0)
+[Action.move(x: 2, y: 3), Action.say(text: "Hello!"), Action.wait]
+true
+false
+false
+true
+Action.say(text: "Hello!")
+[Action.say(text: "one"), Action.say(text: "two")]
+Guests.named(names: ["Ada"])
+["Ada", "Grace"]
+Action.move(x: 5, y: 4)
+["y", "x"]
+Chain.link(number: 1, next: Chain.link(number: 2, next: Chain.end))
+Ada
+2
+2
+Outcome.ok(value: 3)
+Outcome.failed(message: "negative")
+Outcome.ok(value: 5)
+Turn(move: Game.Move.step(by: 2))
+Note.text(body: "hi")
+Note.text(body: nothing)
+Waiting
+Saved to report.pdf
+Failed: disk full
+12.0
+Move to 2, 3
+Hello!
+Wait here
+down 2
+["Ada", "Grace"]
+Guests.named(names: ["Ada"])
+6
+starts with 7
+kept!
+no download
+(empty)
+equal to blank
+the blank choice
+caught disk full
+Report.saved(path: "default.txt")
+the wanted file

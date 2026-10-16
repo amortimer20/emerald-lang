@@ -10,7 +10,8 @@ data label is an error (decision 3). The reasons are in those sections.
 
 The user liked the declaration, construction, and `case` syntax below after
 working through examples from a C# enum starting point. Treat that as the working
-direction; the complete behavior and boundaries below are still recommendations.
+direction; the behavior and boundaries below were its recommendations, accepted
+2026-10-15 as amended.
 The source evidence is in [enum-source-review.md](enum-source-review.md), checked
 against main `5fb9f92`. Rewrite-context sections 6.3, 8.3, 8.4, 10.5, 12, and
 15.9–15.11 remain the current specification until accepted behavior is implemented.
@@ -411,8 +412,7 @@ display, but do not suggest it as an automatic lossless decoder format.
 The diagnostic explains that saving only the choice name would lose its data and
 suggests explicit conversion. A future automatic representation needs a separate
 small design covering tags, data names, missing fields, and compatibility. This is
-a visible limitation to accept or change before implementation, not a silent
-implementation shortcut.
+a visible, accepted limitation, not a silent implementation shortcut.
 
 ## 8. Formatting and editor support
 
@@ -580,7 +580,25 @@ presenting it as generally available.
   resolved declaration rather than a spelling collision.
 - Record the implemented part of accepted semantics in the rewrite context in
   this change, clearly marking branch binding as the next slice.
-- Settled while building: pending.
+- Settled while building (Claude, 2026-10-15):
+  - A data choice stays an enum `TypeField` (keeping its position, key, symbol,
+    and coverage entry) with its items in `TypeField.data`. Type setup skips it;
+    `Interpreter.choices` builds it by member key, ahead of struct construction.
+    `Type.User.choice_data` holds the resolved item types, parallel to the
+    choices, and runtime `StructType.value_data` their names for display.
+  - Argument mistakes reuse the struct constructor's wording with the noun
+    "data item" (`` `Action.say` takes 1 argument, but this call passes 0 ``),
+    instead of the plan's "needs a value for `path`", so building a struct and
+    building a choice teach one rule.
+  - The formatter prints choice data on one line, as it prints every parameter
+    list, rather than preserving a multiline layout; no program needs one yet.
+  - Data item names get the same snake_case warning as parameters.
+  - "`Action` is an enum" style suggestions name a choice without data, or a
+    data choice as a call (`Shape.circle(...)`), never a data choice as a value.
+  - The dictionary-key refusal names the first ineligible item, as
+    `Guests.named.names`.
+  - Until slice 2, the resolver reports `when Download.finished(path)` as not yet
+    supported, instead of misreporting `path` as undefined.
 
 ### Slice 2: Case extraction and control flow
 
@@ -597,7 +615,25 @@ presenting it as generally available.
   value arms; custom equality versus choice selection; recursive contents; cleanup
   on raises/returns/cancellation; managed data/closure cycles under the test allocator.
 - Complete the accepted enum/case specification and decision-table notes.
-- Settled while building: pending.
+- Settled while building (Claude, 2026-10-15):
+  - The parser reads `_` as a name only inside a subject `case`'s alternatives
+    (a flag cleared inside blocks); the resolver refuses `_` anywhere a value is
+    read, so `when double(_)` explains itself.
+  - `Resolver.Facts.choice_matches` maps each match alternative to its choice key
+    and names. A match with a mistake is still recorded, binding every position
+    that names something usable, so its arm does not cascade into "not defined".
+  - Bound names are a new local kind, `match_binding`, with its own read-only
+    messages in the resolver and checker.
+  - A swapped label is reported at each misplaced name, and a repeated name only
+    as repeated, not also as swapped.
+  - A name used after its arm says which match named it and where it is
+    visible; this also works across REPL entries.
+  - A match whose choice belongs to another enum than the subject's is an error;
+    `when Download.finished` without names counts as covering its choice, so the
+    error is not followed by a coverage complaint.
+  - The interpreter's `chooseArm` returns the matched subject with the names;
+    both case forms bind them in a scope around the arm, which popScope and the
+    error path release.
 
 ### Slice 3: Editor experience
 
@@ -611,7 +647,31 @@ presenting it as generally available.
 - Check the sibling extension grammar and integration suite. Any extension changes
   use that repo's instructions and a separate branch/review. Record concrete
   companion work in the handoff.
-- Settled while building: pending.
+- Settled while building (Claude, 2026-10-15):
+  - Hover, completion, and signature help present a data choice as the call
+    that builds it, `finished(path: String): Download`, with its `##` comment;
+    completion inserts `finished($0)`. A choice without data stays
+    `waiting: Download`. A data item's hover leaves out the choice's comment,
+    which it shares a line with.
+  - A match's names are their own declaration targets (`expression_targets`)
+    and are typed by the checker, so hover, definition, references, and rename
+    work from either the match or a use; the references walk treats them as
+    declarations, never also as uses.
+  - Completion offers a match's names only in its own arm, block or `then`,
+    typed (`saved: String`). Hover on a name shows its type, as for any local;
+    read-only status is not shown, since no local hover shows mutability.
+  - Types written in choice data (`place: Place`) take part in definition,
+    references, and rename.
+  - **Gap, deferred:** named labels at call sites (`finished(path: ...)`) are
+    not tracked, for choices or for struct constructors (`Point(x: 1)`), which
+    already had this gap. Renaming a data label is therefore refused with an
+    explanation rather than changing the declaration alone. Renaming a struct
+    field still leaves its named constructor labels unchanged; that predates
+    this plan and is recorded in the handoff.
+  - Signature help inside an unfinished match header gives nothing, since the
+    patched header is not a complete match.
+  - The VS Code extension needs no change: its grammar colours tokens without
+    enum-body rules.
 
 ### Slice 4: Teaching material and milestone integration
 
@@ -627,7 +687,44 @@ presenting it as generally available.
 - Update handoff and journal, and the website pages whose claims changed.
   Keep automatic serialization and generics deferred rather than silently expanding
   this milestone.
-- Settled while building: pending.
+- Settled while building (Claude, 2026-10-15):
+  - `examples/enum-data.em` tours downloads, shapes (with a computed `area`),
+    game actions with `_`, and a working copy, in the teaching order above.
+    The language guide's Enums section gains "Choices that carry data", and the
+    JSON, CSV, Dict, Set, and Console references name enums without data where
+    they listed enums.
+  - The fuzz runner gains a valid template (a recursive chain built in a loop,
+    matches with `_`, optional data, named construction) and one that parses
+    but makes the checking mistakes (repeated item, swapped and repeated names,
+    a value position, a mixed arm, a choice used as a value, JSON encoding);
+    `enum`, `case`, and `when` join its random atoms.
+  - The website changes with the release that ships this, not with the merge,
+    as for earlier language features.
+
+### Review of the whole branch (Claude, 2026-10-15)
+
+`/code-review` at high effort over `claude/enum-data` found ten items, each
+reproduced or confirmed and fixed with a regression case:
+
+1. Building a data choice from its own enum's type-level setup failed at run
+   time ("still being set up"); setup now lets a choice through.
+2. A `Set` element was checked when its type was resolved, before a later
+   declaration's data or fields existed, so `Set[Download]` (and `Set[Bag]` for
+   a later struct holding a list, a pre-existing bug) was accepted. Set
+   elements are now checked with dictionary keys, once every type is complete.
+3. A recursive enum is refused as a key, as the plan decided, but its message
+   contradicted itself; it now says the item holds another of the same enum.
+4. Sets now share the dictionary's data-item explanation.
+5. The "only inside its own arm" hint applied across functions; it is now kept
+   to the function the match is in.
+6. Coverage warnings listed a data choice by its bare name, which is an error to
+   write; they now show `Download.finished(_)`.
+7. Every `case` alternative paid a hash lookup; only call-shaped ones do now.
+8. Three copies of the data-label list became `Resolver.labelList`.
+9. Two near-identical LSP walks became `findChoiceSite`.
+10. A comment inside a choice's data, in a comma-separated run, moved to the
+    previous choice; a member now takes a trailing comment only when it starts
+    before the next member does.
 
 ## Teaching acceptance programs
 
@@ -701,8 +798,8 @@ language source. The suite required localhost access outside the sandbox. This
 plan introduces no executable feature; its code examples are not claimed to run.
 Check new/changed Markdown links, own-line `else`/`catch`/`finally` layout, and
 `git diff --check` before handing it back. A Markdown commit requires the local
-Debug gate under AGENTS.md. Committing the proposed plan does not accept its
-decisions or authorize implementation; pushing is a separate action.
+Debug gate under AGENTS.md. (When proposed, committing the plan did not accept it;
+the user accepted it on 2026-10-15.)
 
 Implementation validation for every slice, on pinned Zig 0.16.0 and with `-j1`:
 

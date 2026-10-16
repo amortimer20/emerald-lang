@@ -65,7 +65,7 @@ fn generate(gpa: std.mem.Allocator, random: std.Random) ![]const u8 {
     // campaign rather than only by its unit test.
     if (random.uintLessThan(u8, 8) == 0) {
         const count = random.uintLessThan(u8, 16);
-        return switch (random.uintLessThan(u8, 14)) {
+        return switch (random.uintLessThan(u8, 16)) {
             0 => std.fmt.allocPrint(gpa,
                 \\var i = 0
                 \\while i < {d} {{
@@ -193,6 +193,62 @@ fn generate(gpa: std.mem.Allocator, random: std.Random) ![]const u8 {
                 \\    print(result.result())
                 \\}}
             , .{count}),
+            13 => std.fmt.allocPrint(gpa,
+                \\enum Chain {{
+                \\    end, link(number: Int, next: Chain)
+                \\}}
+                \\
+                \\enum Action {{
+                \\    move(x: Int, y: Int)
+                \\    say(text: String?)
+                \\    wait
+                \\}}
+                \\
+                \\func total(chain: Chain): Int {{
+                \\    return case chain {{
+                \\        when Chain.end then 0
+                \\        when Chain.link(number, rest) then number + total(rest)
+                \\    }}
+                \\}}
+                \\
+                \\var chain = Chain.end
+                \\for number in 0..{d} {{
+                \\    chain = Chain.link(number, chain)
+                \\}}
+                \\const actions = [Action.move(y: {d}, x: 1), Action.say(nothing), Action.wait]
+                \\for action in actions {{
+                \\    case action {{
+                \\        when Action.move(_, down) {{
+                \\            print(down, total(chain))
+                \\        }}
+                \\        when Action.say(text) {{
+                \\            print(text.or("quiet"))
+                \\        }}
+                \\        else {{ }}
+                \\    }}
+                \\}}
+                \\print(actions[0] == Action.move({d}, 1), chain)
+            , .{ count % 4, count, count }),
+            14 => std.fmt.allocPrint(gpa,
+                \\enum Shape {{
+                \\    circle(radius: Float, radius: Float)
+                \\    dot
+                \\}}
+                \\
+                \\const shape = Shape.circle({d})
+                \\const keep = Shape.circle
+                \\case shape {{
+                \\    when Shape.circle(radius, radius), Shape.dot {{
+                \\        print(radius)
+                \\    }}
+                \\    when Shape.circle(0, {d}) {{
+                \\        print(Shape.dot())
+                \\    }}
+                \\    when Shape.circle {{
+                \\    }}
+                \\}}
+                \\print(Json.encode([shape]))
+            , .{ count, count }),
             else => std.fmt.allocPrint(gpa,
                 \\const score = {d}
                 \\const result = if score > 5 then score * 2 else if score == 0 then 1 else score
@@ -205,15 +261,15 @@ fn generate(gpa: std.mem.Allocator, random: std.Random) ![]const u8 {
     // valid UTF-8 while allowing the lexer and parser to see malformed syntax,
     // comments, interpolation-looking text, punctuation, and Unicode.
     const atoms = [_][]const u8{
-        "",           " ",        "\n",       "\t",   "a",  "Z",    "_",      "?",    "!",     "0",       "1",     "9",
-        "\"",         "'",        "#",        "(",    ")",  "[",    "]",      "{",    "}",     ".",       ",",     ":",
-        ";",          "+",        "-",        "*",    "/",  "=",    "<",      ">",    "&",     "|",       "\\",
+        "",           " ",        "\n",       "\t",   "a",    "Z",    "_",      "?",    "!",     "0",       "1",     "9",
+        "\"",         "'",        "#",        "(",    ")",    "[",    "]",      "{",    "}",     ".",       ",",     ":",
+        ";",          "+",        "-",        "*",    "/",    "=",    "<",      ">",    "&",     "|",       "\\",
         "é",
         "λ",
         "中",
         "😀",
-        "\u{0301}",   "var",      "const",    "func", "if", "else", "return", "true", "false", "nothing", "print", "## note\n",
-        "#[ note ]#", "\"text\"", "\"#{x}\"", "then",
+        "\u{0301}",   "var",      "const",    "func", "if",   "else", "return", "true", "false", "nothing", "print", "## note\n",
+        "#[ note ]#", "\"text\"", "\"#{x}\"", "then", "enum", "case", "when",
     };
 
     var text: std.ArrayList(u8) = .empty;

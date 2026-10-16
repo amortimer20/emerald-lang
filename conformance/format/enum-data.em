@@ -1,0 +1,27 @@
+enum  Action{
+    move( x:Int,y : Int ) ,say(text:String)
+    wait # stays put
+
+    func label(): String {
+        return "action"
+    }
+}
+
+enum Chain { end, link(number: Int, next: Chain) }
+
+print( Action.move(y:1,x : 2) )
+
+case Action.wait {
+    when Action.move( x,_ ) {
+        print(x)
+    }
+    when Action.say(text)   { print(text) }
+    else {}
+}
+const label = case Action.wait { when Action.say( text ) then text
+    else then "" }
+
+enum Spread {
+    waiting, finished(path: String # the path
+    ), failed(code: Int)
+}

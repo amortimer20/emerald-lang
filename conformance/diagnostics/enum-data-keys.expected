@@ -1,0 +1,20 @@
+diagnostics/enum-data-keys.em:4:17: Download cannot be held by a set, because `Download.finished.paths` is List[String]
+      const seen: Set[Download]
+                  ^^^^^^^^^^^^^
+Every data item of every choice must itself be a valid key type: a number, a `Bool`, a `String`, an enum, or a tuple or struct made only from those.
+diagnostics/enum-data-keys.em:5:18: a set cannot hold Bag
+      const later: Set[Bag]
+                   ^^^^^^^^
+A set holds whole or decimal numbers, `Bool`s, `String`s, enum values, or tuples of those. Anything that can change after it is stored could not be found again.
+diagnostics/enum-data-keys.em:22:18: Chain cannot be a dictionary key, because `Chain.link.next` holds another Chain
+  var counts: Dict[Chain, Int] = []
+                   ^^^^^
+An enum that holds itself through its data cannot be a key, as a struct that holds itself cannot.
+diagnostics/enum-data-keys.em:23:13: Download cannot be held by a set, because `Download.finished.paths` is List[String]
+  const done: Set[Download] = []
+              ^^^^^^^^^^^^^
+Every data item of every choice must itself be a valid key type: a number, a `Bool`, a `String`, an enum, or a tuple or struct made only from those.
+diagnostics/enum-data-keys.em:31:1: warning: this `case` does not cover `Download.finished(_)`
+  case Download.waiting {
+  ^^^^
+Add an arm for each, or `else { }` to accept the gap deliberately.

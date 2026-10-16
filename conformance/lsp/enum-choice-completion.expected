@@ -1,0 +1,22 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "move",
+      "kind": 20,
+      "detail": "move(x: Int, y: Int): Action",
+      "documentation": null,
+      "insertText": "move($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "wait",
+      "kind": 20,
+      "detail": "wait: Action",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    }
+  ]
+}

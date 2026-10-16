@@ -387,8 +387,9 @@ enum Weather {
 Each value is a `const` type-level member of the enum, always written with the enum's name —
 `Weather.sunny`, even inside the enum's own methods — and enums are eligible dictionary
 keys. An enum may have methods, computed properties, and trait conformance, but never stored
-instance fields, since there's nothing to construct: an enum value just *is* one of the
-listed names. Two enum values compare equal exactly when they're the same name; declaration
+instance fields: an enum value just *is* one of the listed choices, and any data belongs to
+its choice ([below](#choices-that-carry-data)). Two values of an enum without data compare
+equal exactly when they're the same name; declaration
 order creates no ordering on its own — a `Ordered`-adopting enum states its own order
 explicitly, the way any other type would. A value's default display includes its type,
 `Weather.sunny`, unless the enum adopts [`Textual`](#display).
@@ -399,3 +400,51 @@ is exactly how `Weather.advice` computes its own text below. Run
 [`examples/enums.em`](../../examples/enums.em) for an enum with a computed property built
 from an exhaustive `case`, a statement `case` handling only some values, and a subjectless
 `case` chosen from ordinary conditions.
+
+### Choices that carry data
+
+A choice can also keep the information that belongs to it, written like a short parameter
+list. A finished download has a path and a failed one has a message, so neither can be
+missing what it needs:
+
+```emerald
+enum Download {
+    waiting
+    finished(path: String)
+    failed(message: String)
+}
+
+var download = Download.waiting
+download = Download.finished("report.pdf")
+print(download) # Download.finished(path: "report.pdf")
+```
+
+A choice with data is built by an ordinary call, positional or named, and every data item
+is required. It is not a value until it is called, just as a struct type is not, so to pass
+construction along, wrap the call in a block: `{ text => Action.say(text) }`. A choice
+without data is never called: write `Download.waiting`, not `Download.waiting()`.
+
+`case` reads the data. `when Download.finished(path)` matches every finished download and
+names its data in that arm only; `_` ignores a position:
+
+```emerald
+func describe(download: Download): String {
+    return case download {
+        when Download.waiting then "Waiting"
+        when Download.finished(path) then "Saved to #{path}"
+        when Download.failed(message) then "Failed: #{message}"
+    }
+}
+```
+
+The names follow the data's order and can be any new names, but a name that is another
+position's label is an error, so `when Action.move(y, x)` cannot quietly swap two numbers.
+Each match needs its own `when`, covers its whole choice, and checks anything further with
+`if` inside the arm. The names are read-only; copy one into a `var` to change it, and the
+enum keeps its own data either way.
+
+Two values are equal when they are the same choice with equal data. An enum carrying data
+is a dictionary key only when every data item of every choice could be one, and JSON, CSV,
+and table rows refuse it, since a choice's name cannot hold its data: convert it with a
+`case` first. Run [`examples/enum-data.em`](../../examples/enum-data.em) for downloads,
+shapes, game actions, and a working copy.

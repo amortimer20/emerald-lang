@@ -52,8 +52,8 @@ print(settings.volume, settings.note)    # 5 nothing
 ```
 
 The target may be `String`, `Int`, `Float`, `Bool`, an optional, `List`, `Dict[String, V]`,
-an enum, `Json`, `Date`, `Time`, `DateTime`, `Instant`, or a plain struct made from those
-types, including a struct that holds itself, such as a tree. A struct must use its generated
+an enum without data, `Json`, `Date`, `Time`, `DateTime`, `Instant`, or a plain struct made
+from those types, including a struct that holds itself, such as a tree. A struct must use its generated
 constructor. A field the document gives is read from it; a missing field takes its default, or
 `nothing` when it is optional and has none; extra object keys are ignored. A private field is
 never read from JSON: it must have a default, and always takes it. A target outside that set
@@ -72,9 +72,10 @@ Writes JSON. With `pretty: false` (the default), the result is compact; `pretty:
 two spaces per indentation level.
 
 `value` may be a `Json`, `String`, `Int`, `Float`, `Bool`, optional, `List`,
-`Dict[String, V]`, enum, `Date`, `Time`, `DateTime`, `Instant`, or a plain struct whose public
+`Dict[String, V]`, enum without data, `Date`, `Time`, `DateTime`, `Instant`, or a plain struct whose public
 fields are all among those types. Private fields are never written. Object keys follow
-dictionary insertion order and struct fields follow declaration order. Enums write their value names, and absent optionals write `null`.
+dictionary insertion order and struct fields follow declaration order. Enums write their value names, and absent optionals write `null`. An enum whose choices carry data is refused, here and in
+`decode`, since a choice's name cannot hold its data; convert it with a `case` first.
 
 **Raises** `JsonError` when a `Float` value is `NaN` or infinite. Other types JSON cannot
 represent — such as `Set`, `Bytes`, a function, a class, or a bad struct field — are checking

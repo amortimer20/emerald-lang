@@ -172,6 +172,16 @@ pub const RunError = std.mem.Allocator.Error || std.Io.Writer.Error;
 /// initialization-cycle error".
 const ModuleState = enum { pending, running, done, failed };
 
+/// What building one enum choice that carries data needs: the enum, which
+/// value it is, and its data items' names for argument binding.
+const Choice = struct {
+    descriptor: *const Value.StructType,
+    variant: u32,
+    names: []const []const u8,
+    /// Never true, since a data item has no default; kept for the binder.
+    has_default: []const bool,
+};
+
 /// Section 10.4's type-level fields "follow the same lazy rule" as a file's
 /// bindings, one type at a time.
 const TypeSetup = struct {
@@ -299,6 +309,9 @@ structs: std.StringHashMapUnmanaged(*const Value.StructType) = .empty,
 /// Section 10.4: every struct with type-level fields, by its key, and how far
 /// setting them up has got.
 type_setups: std.StringHashMapUnmanaged(TypeSetup) = .empty,
+/// Section 12: each enum choice that carries data, by its member key, as
+/// `Download.finished(...)` reaches it.
+choices: std.StringHashMapUnmanaged(Choice) = .empty,
 /// The structs that declare their own constructor (10.2), by the same keys.
 constructors: std.StringHashMapUnmanaged(Constructor) = .empty,
 /// Every struct's declaration and what calling its generated constructor
@@ -399,6 +412,7 @@ pub const Session = struct {
         trait_infos: @FieldType(Interpreter, "trait_infos"),
         overrides: @FieldType(Interpreter, "overrides"),
         type_setups: @FieldType(Interpreter, "type_setups"),
+        choices: @FieldType(Interpreter, "choices"),
 
         fn read(interpreter: *Interpreter) Declarations {
             var result: Declarations = undefined;
@@ -762,6 +776,11 @@ pub const Session = struct {
         for (declaration.type_functions) |function| {
             const member_key = Resolver.methodKey(self.interpreter.arena, key, function.member) catch return;
             _ = self.interpreter.functions.remove(member_key);
+        }
+        for (declaration.type_fields) |field| {
+            if (field.data == null) continue;
+            const member_key = Resolver.methodKey(self.interpreter.arena, key, field.name) catch return;
+            _ = self.interpreter.choices.remove(member_key);
         }
         _ = self.interpreter.structs.remove(key);
         if (self.interpreter.type_setups.fetchRemove(key)) |setup| {
@@ -2321,25 +2340,66 @@ fn executeIteration(self: *Interpreter, loop: Ast.For, value: Value) Error!bool 
 /// Section 6.3: the arm a `case` runs, or null when none matches and it has
 /// no `else`. The subject is evaluated once, and each alternative in order
 /// until one matches.
-fn chooseArm(self: *Interpreter, case: *const Ast.Case) Error!?Ast.Case.Body {
+fn chooseArm(self: *Interpreter, case: *const Ast.Case) Error!?ChosenArm {
     const subject: ?Value = if (case.subject) |written| try self.evaluate(written) else null;
-    defer if (subject) |value| self.heap.release(value);
+    // A choice match keeps the subject, whose data its names then hold.
+    var kept = false;
+    defer if (subject) |value| if (!kept) self.heap.release(value);
     for (case.arms) |arm| {
         for (arm.alternatives) |alternative| {
+            // Section 12: a choice match selects by the choice alone,
+            // whatever its data or any custom equality says.
+            if (subject) |value| if (alternative.data == .call) if (self.facts.choice_matches.get(alternative)) |found| {
+                const choice = self.choices.get(found.key).?;
+                if (value.data != .struct_value) continue;
+                const instance = value.data.struct_value;
+                if (instance.descriptor != choice.descriptor or instance.variant != choice.variant) continue;
+                kept = true;
+                return .{ .body = arm.body, .match = .{ .subject = value, .names = found.names } };
+            };
             const matched = if (subject) |value| blk: {
                 const candidate = try self.evaluate(alternative);
                 defer self.heap.release(candidate);
                 break :blk try Value.equals(self.gpa, value, candidate, self.equatable(alternative.span));
             } else try self.condition(alternative);
-            if (matched) return arm.body;
+            if (matched) return .{ .body = arm.body };
         }
     }
-    return case.otherwise;
+    const otherwise = case.otherwise orelse return null;
+    return .{ .body = otherwise };
+}
+
+/// The arm `chooseArm` chose, and for a choice match, the subject it holds
+/// and the names its data takes in that arm.
+const ChosenArm = struct {
+    body: Ast.Case.Body,
+    match: ?Match = null,
+
+    const Match = struct { subject: Value, names: []const ?Resolver.ChoiceMatch.Name };
+};
+
+/// Section 12: gives a choice match's names their data, in a new scope the
+/// caller pops after the arm. Takes over the subject.
+fn bindChoiceMatch(self: *Interpreter, match: ChosenArm.Match) Error!void {
+    defer self.heap.release(match.subject);
+    const scope = try self.pushScope();
+    errdefer self.popScope();
+    for (match.names, match.subject.data.struct_value.fields) |maybe, value| {
+        const name = maybe orelse continue;
+        const held = Heap.retain(value);
+        scope.bindings.put(self.gpa, name.text, .{ .kind = value.kind(), .value = held }) catch |err| {
+            self.heap.release(held);
+            return err;
+        };
+    }
 }
 
 fn executeCase(self: *Interpreter, case: *const Ast.Case) Error!void {
     const arm = try self.chooseArm(case) orelse return;
-    try self.executeBlock(arm.block);
+    const match = arm.match orelse return self.executeBlock(arm.body.block);
+    try self.bindChoiceMatch(match);
+    defer self.popScope();
+    try self.executeBlock(arm.body.block);
 }
 
 fn executeConditional(self: *Interpreter, conditional: Ast.If) Error!void {
@@ -2435,9 +2495,27 @@ fn registerStruct(self: *Interpreter, checked_structs: *const Checker.Structs, d
     for (declaration.type_fields) |field| {
         if (field.enum_value != null) try values.append(self.arena, field.name);
     }
+    const value_data = try self.arena.alloc([]const Value.StructType.Field, checked.user.?.choice_data.len);
+    for (checked.user.?.choice_data, value_data, 0..) |items, *runtime, variant| {
+        const converted = try self.arena.alloc(Value.StructType.Field, items.len);
+        for (items, converted) |item, *field| field.* = .{ .name = item.name, .kind = kindOf(item.type) };
+        runtime.* = converted;
+        if (items.len == 0) continue;
+        const names = try self.arena.alloc([]const u8, items.len);
+        for (items, names) |item, *name| name.* = item.name;
+        const has_default = try self.arena.alloc(bool, items.len);
+        @memset(has_default, false);
+        try self.choices.put(self.arena, try Resolver.methodKey(self.arena, type_key, values.items[variant]), .{
+            .descriptor = descriptor,
+            .variant = @intCast(variant),
+            .names = names,
+            .has_default = has_default,
+        });
+    }
     descriptor.* = .{
         .session_entry = self.codeOrigin(self.task.state.file, declaration.name_span),
         .values = values.items,
+        .value_data = value_data,
         .name = type_key,
         .display_name = checked.user.?.display_name,
         .class = checked.user.?.class,
@@ -2596,7 +2674,8 @@ fn setUpType(self: *Interpreter, type_key: []const u8, member: ?[]const u8, span
             // its fields are set up is not a cycle; reading a field it has
             // not got to yet is.
             const reached = member orelse return;
-            if (self.functions.contains(reached)) return;
+            // Building a choice that carries data reads no field (12).
+            if (self.functions.contains(reached) or self.choices.contains(reached)) return;
             if (self.module.get(reached)) |slot| {
                 // Taken by a changing method is not unset: the read raises
                 // that instead.
@@ -2651,6 +2730,9 @@ fn setUpType(self: *Interpreter, type_key: []const u8, member: ?[]const u8, span
     }
 
     for (setup.fields) |field| {
+        // Section 12: a choice carrying data is built by each call, so there
+        // is no one value to set up.
+        if (field.data != null) continue;
         const value = try self.evaluate(field.initializer);
         const kind: Value.Kind = if (field.annotation) |annotation| declaredKind(annotation) else value.kind();
         const key = try Resolver.methodKey(self.arena, type_key, field.name);
@@ -2893,8 +2975,10 @@ fn evaluateByNode(self: *Interpreter, expression: *const Ast.Expression) Error!V
         },
         .case_expression => |case| blk: {
             const arm = try self.chooseArm(case) orelse unreachable;
+            if (arm.match) |match| try self.bindChoiceMatch(match);
+            defer if (arm.match != null) self.popScope();
             // An `Int` arm of a `case` that gives `Float` gives a `Float` (4.4).
-            const value = try self.evaluate(arm.value);
+            const value = try self.evaluate(arm.body.value);
             break :blk widen(value, kindOf(self.literal_types.get(expression).?));
         },
         else => unreachable,
@@ -3843,6 +3927,7 @@ fn evaluateCallInner(
         if (isFilesystemKey(key)) return self.callFilesystem(expression.span, key, call);
         if (Resolver.mathFunction(key) != null) return self.callMath(call, key);
         try self.reach(key, call.callee.span);
+        if (self.choices.get(key)) |choice| return self.constructChoice(call, choice);
         if (self.structs.get(key)) |descriptor| return self.constructStruct(expression.span, key, descriptor, call);
         if (self.functions.contains(key)) return self.callFunction(expression.span, key, call);
         return self.callValue(expression.span, call);
@@ -6919,6 +7004,17 @@ fn callSleep(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call) E
 fn random(self: *Interpreter) std.Random {
     if (self.random_engine == null) self.random_engine = std.Random.DefaultPrng.init(@intFromPtr(self) ^ 0xa0761d6478bd642f);
     return self.random_engine.?.random();
+}
+
+/// Section 12's `Download.finished("report.pdf")`: the arguments, bound as
+/// for any call, become the value's data.
+fn constructChoice(self: *Interpreter, call: Ast.Expression.Call, choice: Choice) Error!Value {
+    const bound = try self.evaluateBound(call, choice.names, choice.has_default);
+    std.debug.assert(bound.omitted == null);
+    for (bound.values, choice.descriptor.value_data[choice.variant]) |*item, metadata| item.* = widen(item.*, metadata.kind);
+    const instance = try self.heap.createStruct(choice.descriptor, bound.values);
+    instance.variant = choice.variant;
+    return .{ .data = .{ .struct_value = instance } };
 }
 
 fn constructStruct(

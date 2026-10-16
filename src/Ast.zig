@@ -188,6 +188,12 @@ pub const StructDeclaration = struct {
         /// For one of section 12's enum values, its position among them. Its
         /// initializer is then the `enum_value` expression that builds it.
         enum_value: ?u32 = null,
+        /// For an enum choice that carries data, as in `finished(path:
+        /// String)`, its data items, never empty. Such a choice is no single
+        /// value: it is built by a call, so its initializer never runs.
+        data: ?[]const Parameter = null,
+        /// The `)` closing a choice's data, so a tool can reach its end.
+        data_end: ?Source.Span = null,
     };
 
     pub const Field = struct {

@@ -80,19 +80,22 @@ implemented and Claude reviewed.
   accepted decision.
 - **Build slice by slice** on a `claude/<name>` branch, one commit per slice with its
   validation in the message, updating the plan's "Settled while building" notes, the
-  handoff, and the journal in the same commit. If the plan disagrees with the source, record
-  the mismatch in the plan; decide it by Emerald's philosophy when it is routine, and ask
-  when it changes language behavior the user accepted.
+  handoff, and the journal in the same commit. If the plan disagrees with the source or leaves
+  a case open, record it in the plan; decide it by Emerald's philosophy when it is routine,
+  and ask when the choice materially changes language behavior, as "Design and scope" says.
 - **Review your own work before a pull request**, as a second agent would: read the whole
   diff, run real programs (results and diagnostics), and run `/code-review` at high effort.
   Fix what it finds and record the fixes in the plan.
-- **Standing permission:** commit once work is verified, push `claude/*` branches, and merge a
-  pull request after the full local gate passes and CI is green.
+- **Standing permission:** commit once work is verified, push `claude/*` branches and
+  Markdown-only commits to `main` (below), and merge a pull request after the full local gate
+  passes and CI is green.
 - **Website copy is Claude's**, in one voice. If a code change makes a page wrong, update it or
   name the page and the change in the handoff.
 - **Work from worktrees.** Branch work happens in `git worktree` directories under
   `~/.cache/emerald-worktrees/` (not `/tmp`, which environment restarts wipe), leaving the
-  main checkout on `main` for Markdown-only changes.
+  main checkout on `main` for Markdown-only changes. **Never share a working tree:** if the
+  user runs another agent alongside, the one they started first owns the main checkout and
+  the other works only in its own worktree.
 - **Markdown-only changes** (plans, the handoff, the journal, reference pages) may go straight to
   `main` after `zig build test -j1` passes locally; CI skips them. Anything that touches code,
   build files, or workflows goes through a branch, a pull request, and green CI.

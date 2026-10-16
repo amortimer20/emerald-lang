@@ -1,0 +1,23 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "signatures": [
+      {
+        "label": "Action.move(x: Int, y: Int): Action",
+        "documentation": "Moves to a square.",
+        "parameters": [
+          {
+            "label": "x: Int"
+          },
+          {
+            "label": "y: Int"
+          }
+        ],
+        "activeParameter": 1
+      }
+    ],
+    "activeSignature": 0,
+    "activeParameter": 1
+  }
+}
