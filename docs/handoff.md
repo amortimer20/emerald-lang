@@ -201,13 +201,13 @@ the only programming agent and implements, then self-reviews (AGENTS.md).
 [`enum-design-plan.md`](enum-design-plan.md) is **accepted** with all nine
 recommendations as amended on 2026-10-15: a data choice is not a value without a call
 (as a struct type is not), and a binding name that is another position's label is an
-error. **Slices 1 to 3 are done on `claude/enum-data`**: declarations, construction,
-display, equality, keys across every choice, JSON/CSV/table refusals, formatting, `case`
-matches that name a choice's data, and editor support (settled notes in the plan;
-rewrite-context 6.3 and 12 record the behavior). Next: slice 4, teaching material and
-milestone integration (an `examples/` tour, guide and reference updates, fuzz templates),
-then self-review and the pull request. The website's enum, case, JSON, CSV, and table
-pages change when the milestone does.
+error. **All four slices are built and self-reviewed on `claude/enum-data`**: declarations,
+construction, display, equality, keys across every choice, JSON/CSV/table refusals,
+formatting, `case` matches that name a choice's data, editor support, `examples/enum-data.em`,
+the guide and reference updates, and fuzz templates. Settled notes and the ten items the
+branch review found are in the plan; rewrite-context 6.3 and 12 record the behavior. Next:
+merge the pull request once CI is green, then update the website's enum, case, JSON, CSV, and
+table pages with the release that ships it, and remove the worktree.
 
 **Known editor gap (predates the enum plan):** named labels at call sites are not
 tracked, so renaming a struct field leaves `Point(x: 1)` unchanged and breaks it.
