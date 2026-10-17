@@ -1,8 +1,11 @@
 # Generics: design plan
 
-Status: proposed, 2026-10-16 (rewritten twice the same day after the user's discussion).
-Claude wrote this plan at the user's request. Nothing in it is decided until the user
-accepts or changes each recommendation. Nothing is built.
+Status: accepted, 2026-10-17, with building gated. The user accepted every recommendation in
+the table below and the answers to its open questions as recommended. Accepting them settles the
+design to build *if* the gate in section 3 is met; it does not start building. Only the syntax
+reservation (section 4) is built. The audience question (section 3) is still undecided; the user
+leans toward "elementary data structures", which is why the wall log below exists. Claude wrote
+this plan at the user's request (proposed 2026-10-16, rewritten twice that day).
 
 **Every program in this plan is a proposed example, and none compiles today: each uses
 generic syntax.** To check the rest of the syntax, each program in section 7 was also run
@@ -102,7 +105,7 @@ graphs, grids) is exactly where the wall is real.
 
 **The wall log.** Record each time a real program, classroom example, or QA program cannot be
 written without copy-paste or a type-specific class. Keep it in `docs/generics-wall-log.md`
-(not created yet), one entry each: the program, the container or helper it needed, whether it
+(created 2026-10-17), one entry each: the program, the container or helper it needed, whether it
 needed an order or a hash, and what the workaround cost. Suggested threshold: about a dozen
 entries from at least three different shapes (not twelve stacks), or one data-structures
 program the user wants to ship in the examples and cannot. If the log stays short at the 1.0
@@ -591,23 +594,27 @@ effort, per `AGENTS.md`. The large files (`Checker.zig`, `Interpreter.zig`, `Par
 - `@operator` annotations on a generic type, until a program needs them.
 - The compiler decision: this plan constrains it and does not make it.
 
-## Open questions for the user
+## Decisions on the open questions (accepted 2026-10-17)
 
-1. **The deciding question:** is Emerald a first-course language, or does it carry students into
-   data structures? This sets how seriously to take the wall.
-2. **Reserve the syntax now** (section 4), independent of everything else? Recommendation: yes.
-3. **Gate:** is "a dozen wall-log entries across three shapes, or one program you want to ship"
-   the right bar, and who keeps the log?
-4. **One trait per parameter,** composing a trait for more (5.2). Recommendation: yes.
-5. **Optional type arguments:** reject (recommended) or allow with the dictionary-style collapse?
-6. **Float widening:** record it (recommended) or reject for now?
-7. **Names in the guide:** `T` as written, or descriptive (`Item`)? Recommendation: teach
-   descriptive names, allow either.
+1. **The deciding question** (first course, or through data structures): undecided. The user
+   leans toward carrying students into elementary data structures. Most of that work needs
+   only concrete types, so the wall log decides rather than the audience alone.
+2. **Reserve the syntax now:** yes. Built (PR #43).
+3. **Gate:** about a dozen wall-log entries across at least three shapes, or one data-structures
+   program the user wants to ship in `examples/` and cannot write. Claude logs what it hits while
+   writing or reviewing programs; the user adds classroom and QA cases. The log is
+   [`generics-wall-log.md`](generics-wall-log.md). It is reviewed at the 1.0 review, or sooner if
+   the user asks.
+4. **One trait per parameter,** composing a trait for more (5.2): yes.
+5. **Optional type arguments:** reject, relaxable later.
+6. **Float widening:** the checker records it (5.6); the teaching-error fallback only if that
+   proves larger than a slice, and the user is told if it ships.
+7. **Names in the guide:** allow `T` and descriptive names; teach descriptive names.
 
 ## Settled while building
 
-**Reserved syntax (merged as PR #43, 2026-10-16).** The only built part; the
-design in section 5 is not accepted.
+**Reserved syntax (merged as PR #43, 2026-10-16).** The only built part; section 5's design is
+accepted for use only if the gate in section 3 is met.
 
 - Rejected forms and where: a bracketed list after a type's name (`parseStructDeclaration`), after
   a function, method, type-level function, or constructor name (`parseParameterList`), brackets

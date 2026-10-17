@@ -192,13 +192,14 @@ last checked.
 Next: the work before 1.0 (roadmap items 3 onward; revised 2026-10-11: the implementation stays in
 Zig, networking folds into completing the initial standard library, no web framework, and multicore,
 Godot bindings, and a debugger come after 1.0). Item 3: the enum plan is built and merged
-(below); the clean-generics plan is now written, [`generics-design-plan.md`](generics-design-plan.md)
-(proposed 2026-10-16, not accepted: it recommends an evidence gate before building and reserving
-the `[T]` syntax now, with `[T]`/`[T with Trait]` as the design if built). The reserved-syntax change
-is merged (PR #43, `d4342ed`; see the plan's "Settled while building"). The plan's seven open
-questions (first the audience question: first course, or through data structures) and the wall log
-it proposes (`docs/generics-wall-log.md`, not created) await the user; nothing past the
-reservation is built. The parenthesis-free
+(below); the clean-generics plan is written and accepted with building gated:
+[`generics-design-plan.md`](generics-design-plan.md) (2026-10-17) settles `[T]`/`[T with Trait]` as
+the design *if* the evidence gate is met, and the syntax reservation is merged (PR #43, `d4342ed`).
+The gate is [`generics-wall-log.md`](generics-wall-log.md): log every real program that needs a
+type-specific copy of a container or helper (Claude logs what it hits; the user adds classroom and
+QA cases) and review at the 1.0 review. Nothing past the reservation is built. The audience question
+(first course, or through data structures) is undecided; the user leans toward elementary data
+structures. The parenthesis-free
 header block and a deprecation story
 still need the user's decisions. Still open from the QA pass: B4
 (reading the site) and B5 (reproducing the red "not defined" editor errors) were not reported;
