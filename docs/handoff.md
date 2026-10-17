@@ -195,7 +195,7 @@ Godot bindings, and a debugger come after 1.0). Item 3: the enum plan is built a
 (below); the clean-generics plan is now written, [`generics-design-plan.md`](generics-design-plan.md)
 (proposed 2026-10-16, not accepted: it recommends an evidence gate before building and reserving
 the `[T]` syntax now, with `[T]`/`[T with Trait]` as the design if built). The reserved-syntax change
-is built on `claude/reserve-generics` (see the plan's "Settled while building"); the parenthesis-free
+is merged (PR #43, `d4342ed`; see the plan's "Settled while building"); the parenthesis-free
 header block and a deprecation story
 still need the user's decisions. Still open from the QA pass: B4
 (reading the site) and B5 (reproducing the red "not defined" editor errors) were not reported;

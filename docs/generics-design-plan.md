@@ -124,7 +124,7 @@ class Stack[T] { }             # error: Emerald does not have generic declaratio
 const stack: Stack[Int] = ...  # error: `Stack` does not take types in brackets
 ```
 
-Built on branch `claude/reserve-generics` (see "Settled while building"): the messages say a
+Merged as PR #43 (see "Settled while building"): the messages say a
 `class` (or `struct`, `enum`, `trait`) "cannot take type parameters in brackets yet", with the
 help "Write one class for each kind of item, such as `IntStack`, or keep the items in a `List`."
 
@@ -606,7 +606,7 @@ effort, per `AGENTS.md`. The large files (`Checker.zig`, `Interpreter.zig`, `Par
 
 ## Settled while building
 
-**Reserved syntax (branch `claude/reserve-generics`, 2026-10-16).** The only built part; the
+**Reserved syntax (merged as PR #43, 2026-10-16).** The only built part; the
 design in section 5 is not accepted.
 
 - Rejected forms and where: a bracketed list after a type's name (`parseStructDeclaration`), after
