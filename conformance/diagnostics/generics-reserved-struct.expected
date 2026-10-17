@@ -1,0 +1,4 @@
+diagnostics/generics-reserved-struct.em:1:12: a struct cannot take type parameters in brackets yet
+  struct Pair[A, B] {
+             ^
+Emerald does not have generic declarations yet. Write one struct for each kind of item, such as `IntPair`, or keep the items in a `List`.

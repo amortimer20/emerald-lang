@@ -1,0 +1,3 @@
+enum Chain[T] {
+    end
+}

@@ -1,0 +1,2 @@
+trait Named[T] {
+}

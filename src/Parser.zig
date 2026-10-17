@@ -893,6 +893,19 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
     }
     _ = self.advance();
 
+    // Section 11.3 reserves a bracketed list after the name for generics.
+    if (self.check(.left_bracket)) {
+        return self.reportFmt(
+            self.peek().span,
+            "{s} {s} cannot take type parameters in brackets yet",
+            .{ if (enumeration) "an" else "a", word },
+            if (trait)
+                "Emerald does not have generic traits yet. A trait describes behavior, so write it without brackets."
+            else
+                try std.fmt.allocPrint(self.arena, "Emerald does not have generic declarations yet. Write one {s} for each kind of item, such as `Int{s}`, or keep the items in a `List`.", .{ word, self.text(name) }),
+        );
+    }
+
     // Section 10.7's single inheritance. Section 11's traits come later.
     var base: ?Ast.TypeExpression = null;
     if (self.check(.keyword_extends)) {
@@ -2044,6 +2057,15 @@ fn parseFunctionDeclarationWith(self: *Parser, method: bool, body_rule: Body) Er
 /// `(count: Int, label: String)`, after whatever `after` names.
 fn parseParameterList(self: *Parser, after: []const u8, missing_help: []const u8) Error![]const Ast.Parameter {
     const opening = self.peek();
+    // Section 11.3 reserves a bracketed list after the name for generics.
+    if (opening.kind == .left_bracket) {
+        return self.reportFmt(
+            opening.span,
+            "`{s}` cannot take type parameters in brackets yet",
+            .{after},
+            "Emerald does not have generic functions yet. Write one function for each kind of value, or take the values in a `List`.",
+        );
+    }
     if (opening.kind != .left_paren) {
         return self.reportFmt(
             opening.span,
@@ -2427,6 +2449,17 @@ fn parseTypeExpression(self: *Parser) Error!Ast.TypeExpression {
         try path.?.appendSlice(self.arena, part);
     }
     if (path) |*qualified| written = try qualified.toOwnedSlice(self.arena);
+
+    // Section 11.3: only the built-in collection and task types take types in
+    // brackets, and the syntax is reserved for generics.
+    if (self.check(.left_bracket)) {
+        return self.reportFmt(
+            self.peek().span,
+            "`{s}` does not take types in brackets",
+            .{written},
+            "Only `List`, `Dict`, `Set`, `Task`, and `Channel` take types in brackets. Emerald does not have generic types yet.",
+        );
+    }
 
     if (question == null and self.check(.question)) {
         // A `?` that could not attach to a name, as in `List[String]?`.

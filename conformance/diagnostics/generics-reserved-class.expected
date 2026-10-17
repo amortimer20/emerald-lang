@@ -1,0 +1,4 @@
+diagnostics/generics-reserved-class.em:1:12: a class cannot take type parameters in brackets yet
+  class Stack[T] {
+             ^
+Emerald does not have generic declarations yet. Write one class for each kind of item, such as `IntStack`, or keep the items in a `List`.

@@ -1,0 +1,4 @@
+diagnostics/generics-reserved-list-call.em:1:15: `List[...]` is a type, not an expression
+  const names = List[String]()
+                ^^^^
+A type can only be written where a type goes, as in `const names: List[String] = []`.

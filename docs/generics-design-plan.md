@@ -124,9 +124,9 @@ class Stack[T] { }             # error: Emerald does not have generic declaratio
 const stack: Stack[Int] = ...  # error: `Stack` does not take types in brackets
 ```
 
-Suggested wording (a proposal): "`Stack[T]` declares a type that works with any kind of item,
-which Emerald does not support yet." with the help "Write one class for each kind of item,
-such as `IntStack`, or keep the items in a `List`."
+Built on branch `claude/reserve-generics` (see "Settled while building"): the messages say a
+`class` (or `struct`, `enum`, `trait`) "cannot take type parameters in brackets yet", with the
+help "Write one class for each kind of item, such as `IntStack`, or keep the items in a `List`."
 
 **What today's parser does (checked 2026-10-16).** Every declaration form is already a syntax
 error, so no program can use it and reservation costs nothing; what is wrong is the wording:
@@ -141,8 +141,7 @@ error, so no program can use it and reservation costs nothing; what is wrong is 
 The messages blame the wrong thing, and the last is the real hazard for later: `Stack[Int]()`
 parses as indexing `Stack`, so a call-site type argument could never be added without
 changing its meaning, which supports 5.4's choice to never write one. The reservation
-change replaces the four messages above with the proposed wording and adds a `diagnostics/`
-case for each. Rewrite-context 11.3 and 21 are updated in the same change to say the syntax
+change replaces the four messages above and adds a `diagnostics/` case for each form. Rewrite-context 11.3 and 21 are updated in the same change to say the syntax
 is reserved.
 
 ## 5. The design, if the gate is met
@@ -607,4 +606,20 @@ effort, per `AGENTS.md`. The large files (`Checker.zig`, `Interpreter.zig`, `Par
 
 ## Settled while building
 
-(Empty until accepted and built.)
+**Reserved syntax (branch `claude/reserve-generics`, 2026-10-16).** The only built part; the
+design in section 5 is not accepted.
+
+- Rejected forms and where: a bracketed list after a type's name (`parseStructDeclaration`), after
+  a function, method, type-level function, or constructor name (`parseParameterList`), brackets
+  after a user type's name in a type (`parseTypeExpression`), and `Stack[Int]` in an expression
+  (the resolver's `.index` case, when the base names a type and the index is a name, a member
+  path, or another index). `Stack[0]` keeps today's "is a type, not a value".
+- Eight `conformance/diagnostics/generics-reserved-*.em` cases cover class, struct, enum, trait,
+  function, method, annotation, and call, and two more cover `Channel[Int](...)` and
+  `List[String]()`, which are types the language does have, written where only a value goes
+  ("`Channel[...]` is a type, not an expression"; the review found the first draft contradicting
+  itself there). The parser stops at a file's first error, so each form
+  needs its own file. A generic lambda or function type (`func[T](Int)`) is not specifically
+  reserved; its error is whatever those forms already report.
+- Wording is the branch's, not the proposal's: it names the construct, says what Emerald lacks,
+  and says what to do instead, without "generic" jargon beyond "does not have generic ... yet".
