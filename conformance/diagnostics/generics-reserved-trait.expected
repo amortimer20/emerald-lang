@@ -1,0 +1,4 @@
+diagnostics/generics-reserved-trait.em:1:12: a trait cannot take type parameters in brackets yet
+  trait Named[T] {
+             ^
+Emerald does not have generic traits yet. A trait describes behavior, so write it without brackets.

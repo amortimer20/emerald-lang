@@ -2314,6 +2314,14 @@ element types and users may consume concrete collection types without exposing a
 generic declaration system. Any future extension must begin with real Emerald programs
 that the simple trait model cannot express.
 
+The bracketed syntax is reserved so that adding generics later breaks no program. A
+bracketed list after the name of a type, function, method, or constructor
+(`class Stack[T]`, `func largest[T](...)`), and brackets after the name of a user type in a
+type or an expression (`Stack[Int]`, `Stack[Int]()`), are errors that say Emerald does not
+have generics yet rather than a misleading parse or name error. Only `List`, `Dict`, `Set`,
+`Task`, and `Channel` take types in brackets (8.2). [generics-design-plan.md](generics-design-plan.md)
+holds the proposal and the evidence it waits for.
+
 ### 11.4 `Self`
 
 `Self` has a narrow, type-relative meaning: in a struct or class member it is that declaring
@@ -4025,7 +4033,7 @@ future subsystem before the first expression runs.
 
 The following are deliberately outside the initial implementation:
 
-- broad user-declared generics;
+- broad user-declared generics (the bracketed syntax is reserved: see 11.3);
 - a source-visible `Any` top type;
 - immutable collection views and collection covariance;
 - function and method overloading, and with it overloaded constructors and constructor

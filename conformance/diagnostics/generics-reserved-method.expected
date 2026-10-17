@@ -1,0 +1,4 @@
+diagnostics/generics-reserved-method.em:2:16: `mapped` cannot take type parameters in brackets yet
+      func mapped[U](value: Int): Int {
+                 ^
+Emerald does not have generic functions yet. Write one function for each kind of value, or take the values in a `List`.

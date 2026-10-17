@@ -3009,6 +3009,19 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
         },
         .list_literal => |elements| for (elements) |element| try self.walkExpression(element),
         .index => |index| {
+            // Section 11.3 reserves `Stack[Int]` for generics. Indexing a type
+            // can never be meant literally, so say what the brackets cannot do
+            // rather than report the type argument as an undefined name.
+            if (index.base.data == .name and (index.index.data == .name or index.index.data == .index or index.index.data == .member)) {
+                if (self.lookup(index.base.data.name)) |found| {
+                    if (found.binding.kind == .type) return self.report(
+                        index.base.span,
+                        "`{s}` does not take types in brackets",
+                        .{index.base.data.name},
+                        "Only `List`, `Dict`, `Set`, `Task`, and `Channel` take types in brackets. Emerald does not have generic types yet.",
+                    );
+                }
+            }
             try self.walkExpression(index.base);
             try self.walkExpression(index.index);
         },
