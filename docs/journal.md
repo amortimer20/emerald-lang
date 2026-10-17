@@ -5615,3 +5615,34 @@ against the branch, it found ten real items, listed in the plan's review section
 were bugs a student could hit: a type-level field built from its own enum's data
 choice failed at run time, and a `Set` of a later-declared type was accepted unchecked,
 a hole that also let a set of a later struct holding a list through before this work.
+
+## 2026-10-16: Generics plan, and the syntax reservation
+
+The user asked how to plan the last major language feature without making the language
+heavy. The result is [`generics-design-plan.md`](generics-design-plan.md), proposed and not
+accepted. Its recommendation is not to build user generics before 1.0 unless evidence
+requires them: a wall log of real programs that cannot be written without copy-paste, and the
+question of whether Emerald is a first-course language or carries students into data
+structures. The user chose the syntax (`[T]` and `[T with Trait]` on classes, structs, enums,
+functions, and methods) and the plan builds on it. Go held out for a decade for the same
+reasons and is the precedent in the plan.
+
+Things the source and docs showed that shaped the plan: tuples, `List`'s `remove_last` and
+`remove_first`, and enum data already cover pairs, stacks, queues, and results, so the real
+gap is a user's own recursive or container type; `Int`, `Float`, and `String` have an order
+and equality natively but no `compare`, `equals`, or `hash` members and do not adopt
+`Ordered`, so a constraint needs a built-in conformance table; the interpreter widens from a
+declared `Float` kind, which an erased type parameter lacks; and operators in a generic body
+would have to dispatch on the runtime value.
+
+Running the plan's programs with concrete types caught two syntax mistakes of mine (`empty?`
+needs parentheses, and an `if` expression's `else` cannot start a new line). The one piece
+built is the reservation (PR #43): every generic form was already a syntax error, but the
+messages blamed the wrong thing, and `Stack[Int]()` parsed as indexing and reported `Int` as
+undefined, which is why a type argument can never be written at a call. Brackets after a
+type, function, method, or constructor name, and after a user type in a type or expression,
+now say Emerald does not have generics yet. The review found that `Channel[Int](...)` and
+`List[String]()`, types the language does have, got a self-contradicting message or an
+undefined-name cascade; they now say a type is not an expression. Ten diagnostics cases cover
+it. Lesson: a `bash` call and an `edit` in one parallel batch ran before the edit landed, so
+the build used the old source; build in a separate step after edits.

@@ -195,7 +195,10 @@ Godot bindings, and a debugger come after 1.0). Item 3: the enum plan is built a
 (below); the clean-generics plan is now written, [`generics-design-plan.md`](generics-design-plan.md)
 (proposed 2026-10-16, not accepted: it recommends an evidence gate before building and reserving
 the `[T]` syntax now, with `[T]`/`[T with Trait]` as the design if built). The reserved-syntax change
-is merged (PR #43, `d4342ed`; see the plan's "Settled while building"); the parenthesis-free
+is merged (PR #43, `d4342ed`; see the plan's "Settled while building"). The plan's seven open
+questions (first the audience question: first course, or through data structures) and the wall log
+it proposes (`docs/generics-wall-log.md`, not created) await the user; nothing past the
+reservation is built. The parenthesis-free
 header block and a deprecation story
 still need the user's decisions. Still open from the QA pass: B4
 (reading the site) and B5 (reproducing the red "not defined" editor errors) were not reported;
@@ -809,8 +812,12 @@ not yet discussed:
 
 ## Validation and repository state
 
-Latest (2026-10-15): `zig build test -j1` in Debug passed on main `3e2d2bf` plus the
-Markdown-only enum plan amendments. QA A2, A3, and A5 merged with PR #41; their
+Latest (2026-10-16): `zig build test -j1` passed in Debug and in ReleaseSafe on the final
+generics-reservation branch (`9e4567a`, merged as PR #43 `d4342ed`), with `zig fmt --check`,
+`git diff --check`, Windows and macOS cross-builds, and green CI on Ubuntu, macOS, and Windows.
+`tools/check-doc-examples.sh` needs bash 4 (`mapfile`), so it does not run under macOS's
+`/bin/bash` 3.2; run it with a newer bash when a doc change adds an `.em` link. The Markdown-only
+commits after the merge were not re-tested. Earlier: QA A2, A3, and A5 merged with PR #41; their
 validation is in the journal.
 
 `main` is the only long-lived branch. Work happens on `claude/*` branches (the
