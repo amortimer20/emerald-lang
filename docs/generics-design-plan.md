@@ -615,7 +615,10 @@ design in section 5 is not accepted.
   (the resolver's `.index` case, when the base names a type and the index is a name, a member
   path, or another index). `Stack[0]` keeps today's "is a type, not a value".
 - Eight `conformance/diagnostics/generics-reserved-*.em` cases cover class, struct, enum, trait,
-  function, method, annotation, and call. The parser stops at a file's first error, so each form
+  function, method, annotation, and call, and two more cover `Channel[Int](...)` and
+  `List[String]()`, which are types the language does have, written where only a value goes
+  ("`Channel[...]` is a type, not an expression"; the review found the first draft contradicting
+  itself there). The parser stops at a file's first error, so each form
   needs its own file. A generic lambda or function type (`func[T](Int)`) is not specifically
   reserved; its error is whatever those forms already report.
 - Wording is the branch's, not the proposal's: it names the construct, says what Emerald lacks,

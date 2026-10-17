@@ -1,0 +1,4 @@
+diagnostics/generics-reserved-builtin-call.em:1:17: `Channel[...]` is a type, not an expression
+  const numbers = Channel[Int](capacity: 3)
+                  ^^^^^^^
+A type can only be written where a type goes, as in `const numbers: Channel[Int] = Channel(capacity: 3)`.
