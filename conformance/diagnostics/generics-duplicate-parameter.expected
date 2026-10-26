@@ -1,0 +1,4 @@
+diagnostics/generics-duplicate-parameter.em:1:19: `Item` is already a type parameter of `Pair`
+  struct Pair[Item, Item] {
+                    ^^^^
+Give each its own name, as in `Pair[First, Second]`.

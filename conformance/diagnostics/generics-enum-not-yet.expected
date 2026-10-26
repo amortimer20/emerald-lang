@@ -1,0 +1,4 @@
+diagnostics/generics-enum-not-yet.em:1:12: an enum cannot take type parameters yet
+  enum Chain[T] {
+             ^
+Emerald's generics cover structs and classes so far. Write one enum for each kind of item for now.

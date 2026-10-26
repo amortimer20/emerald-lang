@@ -1,0 +1,4 @@
+diagnostics/generics-parameter-hides-type.em:1:12: `String` is already the name of a type
+  struct Box[String] {
+             ^^^^^^
+Inside `Box`, a type parameter named `String` would hide the real `String`. Give the parameter another name, such as `Item`.

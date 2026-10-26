@@ -1,0 +1,4 @@
+diagnostics/generics-builtin-arguments.em:1:14: `Int` does not take types in brackets
+  const count: Int[String] = 1
+               ^^^^^^^^^^^
+Only `List`, `Dict`, `Set`, `Task`, `Channel`, and types declared with brackets, such as `class Stack[Item]`, take types in brackets. Write `Int` alone.

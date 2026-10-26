@@ -350,6 +350,9 @@ type_tests: *const Checker.TypeTests,
 type_names: *const Checker.LiteralTypes,
 /// Section 11.2's `Trait.method(value)` calls, by expression.
 trait_calls: *const Checker.MethodCalls,
+/// Section 11.3: the expressions giving an `Int` that a generic declaration
+/// takes as a `Float`, which nothing else widens once its `T` is erased.
+widenings: *const Checker.Widenings,
 /// Every trait, by key, with the keys of the traits it builds on.
 trait_infos: std.StringHashMapUnmanaged(TraitInfo) = .empty,
 /// Every method that overrides another, mapped to the declaration it
@@ -388,6 +391,7 @@ pub const SessionAnalysis = struct {
     type_tests: *const Checker.TypeTests,
     type_names: *const Checker.LiteralTypes,
     trait_calls: *const Checker.MethodCalls,
+    widenings: *const Checker.Widenings,
     facts: Resolver.Facts,
 };
 
@@ -551,6 +555,7 @@ pub const Session = struct {
             .type_tests = analysis.type_tests,
             .type_names = analysis.type_names,
             .trait_calls = analysis.trait_calls,
+            .widenings = analysis.widenings,
             .literal_types = analysis.literal_types,
             .heap = .init(gpa),
             .session_keys = .empty,
@@ -615,6 +620,7 @@ pub const Session = struct {
         self.interpreter.type_tests = analysis.type_tests;
         self.interpreter.type_names = analysis.type_names;
         self.interpreter.trait_calls = analysis.trait_calls;
+        self.interpreter.widenings = analysis.widenings;
         self.interpreter.facts = analysis.facts;
     }
 
@@ -842,6 +848,7 @@ pub fn run(
     type_tests: *const Checker.TypeTests,
     type_names: *const Checker.LiteralTypes,
     trait_calls: *const Checker.MethodCalls,
+    widenings: *const Checker.Widenings,
     facts: Resolver.Facts,
     out: *std.Io.Writer,
     in: *std.Io.Reader,
@@ -923,6 +930,7 @@ pub fn run(
         .type_tests = type_tests,
         .type_names = type_names,
         .trait_calls = trait_calls,
+        .widenings = widenings,
         .literal_types = literal_types,
         .heap = .init(gpa),
         .test_mode = test_mode,
@@ -2613,6 +2621,10 @@ fn kindOf(checked: Type) Value.Kind {
         .task, .channel => .struct_value,
         .function => .closure,
         .struct_value => .struct_value,
+        // Section 11.3: a type parameter is erased, so its value keeps its
+        // own kind. Only `.float` makes a difference at run time (widening),
+        // and the checker marks the widenings a parameter needs instead.
+        .type_parameter => .struct_value,
     };
 }
 
@@ -2895,6 +2907,14 @@ fn initializeModule(self: *Interpreter, file: u32) Error!void {
 // Expressions.
 
 fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
+    const value = try self.evaluateExpression(expression);
+    // Section 11.3: a whole number given where an erased `T` is a `Float`.
+    // A program with no generics has none, and pays only for the count.
+    if (self.widenings.count() != 0 and self.widenings.contains(expression)) return widen(value, .float);
+    return value;
+}
+
+fn evaluateExpression(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
     try self.guardStack(expression.span);
     try self.guardStep(expression.span);
 
@@ -6420,7 +6440,7 @@ fn jsonDecodeValue(self: *Interpreter, span: Source.Span, json: Json.Value, targ
         .list => self.jsonDecodeList(span, json, target, path),
         .dictionary => self.jsonDecodeDictionary(span, json, target, path),
         .struct_value => self.jsonDecodeStruct(span, json, target, path),
-        .nothing, .bytes, .range, .tuple, .set, .task, .channel, .function, .invalid => unreachable,
+        .nothing, .bytes, .range, .tuple, .set, .task, .channel, .function, .type_parameter, .invalid => unreachable,
     };
 }
 
@@ -6629,7 +6649,7 @@ fn jsonFromTypedValue(self: *Interpreter, arena: std.mem.Allocator, span: Source
             break :blk .initObject(entries);
         },
         .struct_value => self.jsonFromStructValue(arena, span, value, value_type),
-        .nothing, .bytes, .range, .tuple, .set, .task, .channel, .function, .invalid => unreachable,
+        .nothing, .bytes, .range, .tuple, .set, .task, .channel, .function, .type_parameter, .invalid => unreachable,
     };
 }
 

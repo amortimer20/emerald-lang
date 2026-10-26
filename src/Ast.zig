@@ -128,6 +128,11 @@ pub const StructDeclaration = struct {
     enumeration: bool = false,
     name: []const u8,
     name_span: Source.Span,
+    /// The whole declaration, keyword through closing brace. Type parameters
+    /// are in scope throughout it (11.3).
+    span: Source.Span = .{ .start = 0, .end = 0 },
+    /// Section 11.3's `[T]` after the name; empty for an ordinary type.
+    type_parameters: []const TypeParameter = &.{},
     /// Section 10.7's `extends Animal`: the one base class a class may have.
     base: ?TypeExpression = null,
     /// Section 11.2's `with Swimmer, Flyer`: the traits adopted, or for a
@@ -399,9 +404,20 @@ pub const TypeExpression = struct {
     signature: ?*const SignatureExpression = null,
     /// The position types of a tuple type, `(A, B)`; null otherwise.
     positions: ?[]const TypeExpression = null,
+    /// The types in brackets after a user type's name, `Pair[String, Int]`
+    /// (11.3); empty for a type written without any.
+    arguments: []const TypeExpression = &.{},
     /// The `?` that marks an optional, split from the name by the parser as
     /// section 4.2 describes. Null when the type is not optional.
     question_span: ?Source.Span,
+};
+
+/// One name in a declaration's `[T]` or `[T with Trait]` list (11.3).
+pub const TypeParameter = struct {
+    name: []const u8,
+    span: Source.Span,
+    /// The trait after `with`, when the parameter is constrained.
+    bound: ?TypeExpression = null,
 };
 
 /// `name = value`, or an assignment reached through a path of indices and

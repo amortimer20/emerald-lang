@@ -893,17 +893,18 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
     }
     _ = self.advance();
 
-    // Section 11.3 reserves a bracketed list after the name for generics.
+    // Section 11.3's `[T]` after the name. A trait describes behavior for the
+    // types that adopt it, so it has no type parameters.
+    var type_parameters: []const Ast.TypeParameter = &.{};
     if (self.check(.left_bracket)) {
-        return self.reportFmt(
-            self.peek().span,
-            "{s} {s} cannot take type parameters in brackets yet",
-            .{ if (enumeration) "an" else "a", word },
-            if (trait)
-                "Emerald does not have generic traits yet. A trait describes behavior, so write it without brackets."
-            else
-                try std.fmt.allocPrint(self.arena, "Emerald does not have generic declarations yet. Write one {s} for each kind of item, such as `Int{s}`, or keep the items in a `List`.", .{ word, self.text(name) }),
-        );
+        if (trait) {
+            return self.report(
+                self.peek().span,
+                "a trait cannot take type parameters in brackets yet",
+                "Emerald does not have generic traits yet. A trait describes behavior, so write it without brackets.",
+            );
+        }
+        type_parameters = try self.parseTypeParameters();
     }
 
     // Section 10.7's single inheritance. Section 11's traits come later.
@@ -1045,6 +1046,8 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
             .enumeration = enumeration,
             .name = try self.identifier(name),
             .name_span = name.span,
+            .span = spanning(keyword.span, closing.span),
+            .type_parameters = type_parameters,
             .base = base,
             .traits = try traits.toOwnedSlice(self.arena),
             .fields = try members.fields.toOwnedSlice(self.arena),
@@ -2450,15 +2453,12 @@ fn parseTypeExpression(self: *Parser) Error!Ast.TypeExpression {
     }
     if (path) |*qualified| written = try qualified.toOwnedSlice(self.arena);
 
-    // Section 11.3: only the built-in collection and task types take types in
-    // brackets, and the syntax is reserved for generics.
+    // Section 11.3: a user type may take types in brackets, `Pair[String, Int]`.
+    // Whether it does is for the checker to say.
+    var arguments: []const Ast.TypeExpression = &.{};
     if (self.check(.left_bracket)) {
-        return self.reportFmt(
-            self.peek().span,
-            "`{s}` does not take types in brackets",
-            .{written},
-            "Only `List`, `Dict`, `Set`, `Task`, and `Channel` take types in brackets. Emerald does not have generic types yet.",
-        );
+        arguments = try self.parseTypeArguments();
+        span = spanning(span, self.tokens[self.index - 1].span);
     }
 
     if (question == null and self.check(.question)) {
@@ -2467,7 +2467,80 @@ fn parseTypeExpression(self: *Parser) Error!Ast.TypeExpression {
     }
     try self.rejectNestedOptional(question);
 
-    return .{ .span = span, .name = written, .question_span = question };
+    return .{ .span = span, .name = written, .arguments = arguments, .question_span = question };
+}
+
+/// Section 11.3's `[T]` and `[T with Trait]` after a declaration's name.
+fn parseTypeParameters(self: *Parser) Error![]const Ast.TypeParameter {
+    const opening = self.advance();
+    try self.nest(opening.span);
+    defer self.unnest();
+
+    var parameters: std.ArrayList(Ast.TypeParameter) = .empty;
+    while (true) {
+        self.skipSeparators();
+        const name = self.peek();
+        if (name.kind != .identifier) {
+            return self.reportFmt(
+                name.span,
+                "expected a type parameter name, found {s}",
+                .{name.kind.describe()},
+                "Name each type the declaration works with, as in `Pair[First, Second]`.",
+            );
+        }
+        if (std.mem.endsWith(u8, self.text(name), "?")) {
+            return self.report(
+                name.span,
+                "a type parameter's name cannot end in `?`",
+                "Write the name alone. A use of the parameter can be optional, as in `Item?`.",
+            );
+        }
+        _ = self.advance();
+        var bound: ?Ast.TypeExpression = null;
+        if (self.match(.keyword_with) != null) bound = try self.parseTypeExpression();
+        try parameters.append(self.arena, .{ .name = try self.identifier(name), .span = name.span, .bound = bound });
+        self.skipSeparators();
+        if (self.match(.comma) == null) break;
+    }
+
+    const closing = self.peek();
+    if (closing.kind != .right_bracket) {
+        return self.reportFmt(
+            closing.span,
+            "expected `]` to close the type parameters, found {s}",
+            .{closing.kind.describe()},
+            "Separate the names with commas and close the list, as in `Pair[First, Second]`.",
+        );
+    }
+    _ = self.advance();
+    return parameters.toOwnedSlice(self.arena);
+}
+
+/// The types in `Pair[String, Int]`, after the name.
+fn parseTypeArguments(self: *Parser) Error![]const Ast.TypeExpression {
+    const opening = self.advance();
+    try self.nest(opening.span);
+    defer self.unnest();
+
+    var arguments: std.ArrayList(Ast.TypeExpression) = .empty;
+    while (true) {
+        self.skipSeparators();
+        try arguments.append(self.arena, try self.parseTypeExpression());
+        self.skipSeparators();
+        if (self.match(.comma) == null) break;
+    }
+
+    const closing = self.peek();
+    if (closing.kind != .right_bracket) {
+        return self.reportFmt(
+            closing.span,
+            "expected `]` to close these types, found {s}",
+            .{closing.kind.describe()},
+            "Separate the types with commas and close the list, as in `Pair[String, Int]`.",
+        );
+    }
+    _ = self.advance();
+    return arguments.toOwnedSlice(self.arena);
 }
 
 /// Section 4.5: optionals never nest, so a second `?` is a mistake with a

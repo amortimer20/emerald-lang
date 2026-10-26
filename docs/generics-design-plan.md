@@ -2,9 +2,11 @@
 
 Status: accepted, 2026-10-17, with building gated. The user accepted every recommendation in
 the table below and the answers to its open questions as recommended. Accepting them settles the
-design to build *if* the gate in section 3 is met; it does not start building. Only the syntax
-reservation (section 4) is built. The audience question (section 3) is still undecided; the user
-leans toward "elementary data structures", which is why the wall log below exists. Claude wrote
+design to build *if* the gate in section 3 is met. On 2026-10-17 the user chose to build now
+instead of waiting for the gate, and on 2026-10-26 confirmed it ("let's begin implementing
+generics; it's the last core feature of Emerald's syntax"), so building has started (slice 0
+findings below; each slice's status is in "Settled while building"). The audience question (section 3) is still undecided;
+the user leans toward "elementary data structures". Claude wrote
 this plan at the user's request (proposed 2026-10-16, rewritten twice that day).
 
 **Every program in this plan is a proposed example, and none compiles today: each uses
@@ -291,11 +293,10 @@ tested at run time, never reflected). Consequences:
 - A struct held by `T` is still copied and a class still shared; the runtime value carries
   which it is. A conformance case checks both, because this is the kind of behavior a host
   can silently get wrong.
-- **Operators in a generic body must dispatch on the runtime value**, not the static type.
-  `value < item` with `T with Ordered` runs a native comparison for an `Int` and `compare`
-  for a struct, and `==` runs structural, identity, or custom equality. If the interpreter
-  chooses these from the checker's static type today, a generic body needs a runtime path.
-  Slice 0 measures this.
+- **Operators in a generic body dispatch on the runtime value** (checked in slice 0: the
+  interpreter's `evaluateComparison` already branches on the runtime value, calling `compare`
+  for a struct, a native comparison for numbers and strings, and `Value.equals` through
+  `EquatableDispatch` for `==`), so an erased `value < item` needs no new runtime path.
 - `is Grid[Int]` cannot be answered once types are erased, so it is rejected for now.
 - `case` over a generic enum behaves as today; `when Chain.link(item, rest)` binds `item`
   as `T`.
@@ -613,6 +614,129 @@ effort, per `AGENTS.md`. The large files (`Checker.zig`, `Interpreter.zig`, `Par
 
 ## Settled while building
 
+### Slice 0 findings (2026-10-17)
+
+The user chose on 2026-10-17 to build generics now rather than wait for the wall log ("we got this
+far, we might as well implement them"), so the gate in section 3 is overridden; the log stays as
+a record. Slice 0 read the checker, interpreter, and runtime to settle the architecture.
+
+**Architecture: check once, erase at run time.** Two designs were weighed.
+
+- *Expansion* (copy the declaration's syntax tree once per type argument and check each copy as
+  an ordinary concrete type) was rejected. The checker's and resolver's results are keyed by
+  syntax-tree node (`literal_types`, `method_calls`, `json_encodes`, `expression_targets`, and
+  more), so copies would need resolving and checking separately, errors would appear per
+  instantiation instead of once at the definition (breaking section 5.3), and `Stack[Int]` and
+  `Stack[Float]` bodies would collide in those tables if shared.
+- *Erasure* (check the declaration once against opaque type parameters; run one copy) is chosen.
+  It matches section 5.7 and keeps the interpreter nearly unchanged.
+
+**What the runtime needs.**
+
+- Static kinds matter at run time only for `Int` to `Float` widening: `Interpreter.widen` acts
+  only when the target `Value.Kind` is `.float`, and `Heap.List.element` and the map key/value
+  kinds exist for that reason alone. A type parameter therefore maps to a non-float kind in
+  `kindOf` (as trait-typed values already map to `.struct_value`) and nothing else changes.
+- Widening across a type argument (section 5.6) is done by the checker marking each expression it
+  implicitly widens into an erased position (an argument, a constructor argument, a field or
+  index assignment), in a node set the interpreter consults at those few places, never in
+  general `evaluate`.
+- Ordering and equality already dispatch on the runtime value (see 5.7), so generic bodies need
+  no runtime path for `<`, `==`, `compare`, `equals`, or `hash`. A constrained call such as
+  `a.compare(b)` on an `Int` argument needs real built-in members (slice 3).
+
+**What the checker needs (the inventory).** The equality, order, and hash rules are less
+scattered than first feared:
+
+- Key eligibility: six sites, all through `Type.eligibleKey` (`Checker.zig` 120, 121, 6345,
+  6373, 6462, plus the type's own definition in `Type.zig`).
+- Ordering: six sites, all through `typeOfOperatorCall(..., .ordered, ...)` (`min`, `max`, `sort`,
+  `sort_by`, `min_by`, `max_by` at about 7624, 7653, 8057, 8086, 8119) and comparison chains
+  (10171). That function already models an opaque `Self` bounded by a trait (`opaque_self`),
+  which is the template for a constrained type parameter.
+- Equality: `equatable(left, right)` (10117) and `typeOfComparison`; `==` on an unconstrained
+  parameter is rejected there, and on `T with Equatable` it is allowed.
+- Type-kind dependent code: 57 `struct_value` references and 14 `switch (.kind)` in `Checker.zig`,
+  9 in `Type.zig`, 7 in `Lsp.zig`. Adding a `type_parameter` kind makes Zig's exhaustive
+  switches name every one.
+
+**Representation (for slices 1 to 3).**
+
+- `Type.Kind.type_parameter`, with a `parameter: ?*const TypeParameter` (name, position, owner,
+  optional bound trait `*const User`). A constrained parameter generalizes `opaque_self`.
+- `User.type_parameters` on a generic declaration, and `Type.type_arguments` on a
+  `struct_value`, so `Stack[Int]` is the one `User` plus its arguments. `same`,
+  `assignableTo`, `format`, and `eligibleKey` account for the arguments.
+- Member types read from a `User` or from `signatures` are written in terms of the parameters;
+  one `substitute` applied at field access, method calls, constructors, and properties turns
+  them into the receiver's argument types. Inside a generic body `self` has the declaration's own
+  parameters as its arguments, so substitution is the identity there.
+- Typed calls (`Json.encode`, `Csv.encode`, `Json.decode`, `Console.table`) and `is` tests refuse
+  a type that mentions a type parameter, with a message saying why: the erased value has no
+  static type to follow.
+
+**Still open for later slices.** Which built-ins are `Hashable` (a `Float`'s `hash` must refuse
+NaN) and whether tuples and collections of satisfying types are `Equatable` (slice 3); whether a
+generic type's `type_name` should print its arguments (slice 5).
+
+### Slice 1: generic structs and classes, unconstrained (2026-10-26)
+
+Programs 2, 3, and 9 run (`conformance/run/generics-grid.em`, `generics-history.em`), and
+`generics-values.em` covers two parameters, value and reference semantics through a parameter,
+keys, captured methods, optional chaining, `Self`, and generic types inside collections and
+function types. The first draft of the parser, `Ast`, formatter, and `Type` changes was written
+on 2026-10-17 and left uncommitted in a worktree whose Git link broke when the repository moved
+into `~/Workspace/emerald/`; it was carried into this branch unchanged and finished here.
+
+- **Where `T` is a type.** A generic declaration's whole span (`Ast.StructDeclaration.span`,
+  keyword to closing brace) is its parameters' scope, looked up by position in
+  `Checker.typeParameterAt`, innermost declaration first. Nested types, type-level functions, and
+  type-level fields are masked: they belong to the type as a whole, so `T` there is an error that
+  says so. (A type-level factory such as `func Box.of(value: T): Box[T]` is a generic function
+  and waits for slice 2.)
+- **Inside the declaration** the type is given its own parameters, `Box[T]`
+  (`User.own_arguments`), which is what `self`, `Self`, the `structs` table, and a custom
+  constructor's result are. Outside it, `Box` written without its types is an error that shows
+  the declared spelling, and the count and optionality of the types are checked
+  (`applyTypeArguments`).
+- **Substitution** happens at the uses: field reads, property reads, method and captured-method
+  signatures (`signatureOn`, after `Self`), optional chaining, and field assignment
+  (`checkPlaceAssignment`, `resolvePlace`). One `Type.substitute` does it; inside the
+  declaration the arguments are its own parameters and substitution is skipped.
+- **Construction** (`typeOfGenericConstruction`): an expected type of the same generic seeds the
+  answer, so `const counts: Grid[Int] = Grid(2, 2, 0)` needs no inference. Otherwise each
+  argument whose parameter mentions a type parameter is checked without an expected type and
+  unified left to right (`Inference.unify`); a block, `nothing`, an empty literal, or a list
+  literal whose types are already known waits and is checked against the answer. An `Int` seen
+  first and a `Float` later make the parameter a `Float`, as `[1, 2.5]` does. Nothing deciding a
+  parameter is "Emerald cannot tell what `T` is for this `Stack`"; an optional answer
+  (`Box(maybe)`) is refused as section 5.5 requires.
+- **Widening (5.6)** is what the plan recommended: the checker marks every expression giving an
+  `Int` where a declared `T` is a `Float` (arguments of constructions and of methods on a generic
+  receiver, and field assignments), and the interpreter widens those after evaluating them. The
+  check is in `Interpreter.evaluate`, guarded by the set's count, so a program without generics
+  pays one comparison; this departs from slice 0's "only at those few places" because arguments
+  are evaluated along many paths (named, defaulted, trailing block, constructor, method). The
+  teaching-error fallback was not needed.
+- **Section 5.3's rules** before constraints exist: `==`, `!=`, and ordering between `T` values
+  are errors (`T == nothing` for a `T?` is still allowed), as are member access and method calls
+  on a `T`, and arithmetic. A struct holding a `T` still compares structurally, at run time by
+  each value's own equality; this is not `T`'s `==` and was left allowed.
+- **Keys.** `Type.eligibleKey` follows a generic struct's arguments, so `Pair[String, Int]` is a
+  key and `Pair[String, List[Int]]` is not; a bare `T` is never one.
+- **Refused for now, each with its own message:** an enum with type parameters (slice 4), a
+  generic class extending a class or a class extending a generic one (decision 10), `with Trait`
+  on a parameter (slice 3), `is` against a type with arguments (5.7), and `Json`/`Csv` encoding
+  or decoding a generic type, whose erased fields leave the encoder nothing to follow (they could
+  substitute the static type later if a program wants it). A type call `Box[Int](...)` explains
+  that types are written where the value is kept, not at the call (5.4).
+- **Declaration checks:** a repeated parameter name, a parameter named like a real type (or
+  `Self`), and a parameter that is never used (a warning) are reported; parameter names get the
+  ordinary PascalCase warning.
+- **Not decided yet:** `type_name` of a generic value prints `Pair` without its types (slice 5
+  decides). Editor features for type parameters are slice 5's.
+
+### Reserved syntax
 **Reserved syntax (merged as PR #43, 2026-10-16).** The only built part; section 5's design is
 accepted for use only if the gate in section 3 is met.
 

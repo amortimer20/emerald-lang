@@ -1,0 +1,4 @@
+diagnostics/generics-wrong-count.em:5:16: `Box` takes 1 type in brackets, but this gives 2
+  const box: Box[Int, String] = Box(1)
+                 ^^^^^^^^^^^
+`Box` is declared as `Box[Item]`. Write one type for each.

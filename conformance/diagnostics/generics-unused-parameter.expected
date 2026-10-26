@@ -1,0 +1,4 @@
+diagnostics/generics-unused-parameter.em:1:12: warning: `Item` is never used in `Box`
+  struct Box[Item] {
+             ^^^^
+Use it as the type of a field, parameter, or result, or remove it from the brackets.

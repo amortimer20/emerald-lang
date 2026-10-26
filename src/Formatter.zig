@@ -753,6 +753,18 @@ const Printer = struct {
         try self.write(s.keyword());
         try self.write(" ");
         try self.write(s.name);
+        if (s.type_parameters.len > 0) {
+            try self.write("[");
+            for (s.type_parameters, 0..) |parameter, i| {
+                if (i > 0) try self.write(", ");
+                try self.write(parameter.name);
+                if (parameter.bound) |bound| {
+                    try self.write(" with ");
+                    try self.printType(bound);
+                }
+            }
+            try self.write("]");
+        }
         if (s.base) |base| {
             try self.write(" extends ");
             try self.printType(base);
@@ -1010,6 +1022,14 @@ const Printer = struct {
             }
         } else {
             try self.write(t.name);
+            if (t.arguments.len > 0) {
+                try self.write("[");
+                for (t.arguments, 0..) |argument, i| {
+                    if (i > 0) try self.write(", ");
+                    try self.printType(argument);
+                }
+                try self.write("]");
+            }
         }
         if (t.question_span != null) try self.write("?");
     }

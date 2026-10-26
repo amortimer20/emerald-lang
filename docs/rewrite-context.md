@@ -2309,18 +2309,35 @@ and narrows to it.
 
 ### 11.3 Associated types and generics boundary
 
-Associated types and general user generics are deferred. Built-in collections may carry
-element types and users may consume concrete collection types without exposing a general
-generic declaration system. Any future extension must begin with real Emerald programs
-that the simple trait model cannot express.
+Associated types are deferred. User generics follow
+[generics-design-plan.md](generics-design-plan.md), accepted 2026-10-17 and being built slice by
+slice; this section records what is built.
 
-The bracketed syntax is reserved so that adding generics later breaks no program. A
-bracketed list after the name of a type, function, method, or constructor
-(`class Stack[T]`, `func largest[T](...)`), and brackets after the name of a user type in a
-type or an expression (`Stack[Int]`, `Stack[Int]()`), are errors that say Emerald does not
-have generics yet rather than a misleading parse or name error. Only `List`, `Dict`, `Set`,
-`Task`, and `Channel` take types in brackets (8.2). [generics-design-plan.md](generics-design-plan.md)
-holds the proposal and the evidence it waits for.
+A struct or class may take type parameters in brackets after its name, `class Grid[T]`,
+`struct Pair[First, Second]`. Inside its braces each parameter is a type. A use of the type
+writes its types the same way, `Grid[String]`, wherever a type is written, and never at a
+call: `Grid(3, 3, ".")` is a `Grid[String]` because of its argument, and
+`const counts: Grid[Int] = Grid(2, 2, 0)` because of where it goes. When neither says what a
+parameter is, that is an error asking for the type to be written where the value is kept.
+`Grid[Int]()` is an error that says so (5.4 of the plan).
+
+- A generic type is invariant in its types: a `Grid[Int]` is not a `Grid[Float]`. A type in
+  brackets cannot be optional, since `Grid`'s own `T?` would then nest (4.5).
+- An `Int` passed where a `T` is a `Float` is widened to a `Float`, as it is for a
+  `List[Float]` (4.4).
+- `T` could be any type, so a `T` value can be stored, passed, returned, put in collections,
+  and printed, and nothing more: no `==`, ordering, arithmetic, or members, and it is not a
+  dictionary key or set member. A struct holding a `T` still compares by its fields.
+- A generic struct is a key when every field is one for its types, so `Pair[String, Int]` is.
+- Type-level members and nested types belong to the type as a whole and cannot use its
+  parameters. `is` cannot test for a type with arguments, since the program does not keep them
+  while it runs, and `Json` and `Csv` do not encode or decode a generic type.
+- Not yet built: generic functions and methods, constraints (`[T with Ordered]`), and generic
+  enums, which are errors that say they are not supported yet. A generic class cannot extend a
+  class or be extended, and a trait takes no type parameters.
+
+The bracketed syntax after a function, method, or constructor name (`func largest[T](...)`)
+remains reserved with a plain "not yet" error.
 
 ### 11.4 `Self`
 
@@ -4033,7 +4050,7 @@ future subsystem before the first expression runs.
 
 The following are deliberately outside the initial implementation:
 
-- broad user-declared generics (the bracketed syntax is reserved: see 11.3);
+- generic functions, constraints, and generic enums, which are being built (11.3);
 - a source-visible `Any` top type;
 - immutable collection views and collection covariance;
 - function and method overloading, and with it overloaded constructors and constructor

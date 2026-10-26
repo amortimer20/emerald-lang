@@ -1,6 +1,6 @@
 # Current handoff
 
-Updated: 2026-10-16. This is the live status a session starts from. Keep it to the current
+Updated: 2026-10-26. This is the live status a session starts from. Keep it to the current
 milestone, next work, active rough edges, and recent validation. Completed-slice narrative
 belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 [`docs/rewrite-context.md`](rewrite-context.md).
@@ -192,14 +192,16 @@ last checked.
 Next: the work before 1.0 (roadmap items 3 onward; revised 2026-10-11: the implementation stays in
 Zig, networking folds into completing the initial standard library, no web framework, and multicore,
 Godot bindings, and a debugger come after 1.0). Item 3: the enum plan is built and merged
-(below); the clean-generics plan is written and accepted with building gated:
-[`generics-design-plan.md`](generics-design-plan.md) (2026-10-17) settles `[T]`/`[T with Trait]` as
-the design *if* the evidence gate is met, and the syntax reservation is merged (PR #43, `d4342ed`).
-The gate is [`generics-wall-log.md`](generics-wall-log.md): log every real program that needs a
-type-specific copy of a container or helper (Claude logs what it hits; the user adds classroom and
-QA cases) and review at the 1.0 review. Nothing past the reservation is built. The audience question
-(first course, or through data structures) is undecided; the user leans toward elementary data
-structures. The parenthesis-free
+(below). **Generics are being built** on `claude/generics` (worktree
+`~/.cache/emerald-worktrees/generics`), following
+[`generics-design-plan.md`](generics-design-plan.md): the user chose on 2026-10-17, and confirmed
+on 2026-10-26, to build without waiting for the wall log, which stays as a record. Slice 1
+(generic structs and classes, unconstrained) is done on the branch; slice 2 (generic functions
+and methods) is next, then constraints, generic enums, and editor support and teaching. The
+plan's "Settled while building" has each slice's decisions. An abandoned 2026-10-17 worktree
+directory is kept at `~/.cache/emerald-worktrees/generics-orphan-2026-10-17`; its work is in the
+branch, so it can be deleted once the user agrees. The audience question (first course, or
+through data structures) is undecided; the user leans toward elementary data structures. The parenthesis-free
 header block and a deprecation story
 still need the user's decisions. Still open from the QA pass: B4
 (reading the site) and B5 (reproducing the red "not defined" editor errors) were not reported;
@@ -813,7 +815,12 @@ not yet discussed:
 
 ## Validation and repository state
 
-Latest (2026-10-16): `zig build test -j1` passed in Debug and in ReleaseSafe on the final
+Latest (2026-10-26, `claude/generics` slice 1): `zig build test -j1` passed in Debug and in
+ReleaseSafe (816 conformance cases), with `zig fmt --check`, `git diff --check`, and Windows and
+macOS cross-builds; an LSP sweep (hover, completion, definition, references, signature help at
+every position) over six generic documents sent 16,650 requests with no errors. No `.em` link in
+`docs/` changed, so `tools/check-doc-examples.sh` was not run. Earlier (2026-10-16): `zig build
+test -j1` passed in Debug and in ReleaseSafe on the final
 generics-reservation branch (`9e4567a`, merged as PR #43 `d4342ed`), with `zig fmt --check`,
 `git diff --check`, Windows and macOS cross-builds, and green CI on Ubuntu, macOS, and Windows.
 `tools/check-doc-examples.sh` needs bash 4 (`mapfile`), so it does not run under macOS's

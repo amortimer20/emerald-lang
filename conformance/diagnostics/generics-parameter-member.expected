@@ -1,0 +1,4 @@
+diagnostics/generics-parameter-member.em:5:27: `Item` could be any type, so it has no `count`
+          return self.value.count
+                            ^^^^^
+Inside `Box`, `Item` values can be stored, passed, returned, and printed, but nothing is known about what they are.

@@ -5646,3 +5646,36 @@ now say Emerald does not have generics yet. The review found that `Channel[Int](
 undefined-name cascade; they now say a type is not an expression. Ten diagnostics cases cover
 it. Lesson: a `bash` call and an `edit` in one parallel batch ran before the edit landed, so
 the build used the old source; build in a separate step after edits.
+
+## 2026-10-26: Generics slice 1, generic structs and classes
+
+The user asked to build generics ("the last core feature of Emerald's syntax"), confirming the
+2026-10-17 decision to build without waiting for the wall log. That earlier session had written
+slice 0's findings and a first draft of the parser, `Ast`, formatter, and `Type` changes in
+`~/.cache/emerald-worktrees/generics`, but committed nothing; when the repository moved into
+`~/Workspace/emerald/`, the worktree's Git link pointed at a directory that no longer existed,
+so `git worktree list` no longer knew it and a new `git worktree add` refused the path. The
+directory was moved aside to `generics-orphan-2026-10-17` (kept, not deleted), a fresh worktree
+was made on `claude/generics`, and the five changed files were copied in. Lesson: commit a
+draft on its branch before a session ends, even unfinished, because an uncommitted worktree is
+one directory move away from being lost.
+
+Slice 1 makes `class Grid[T]` and `struct Pair[First, Second]` work: type parameters scoped by
+the declaration's span, types written with their arguments, substitution at every member use,
+construction inferred from the arguments or the expected type, and the plan's widening of an
+`Int` into an erased `Float` position, marked by the checker and applied in
+`Interpreter.evaluate`. The plan's "Settled while building" records each decision. Programs
+2, 3, and 9 run as written; 21 diagnostics cases cover the errors, and the reservation's class,
+struct, annotation, and call cases became the real messages (two deleted, three renamed). The
+formatter writes `[T]` and `Pair[String, Int]`.
+
+Found while building: a duplicate parameter was also reported as unused (the second name is
+never reached); an enum's type parameters, refused for now, also produced a "needs its types"
+cascade from the enum's own values, so an enum's are no longer registered; and
+`emerald format` on a `format/` case rewrites the input file, so a case's input has to be
+written again after generating its expected output.
+
+Validation: `zig build test -j1` in Debug and ReleaseSafe, `zig fmt --check`, `git diff --check`,
+Windows and macOS cross-builds, and an LSP sweep of 16,650 requests over six generic documents
+with no errors. The first full run failed one case whose expectation had been captured from the
+CLI with its `[E2001]` code, which the conformance runner does not print.

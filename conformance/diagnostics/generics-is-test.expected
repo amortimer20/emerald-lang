@@ -1,0 +1,4 @@
+diagnostics/generics-is-test.em:6:14: `is` cannot test for Box[Int]
+  print(box is Box[Int])
+               ^^^^^^^^
+Emerald does not keep a value's types in brackets while the program runs, so it cannot check them. Keep the value in a variable of the type you need instead.

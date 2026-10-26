@@ -1,4 +1,0 @@
-diagnostics/generics-reserved-enum.em:1:11: an enum cannot take type parameters in brackets yet
-  enum Chain[T] {
-            ^
-Emerald does not have generic declarations yet. Write one enum for each kind of item, such as `IntChain`, or keep the items in a `List`.

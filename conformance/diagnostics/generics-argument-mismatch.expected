@@ -1,0 +1,4 @@
+diagnostics/generics-argument-mismatch.em:6:13: this is Int, but `value` is a field holding String
+  box.value = 3
+              ^
+Assign a value of the field's type, or convert it first.
