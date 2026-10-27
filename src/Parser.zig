@@ -2984,7 +2984,7 @@ fn parseBlock(self: *Parser) Error!Ast.Block {
         return self.report(
             opening.span,
             "this `{` opens the body, so the block before it has nowhere to go",
-            "Put the call in parentheses so the block belongs to it, as in `if (items.any? { item => item.valid?() }) {`.",
+            "Put the call in parentheses so the block belongs to it, as in `(items.any? { item => item.valid?() })`, or give its result a name on the line before, as in `const found = items.any? { item => item.valid?() }`.",
         );
     }
 

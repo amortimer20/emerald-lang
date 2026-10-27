@@ -5994,3 +5994,17 @@ member expression it was checking, are gone. `typeOf` became `typeOfWith(express
 parameter. The checker is 20 lines shorter and no callee has to remember to take and clear a field
 before evaluating anything. Validation: `zig build test -j1` in Debug and ReleaseSafe, Windows and
 macOS cross-builds, and a ReleaseSafe fuzz run (seed 20261028, 5,000 cases, 607 executed).
+
+## 2026-10-28: The remaining language decisions for item 3
+
+The user accepted Claude's recommendation on each open question. The audience is a first course
+with a path into elementary data structures, which settles how generics are taught (late, and in a
+data-structures unit) rather than whether they exist. The generics wall log, an evidence gate
+for a feature now built, is retired as a gate and turned into a friction log for the 1.0 review,
+with the plan's `+`-on-lists slip as its first entry. The parenthesis-free header block is not
+for 1.0: it saves two characters at the cost of a line with two brace groups, a second spelling,
+and a silent change of meaning when `=>` is missing, and adding it later breaks nothing. Checking
+its diagnostic found that the help always showed an `if` example, even under `while` or `for`, and
+never offered a named result; it now offers both corrections without naming a keyword.
+Deprecation gets `@deprecated("message")` and a release policy, in an accepted plan that waits for
+a go-ahead to build; warnings keep their exit status of `1`, deprecations included.

@@ -1,14 +1,18 @@
 # Generics wall log
 
-The evidence gate for [generics-design-plan.md](generics-design-plan.md) (section 3). Add an
-entry each time a real program, classroom example, or QA program cannot be written without
-copy-pasting a type-specific version of a class, enum, or function. A made-up example does not
-count; a program someone actually wanted to write does.
+**Retired as a gate (the user, 2026-10-28).** This log was the evidence gate for
+[generics-design-plan.md](generics-design-plan.md) (section 3): generics were to be built only if
+it showed a real need. The user chose to build them without waiting, and they are merged (PR #44),
+so the gate has no job left. The log stays as a record, and from now on it collects **friction**:
+real programs where generics as built are awkward, wrong, or missing something, reviewed at the
+1.0 review while the design can still change. A made-up example does not count; a program someone
+actually wanted to write does.
 
-Generics are built only if this log shows a real need: about a dozen entries from at least three
-different shapes (not twelve stacks), or one data-structures program the user wants to ship in
-`examples/` and cannot. The log is reviewed at the 1.0 review, or sooner if the user asks. If it
-stays short, 1.0 ships without user generics.
+The text below is the log as it stood while it was a gate, kept for its reasoning: an entry each
+time a real program, classroom example, or QA program could not be written without copy-pasting a
+type-specific version of a class, enum, or function. Generics were to be built only if it showed
+about a dozen entries from at least three different shapes, or one data-structures program the user
+wanted to ship in `examples/` and could not.
 
 Entries are append-only. Do not remove one because it was later worked around; note the
 workaround in the entry instead.
@@ -28,4 +32,15 @@ workaround in the entry instead.
 
 ## Entries
 
-(None yet.)
+(None were recorded while it was a gate.)
+
+## Friction
+
+Each entry: the date, the program and where it lives, what was awkward, and what was done about it.
+
+### 2026-10-26: Program 6 joined lists with `+`
+- The plan's binary search tree (`generics-design-plan.md` section 7) wrote
+  `left.items() + [item] + right.items()`. Emerald has no `+` on lists; `chain` joins them.
+- Not a generics problem, but a sign that tree-shaped generic code reaches for list
+  concatenation. Worth watching for in classroom programs before deciding whether `+` on lists
+  earns a place.
