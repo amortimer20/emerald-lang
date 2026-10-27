@@ -198,9 +198,10 @@ classes, enums, functions, and methods, `[T with Trait]` constraints, and `compa
 `hash` on the built-in scalars are in; rewrite-context 11.3 states the rules, the plan's
 "Settled while building" records each slice's decisions and the whole-branch review, and
 `docs/language/generics.md` and `examples/generics.em` teach it. **Next for this feature:** the
-website needs generics pages and `compare`, `equals`, and `hash` sections on its Int, Float,
-String, and Bool pages (the editor catalog links `builtins/types/<type>/#compare` and so on, which
-the website's parity and link checks will look for); the next release notes are drafted in
+website's generics page and the `compare`, `equals`, and `hash` sections on its Int, Float, String,
+and Bool pages are written on emerald-website's `claude/generics-pages` branch (`6437c41`, every
+example checked against a build of main), to merge and deploy with 0.8.0 rather than before it;
+the next release notes are drafted in
 [`release-notes-0.8.0.md`](release-notes-0.8.0.md) (generics, enum data, the new members, and the `Set` fix); the one review item deferred from the branch, passing the expected type as a parameter
 rather than through checker fields, is done (`claude/expected-type`). The
 `claude/generics` worktree (`~/.cache/emerald-worktrees/generics`) can be removed. The audience question (first course, or
