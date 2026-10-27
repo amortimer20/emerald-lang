@@ -497,13 +497,24 @@ fn eligibleKeyInner(self: Type, seen: *[256]*const User, depth: usize, equatable
             }
             if (depth == seen.len) break :blk false;
             seen[depth] = user;
+            // `Box[T]` written inside `Pair[T]` means `Pair`'s argument: its
+            // own arguments are read through the ones around it first.
+            var resolved: [16]Type = undefined;
+            if (self.type_arguments.len > resolved.len) break :blk false;
+            for (self.type_arguments, resolved[0..self.type_arguments.len]) |argument, *slot| {
+                slot.* = argument;
+                if (argument.kind == .type_parameter and !argument.optional and argument.parameter.?.position < arguments.len) {
+                    slot.* = arguments[argument.parameter.?.position];
+                }
+            }
+            const inner = resolved[0..self.type_arguments.len];
             for (user.fields) |field| {
-                if (!field.type.eligibleKeyInner(seen, depth + 1, equatable, hashable, self.type_arguments)) break :blk false;
+                if (!field.type.eligibleKeyInner(seen, depth + 1, equatable, hashable, inner)) break :blk false;
             }
             // Section 8.3 for an enum carrying data: every choice's data, not
             // only the choice a value happens to hold, decides the type.
             for (user.choice_data) |items| for (items) |item| {
-                if (!item.type.eligibleKeyInner(seen, depth + 1, equatable, hashable, self.type_arguments)) break :blk false;
+                if (!item.type.eligibleKeyInner(seen, depth + 1, equatable, hashable, inner)) break :blk false;
             };
             break :blk true;
         },

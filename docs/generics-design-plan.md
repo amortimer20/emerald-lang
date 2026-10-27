@@ -855,6 +855,35 @@ joined lists with `+`, which Emerald does not have (`chain` joins them); the cas
   and the runtime keeps no arguments (5.7), so printing them only sometimes would be the less
   predictable rule. `List[Int]`'s `type_name` keeps its element type, as it always has.
 
+### Whole-branch review (2026-10-27)
+
+`/code-review` at high effort over the five slices found nine items; eight are fixed with a case
+each where behavior changed:
+
+1. An enum choice whose type nothing decides left a block or empty literal argument unchecked,
+   so `Outcome.success([])` passed checking and crashed the interpreter on a missing literal
+   type. Such an argument is now "Emerald cannot tell what this `Outcome.success` holds".
+2. Key eligibility read `Box[T]` inside `Pair[T]` without `Pair`'s arguments, so
+   `Set[Pair[Int]]` was refused; a struct's arguments are now resolved through the ones around
+   it.
+3. `maybe == value` with `T with Equatable` was refused, unlike every concrete type; equality
+   now allows an optional on either side, and ordering still needs both present.
+4. A bare `T` as a key or set member got the general key message; it now says to write
+   `T with Hashable`.
+5. The built-in members rule in AGENTS.md (checker, interpreter, hint text, docs): the hint
+   tables gained `compare_to`, `compareTo`, `hash_code`, and `hashCode`, and `Bool` got a library
+   page for `to_string`, `equals`, and `hash`.
+6. The checks on a solved type parameter (optional, unsatisfied bound) were written four times;
+   they are one `checkAnswer`, and `finishGenericCall` lost an unused parameter.
+7. Not changed: the expected type still reaches `typeOfCall`, `typeOfQualified`, and
+   `typeOfMember` through checker fields each takes and clears on entry. Threading an expected
+   type through `typeOf` would touch every expression path in the checker; it is worth doing
+   as its own change, not inside this feature.
+8. `typeParameterAt` built and sorted a list for every annotation; it now finds the innermost
+   declaring scope in one pass without allocating.
+9. The `Type[...]` expression error suggested `const value: Stack[Int]` even for a type with no
+   parameters; it now only says where types in brackets go.
+
 ### Reserved syntax
 **Reserved syntax (merged as PR #43, 2026-10-16).** The only built part; section 5's design is
 accepted for use only if the gate in section 3 is met.

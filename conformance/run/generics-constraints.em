@@ -99,3 +99,10 @@ print(twice_distinct([5, 6]))
 # The comparison members on the built-in scalars.
 print(3.compare(4), "b".compare("a"), 2.5.compare(2), 1.equals(1), true.equals(false))
 print(5.hash() == 5.hash(), "é".equals("e\u{301}"))
+
+# An optional compares with `==` against a present value of its own type.
+func holds?[T with Equatable](maybe: T?, value: T): Bool {
+    return maybe == value
+}
+
+print(holds?(nothing, 1), holds?(2, 2))

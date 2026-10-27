@@ -5766,3 +5766,12 @@ fuzz campaign (seed 20261027, 20,000 cases, 2,470 executed), `zig fmt --check`,
 `git diff --check`, and Windows and macOS cross-builds. Every `.em` link in `docs/` resolves and
 `examples/generics.em` runs; `tools/check-doc-examples.sh` itself needs bash 4, which this
 machine lacks.
+
+## 2026-10-27: Generics, whole-branch review
+
+`/code-review` at high effort over all five slices reported nine items; the plan lists each and
+what was done. Two were real bugs that the slices' own cases missed: a generic enum choice could
+leave an argument unchecked and crash the interpreter (`Outcome.success([])`), and key
+eligibility lost a struct's type arguments one level down (`Set[Pair[Int]]` with a `Box[T]`
+field). Both now have cases. One item, passing the expected type as a parameter instead of
+through checker fields, was left for a change of its own.

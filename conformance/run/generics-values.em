@@ -61,3 +61,11 @@ const pairs: List[Pair[String, Int]] = [Pair("a", 1), Pair("b", 2)]
 print(pairs.map { pair => pair.second }.sum())
 const make: func(Int): Pair[Int, Int] = { n => Pair(n, n * n) }
 print(make(4))
+
+# A generic struct holding another of its own type is a key through both.
+struct Wrapped[Item] {
+    const inner: Pair[Item, Item]
+}
+
+const wrapped: Set[Wrapped[Int]] = [Wrapped(Pair(1, 2)), Wrapped(Pair(1, 2))]
+print(wrapped.count)

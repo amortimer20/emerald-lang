@@ -3035,8 +3035,8 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
                     index.base.span,
                     "`{s}[...]` is a type, not an expression",
                     .{written},
-                    "Build the value without the brackets, as in `{s}(...)`. Emerald works out its types from the arguments, or from a type written where the value is kept, such as `const value: {s}[Int] = {s}(...)`.",
-                    .{ written, written, written },
+                    "Build the value without the brackets, as in `{s}(...)`. Types in brackets are written where a value is kept, never where it is built.",
+                    .{written},
                 );
             }
             try self.walkExpression(index.base);

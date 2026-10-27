@@ -1,0 +1,4 @@
+diagnostics/generics-compare-hint.em:1:9: Int has no method `compare_to`
+  print(3.compare_to(4))
+          ^^^^^^^^^^
+Emerald calls this `compare`.

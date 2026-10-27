@@ -1,0 +1,4 @@
+diagnostics/generics-enum-untold.em:6:33: Emerald cannot tell what this `Outcome.success` holds
+  const outcome = Outcome.success([])
+                                  ^^
+Nothing passed here says what its type is. Write the type where the value is kept, as in `const value: Outcome[Int] = Outcome.success(...)`.
