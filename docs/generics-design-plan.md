@@ -875,10 +875,11 @@ each where behavior changed:
    page for `to_string`, `equals`, and `hash`.
 6. The checks on a solved type parameter (optional, unsatisfied bound) were written four times;
    they are one `checkAnswer`, and `finishGenericCall` lost an unused parameter.
-7. Not changed: the expected type still reaches `typeOfCall`, `typeOfQualified`, and
-   `typeOfMember` through checker fields each takes and clears on entry. Threading an expected
-   type through `typeOf` would touch every expression path in the checker; it is worth doing
-   as its own change, not inside this feature.
+7. Deferred, then done after the merge (`claude/expected-type`): the expected type reached
+   `typeOfCall`, `typeOfQualified`, and `typeOfMember` through checker fields each took and
+   cleared on entry. It is now a parameter: `typeOfExpected` calls `typeOfWith(expression,
+   expected)`, which passes it to `typeOfUnrecorded` and on to those three, so no stale value
+   can reach a later expression. Behavior is unchanged.
 8. `typeParameterAt` built and sorted a list for every annotation; it now finds the innermost
    declaring scope in one pass without allocating.
 9. The `Type[...]` expression error suggested `const value: Stack[Int]` even for a type with no

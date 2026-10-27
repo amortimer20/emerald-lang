@@ -369,21 +369,10 @@ written_self: ?Type = null,
 generic_scopes: std.ArrayList(GenericScope) = .empty,
 /// Every type parameter written somewhere, so one never written is reported.
 used_parameters: std.AutoHashMapUnmanaged(*const Type.Parameter, void) = .empty,
-/// The type a construction is expected to give, set by `typeOfExpected` for
-/// the one call it is about to check and taken by `typeOfCall` at once, so a
-/// call among the arguments never sees it.
-construction_expected: ?Type = null,
 /// Every expression holding an `Int` that a generic declaration receives as a
 /// `Float` (11.3, 5.6 of the plan). Its own type is erased at run time, so the
 /// interpreter widens these where it would otherwise widen by declared type.
 widenings: Widenings = .empty,
-/// The type a name or member expression is expected to have, set by
-/// `typeOfExpected` and taken at once by `typeOfUnrecorded`, so a generic
-/// function taken as a value can learn its types from it (7.4, 11.3).
-value_expected: ?Type = null,
-/// The same, passed from `typeOfUnrecorded` to the member expression it
-/// dispatches, which takes it before evaluating anything.
-member_capture: ?Type = null,
 /// Every method call on a `T with Trait`, by callee, mapped to the trait
 /// member's key. The interpreter runs the value's own version (5.7 of the plan).
 parameter_calls: MethodCalls = .empty,
@@ -6717,16 +6706,21 @@ fn markAllAssigned(self: *Checker) void {
 /// needs an answer for whatever expression the cursor lands on, not only the
 /// few kinds `literal_types` already tracked for the interpreter's sake.
 fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
-    const result = try self.typeOfUnrecorded(expression);
+    return self.typeOfWith(expression, null);
+}
+
+/// `typeOf` for a call, name, or member expression whose type can depend on
+/// where it goes (11.3): a generic construction or call learns its types
+/// from `expected`, and so does a generic function taken as a value.
+fn typeOfWith(self: *Checker, expression: *const Ast.Expression, expected: ?Type) Error!Type {
+    const result = try self.typeOfUnrecorded(expression, expected);
     const changeable = if (self.completion) try self.completionChangeable(expression, result) else false;
     try self.expression_types.put(self.arena, expression, .{ .file = self.file, .type = result, .changeable = changeable });
     try self.reachType(result);
     return result;
 }
 
-fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression) Error!Type {
-    const capture_expected = self.value_expected;
-    self.value_expected = null;
+fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression, expected: ?Type) Error!Type {
     return switch (expression.data) {
         .int_literal => .int,
         .float_literal => .float,
@@ -6749,7 +6743,7 @@ fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression) Error!Typ
             }
             if (binding.is_function) {
                 try self.checkNestedUse(expression);
-                break :blk try self.typeOfFunctionValue(expression, .{ .key = binding.function_key orelse self.keyOf(name), .display = name }, capture_expected);
+                break :blk try self.typeOfFunctionValue(expression, .{ .key = binding.function_key orelse self.keyOf(name), .display = name }, expected);
             }
             if (self.constructing != null and std.mem.eql(u8, name, "self")) {
                 try self.requireSelfReady(expression.span);
@@ -6769,7 +6763,7 @@ fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression) Error!Typ
         .binary => |binary| self.typeOfBinary(expression, binary),
         .logical => |logical| self.typeOfLogical(logical),
         .comparison => |comparison| self.typeOfComparison(comparison),
-        .call => |call| self.typeOfCall(expression, call),
+        .call => |call| self.typeOfCall(expression, call, expected),
         .type_literal => |written| {
             _ = try self.resolveTypeExpression(written);
             try self.report(
@@ -6795,14 +6789,10 @@ fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression) Error!Typ
         .slice => |slice| self.typeOfSlice(slice),
         // A namespace-qualified name is a reference, not a property access:
         // `Shapes.area` names one declaration, as the resolver worked out.
-        .member => |member| blk: {
-            self.member_capture = capture_expected;
-            defer self.member_capture = null;
-            break :blk if (try self.referenceOf(expression)) |reference|
-                self.typeOfQualified(expression, reference)
-            else
-                self.typeOfMember(expression, member);
-        },
+        .member => |member| if (try self.referenceOf(expression)) |reference|
+            self.typeOfQualified(expression, reference, expected)
+        else
+            self.typeOfMember(expression, member, expected),
         .range => self.typeOfCountingValue(expression, null),
         .lambda => self.typeOfLambda(expression, null),
         .tuple_literal => self.typeOfTuple(expression, null),
@@ -6870,20 +6860,13 @@ fn capturedFunction(self: *Checker, signature: Signature, expected: ?Type, name:
 /// `n` unannotated (7.2).
 fn typeOfExpected(self: *Checker, expression: *const Ast.Expression, expected: ?Type) Error!Type {
     const result: Type = switch (expression.data) {
-        .call => |call| if (try self.isChannelCall(call)) try self.typeOfChannelCall(expression, call, expected) else {
-            // A generic construction learns its types from where it goes (11.3).
-            self.construction_expected = expected;
-            defer self.construction_expected = null;
-            return self.typeOf(expression);
-        },
+        // A generic construction or call learns its types from where it
+        // goes (11.3).
+        .call => |call| if (try self.isChannelCall(call)) try self.typeOfChannelCall(expression, call, expected) else return self.typeOfWith(expression, expected),
         .list_literal => try self.typeOfList(expression, expected),
         .lambda => try self.typeOfLambda(expression, expected),
         // A generic function taken as a value learns its types from here.
-        .name, .member => {
-            self.value_expected = expected;
-            defer self.value_expected = null;
-            return self.typeOf(expression);
-        },
+        .name, .member => return self.typeOfWith(expression, expected),
         .tuple_literal => try self.typeOfTuple(expression, expected),
         .dictionary_literal => try self.typeOfDictionary(expression, expected),
         .case_expression => try self.typeOfCase(expression, expected),
@@ -7566,9 +7549,7 @@ fn requireIndex(self: *Checker, index: *const Ast.Expression) Error!void {
 
 /// Section 14.2's `Shapes.area` used as a value rather than called. It is the
 /// name branch of `typeOf`, reached through a member expression.
-fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference: Reference) Error!Type {
-    const capture = self.member_capture;
-    self.member_capture = null;
+fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference: Reference, capture: ?Type) Error!Type {
     try self.reachKey(reference.key);
     if (std.mem.eql(u8, reference.key, Resolver.float_infinity_key) or
         std.mem.eql(u8, reference.key, Resolver.float_nan_key) or
@@ -7678,9 +7659,7 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
 }
 
 /// A property: `count` is the only one so far (8.5).
-fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.Expression.Member) Error!Type {
-    const capture = self.member_capture;
-    self.member_capture = null;
+fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.Expression.Member, capture: ?Type) Error!Type {
     if (member.optional) return self.typeOfOptionalObjectMember(member);
     // Section 4.4's `type_name`, which every value has, `nothing` included,
     // so it needs no proof that an optional is there. It reads no field, so
@@ -11093,9 +11072,10 @@ fn typeOfCall(
     self: *Checker,
     expression: *const Ast.Expression,
     call: Ast.Expression.Call,
+    /// Where the result goes, which a generic construction or call learns
+    /// its types from (11.3); null when nothing says.
+    expected_result: ?Type,
 ) Error!Type {
-    const expected_construction = self.construction_expected;
-    self.construction_expected = null;
     if (try self.isChannelCall(call)) return self.typeOfChannelCall(expression, call, null);
     if (isSuper(call.callee)) return self.typeOfSuperCall(expression, call);
 
@@ -11105,7 +11085,7 @@ fn typeOfCall(
         // A tuple position holding a block is called through its value, not as
         // a method of the tuple.
         if (call.callee.data == .member and call.callee.data.member.position == null) {
-            return self.typeOfMethodCall(expression, call, call.callee.data.member, expected_construction);
+            return self.typeOfMethodCall(expression, call, call.callee.data.member, expected_result);
         }
         // Anything that is not a plain name — a lambda called where it is
         // written, an element of a list of functions — is called through its
@@ -11207,7 +11187,7 @@ fn typeOfCall(
         var inference: ?Inference = null;
         if (user.type_parameters.len > 0) {
             inference = try Inference.init(self.arena, user.type_parameters);
-            inference.?.seed(Type.structOf(user).withArguments(user.own_arguments), expected_construction);
+            inference.?.seed(Type.structOf(user).withArguments(user.own_arguments), expected_result);
         }
         try self.checkArguments(call, name, .{
             .types = types,
@@ -11234,7 +11214,7 @@ fn typeOfCall(
             const said = answer orelse continue;
             if (!try self.checkAnswer(call.callee.span, user.display_name, parameter, said)) return .invalid;
         }
-        return self.choiceType(enum_type, expected_construction, working.solved);
+        return self.choiceType(enum_type, expected_result, working.solved);
     };
 
     if (binding.is_type) {
@@ -11274,7 +11254,7 @@ fn typeOfCall(
             return binding.type;
         }
         if (binding.type.user.?.type_parameters.len > 0) {
-            return self.typeOfGenericConstruction(call, reference.key, name, binding.type.user.?, expected_construction);
+            return self.typeOfGenericConstruction(call, reference.key, name, binding.type.user.?, expected_result);
         }
         try self.checkConstruction(call, reference.key, name, null);
         return binding.type;
@@ -11365,7 +11345,7 @@ fn typeOfCall(
     var inference: ?Inference = null;
     if (signature.type_parameters.len > 0) {
         inference = try Inference.init(self.arena, signature.type_parameters);
-        inference.?.seed(signature.return_type, expected_construction);
+        inference.?.seed(signature.return_type, expected_result);
         parameters.inference = &inference.?;
     }
     try self.checkArguments(call, name, parameters);
