@@ -1,0 +1,4 @@
+diagnostics/deprecated-override.em:10:10: warning: `speak` is deprecated
+      func speak(): String {
+           ^^^^^
+Use `describe` instead.

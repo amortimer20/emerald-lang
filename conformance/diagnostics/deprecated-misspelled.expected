@@ -1,0 +1,4 @@
+diagnostics/deprecated-misspelled.em:1:1: `@deprecatd` is not an annotation
+  @deprecatd("Use `g` instead.")
+  ^^^^^^^^^^
+Did you mean `@deprecated`?

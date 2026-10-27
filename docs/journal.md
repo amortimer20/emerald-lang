@@ -6008,3 +6008,14 @@ its diagnostic found that the help always showed an `if` example, even under `wh
 never offered a named result; it now offers both corrections without naming a keyword.
 Deprecation gets `@deprecated("message")` and a release policy, in an accepted plan that waits for
 a go-ahead to build; warnings keep their exit status of `1`, deprecations included.
+
+## 2026-10-28: Deprecation slice 1, the annotation and its warning
+
+`@deprecated("message")` parses on top-level functions, types, and bindings, and on a type's
+fields, methods, properties, type-level members, enum values, and nested types; every use warns
+with the message, uses inside a deprecated declaration stay quiet, and overriding a deprecated
+method warns. The plan's "Settled while building" lists where uses are noted and what is not yet
+noted (assignment to a deprecated field, a named constructor argument, an operator). A misspelled
+annotation's `(...)` used to cascade into an unused-result error and is now skipped.
+
+Validation: `zig build test -j1` in Debug and ReleaseSafe, `zig fmt --check`, `git diff --check`.

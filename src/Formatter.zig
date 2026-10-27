@@ -456,7 +456,17 @@ const Printer = struct {
         }
     }
 
+    /// Section 16.1's `@deprecated("...")`, on its own line above what it
+    /// marks, its message copied as written.
+    fn printDeprecated(self: *Printer, deprecated: ?Ast.Deprecated) PrintError!void {
+        const found = deprecated orelse return;
+        try self.write(self.source.text[found.span.start..found.span.end]);
+        try self.write("\n");
+        try self.writeIndent();
+    }
+
     fn printDeclaration(self: *Printer, d: Ast.Declaration) PrintError!void {
+        try self.printDeprecated(d.deprecated);
         try self.write(if (d.mutable) "var " else "const ");
         try self.write(d.name);
         if (d.annotation) |a| {
@@ -746,6 +756,7 @@ const Printer = struct {
     }
 
     fn printStructDeclaration(self: *Printer, s: Ast.StructDeclaration, end: u32) PrintError!void {
+        try self.printDeprecated(s.deprecated);
         if (s.abstract_span != null) {
             try self.write("@abstract\n");
             try self.writeIndent();
@@ -795,7 +806,11 @@ const Printer = struct {
             // run written on one line stays on one line. A comment inside the
             // run falls back to one value per line, which keeps every comment.
             const run_end = enumValueRunEnd(members.items, index);
-            if (run_end - index > 1 and self.isPlainOneLineRun(member.start(), members.items[run_end - 1].end())) {
+            // A deprecated value needs its own line for its annotation.
+            const annotated = for (members.items[index..run_end]) |value| {
+                if (value.type_field.deprecated != null) break true;
+            } else false;
+            if (run_end - index > 1 and !annotated and self.isPlainOneLineRun(member.start(), members.items[run_end - 1].end())) {
                 for (members.items[index..run_end], 0..) |value, i| {
                     if (i > 0) try self.write(", ");
                     try self.printTypeField(value.type_field, s.name);
@@ -828,6 +843,7 @@ const Printer = struct {
     }
 
     fn printField(self: *Printer, f: Ast.StructDeclaration.Field) PrintError!void {
+        try self.printDeprecated(f.deprecated);
         try self.write(if (f.mutable) "var " else "const ");
         try self.write(f.name);
         try self.write(": ");
@@ -852,6 +868,7 @@ const Printer = struct {
     /// body prints no block, since that is what a requirement or an abstract
     /// method (10.7, 11.1) both are.
     fn printFunctionDeclaration(self: *Printer, f: Ast.FunctionDeclaration, in_trait: bool) PrintError!void {
+        try self.printDeprecated(f.deprecated);
         if (f.test_span != null) {
             try self.write("@test\n");
             try self.writeIndent();
@@ -918,6 +935,7 @@ const Printer = struct {
     }
 
     fn printProperty(self: *Printer, p: Ast.StructDeclaration.Property) PrintError!void {
+        try self.printDeprecated(p.deprecated);
         if (p.override_span != null) {
             try self.write("@override\n");
             try self.writeIndent();
@@ -958,6 +976,7 @@ const Printer = struct {
     /// (section 12's values are type-level `const` fields under the hood)
     /// prints as its bare name instead, with no `var`/`const` or initializer.
     fn printTypeField(self: *Printer, t: Ast.StructDeclaration.TypeField, struct_name: []const u8) PrintError!void {
+        try self.printDeprecated(t.deprecated);
         if (t.enum_value != null) {
             try self.write(t.name);
             // Section 12's data, printed as a parameter list is.

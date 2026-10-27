@@ -208,6 +208,18 @@ const GenericScope = struct {
     masked: bool = false,
 };
 
+/// A `@deprecated` declaration (16.1).
+const Deprecation = struct {
+    name: []const u8,
+    message: []const u8,
+    file: u32,
+    /// The declaration's whole text: a use inside it, or inside another
+    /// deprecated declaration, does not warn.
+    span: Source.Span,
+};
+
+const DeprecationUse = struct { file: u32, start: u32 };
+
 const StructSite = struct {
     file: u32,
     declaration: Ast.StructDeclaration,
@@ -376,6 +388,11 @@ widenings: Widenings = .empty,
 /// Every method call on a `T with Trait`, by callee, mapped to the trait
 /// member's key. The interpreter runs the value's own version (5.7 of the plan).
 parameter_calls: MethodCalls = .empty,
+/// Section 16.1's `@deprecated` declarations, by key, and where each one's
+/// own text is, inside which its uses do not warn.
+deprecations: std.StringHashMapUnmanaged(Deprecation) = .empty,
+/// Uses already warned about, so a use checked twice warns once.
+deprecation_warned: std.AutoHashMapUnmanaged(DeprecationUse, void) = .empty,
 /// Every place a type parameter is written as a type (`ParameterSite`).
 parameter_sites: std.ArrayList(ParameterSite) = .empty,
 /// Each generic function's and method's own parameters, by key.
@@ -514,11 +531,16 @@ pub fn checkWithOptions(
                 try checker.registerStruct(&struct_sites, declaration, checker.keyOf(declaration.name), declaration.name, statement.span);
                 continue;
             }
+            if (statement.data == .declaration) if (statement.data.declaration.deprecated) |deprecated| {
+                const declaration = statement.data.declaration;
+                try checker.registerDeprecation(checker.keyOf(declaration.name), declaration.name, deprecated, statement.span);
+            };
             const function = switch (statement.data) {
                 .function_declaration => |f| f,
                 else => continue,
             };
             const key = checker.keyOf(function.name);
+            if (function.deprecated) |deprecated| try checker.registerDeprecation(key, function.name, deprecated, statement.span);
             try checker.declarations.put(arena, key, function);
             try module.put(arena, key, .{ .type = .invalid, .declared = .invalid, .assigned = true, .is_function = true });
         }
@@ -1254,6 +1276,7 @@ fn registerStruct(
 ) Error!void {
     try self.checkPascalCase(declaration.name, declaration.name_span);
     try struct_sites.append(self.arena, .{ .file = self.file, .declaration = declaration, .key = key });
+    try self.registerMemberDeprecations(declaration, key, display_name, span);
     const user = try self.arena.create(Type.User);
     user.* = .{ .name = key, .display_name = display_name, .class = declaration.class, .trait = declaration.trait, .enumeration = declaration.enumeration };
     if (declaration.type_parameters.len > 0) try self.registerTypeParameters(user, declaration);
@@ -1320,6 +1343,48 @@ fn registerStruct(
             nested.span,
         );
     }
+}
+
+/// Section 16.1: records a `@deprecated` declaration under its key.
+fn registerDeprecation(self: *Checker, key: []const u8, name: []const u8, deprecated: Ast.Deprecated, span: Source.Span) Error!void {
+    try self.deprecations.put(self.arena, key, .{ .name = name, .message = deprecated.message, .file = self.file, .span = span });
+}
+
+/// A type's own `@deprecated`, and its members', under the keys uses reach
+/// them by.
+fn registerMemberDeprecations(self: *Checker, declaration: Ast.StructDeclaration, key: []const u8, display_name: []const u8, span: Source.Span) Error!void {
+    if (declaration.deprecated) |deprecated| try self.registerDeprecation(key, display_name, deprecated, span);
+    for (declaration.fields) |field| if (field.deprecated) |deprecated| {
+        try self.registerDeprecation(try Resolver.methodKey(self.arena, key, field.name), field.name, deprecated, field.name_span);
+    };
+    for (declaration.methods) |method| if (method.deprecated) |deprecated| {
+        try self.registerDeprecation(try Resolver.methodKey(self.arena, key, method.name), method.name, deprecated, .{ .start = method.name_span.start, .end = @max(method.body.span.end, method.name_span.end) });
+    };
+    for (declaration.properties) |property| if (property.deprecated) |deprecated| {
+        const end = if (property.setter) |setter| setter.body.span.end else property.getter.body.span.end;
+        try self.registerDeprecation(try Resolver.methodKey(self.arena, key, property.name), property.name, deprecated, .{ .start = property.name_span.start, .end = @max(end, property.name_span.end) });
+    };
+    for (declaration.type_functions) |function| if (function.declaration.deprecated) |deprecated| {
+        try self.registerDeprecation(try Resolver.methodKey(self.arena, key, function.member), function.declaration.name, deprecated, .{ .start = function.declaration.name_span.start, .end = function.declaration.body.span.end });
+    };
+    for (declaration.type_fields) |field| if (field.deprecated) |deprecated| {
+        const name = if (field.enum_value != null) try std.fmt.allocPrint(self.arena, "{s}.{s}", .{ display_name, field.name }) else field.name;
+        try self.registerDeprecation(try Resolver.methodKey(self.arena, key, field.name), name, deprecated, field.name_span);
+    };
+}
+
+/// Section 16.1: a use of a deprecated declaration warns with its message,
+/// unless the use is inside a deprecated declaration itself.
+fn noteUse(self: *Checker, key: []const u8, span: Source.Span) Error!void {
+    if (self.deprecations.count() == 0) return;
+    const deprecation = self.deprecations.get(key) orelse return;
+    var entries = self.deprecations.valueIterator();
+    while (entries.next()) |each| {
+        if (each.file == self.file and span.start >= each.span.start and span.end <= each.span.end) return;
+    }
+    const gop = try self.deprecation_warned.getOrPut(self.arena, .{ .file = self.file, .start = span.start });
+    if (gop.found_existing) return;
+    try self.reportWarning(span, "`{s}` is deprecated", .{deprecation.name}, deprecation.message);
 }
 
 /// Section 11.3's `[T]`: each name becomes a parameter, written as a type
@@ -2636,6 +2701,8 @@ fn constructionNeedsArguments(self: *Checker, key: []const u8) Error!bool {
 /// contracts", and "an override inherits the original declaration's default
 /// and cannot replace it."
 fn checkOverride(self: *Checker, method: Ast.FunctionDeclaration, own_key: []const u8, found: Inherited) Error!void {
+    // Section 16.1: overriding keeps a deprecated name alive.
+    try self.noteUse(found.key.?, method.name_span);
     const mine = try self.signatureFor(own_key);
     // A trait's `Self` is this type's (11.4).
     const theirs = try self.signatureOn(try self.signatureFor(found.key.?), ownSelf(self.receivers.get(own_key).?.user.?));
@@ -5944,6 +6011,7 @@ fn typeOfStructMethodCall(
     }
     try self.method_calls.put(self.arena, call.callee, key);
     try self.reachKey(key);
+    try self.noteUse(key, member.name_span);
 
     const declared = try self.signatureFor(key);
     if (takesSelf(declared, base)) {
@@ -6363,6 +6431,7 @@ fn resolveWrittenType(self: *Checker, annotation: Ast.TypeExpression) Error!Type
     const key = try self.typeKeyOf(annotation.name);
     if (self.structs.get(key)) |user_type| {
         if (try self.reportPrivateNestedPath(key, annotation.span)) return .invalid;
+        try self.noteUse(key, annotation.span);
         return self.applyTypeArguments(user_type, annotation);
     }
     if (std.mem.indexOfScalar(u8, annotation.name, '.') == null) if (try self.nestedTypeAt(annotation.name, annotation.span)) |nested| {
@@ -6736,6 +6805,7 @@ fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression, expected:
             // while inferring early for a call that `checkCaptures` rejects.
             const binding = self.find(name) orelse break :blk .invalid;
             try self.checkTaskCapture(expression.span, name, binding);
+            if (self.module.getPtr(self.keyOf(name)) == binding) try self.noteUse(self.keyOf(name), expression.span);
             // Section 3.4 and 7.5: a bare function name is its callable value.
             if (binding.is_type) {
                 try self.reportTypeAsValue(expression.span, name, binding.*);
@@ -7550,6 +7620,7 @@ fn requireIndex(self: *Checker, index: *const Ast.Expression) Error!void {
 /// Section 14.2's `Shapes.area` used as a value rather than called. It is the
 /// name branch of `typeOf`, reached through a member expression.
 fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference: Reference, capture: ?Type) Error!Type {
+    try self.noteUse(reference.key, expression.span);
     try self.reachKey(reference.key);
     if (std.mem.eql(u8, reference.key, Resolver.float_infinity_key) or
         std.mem.eql(u8, reference.key, Resolver.float_nan_key) or
@@ -7762,9 +7833,11 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
                 );
                 return .invalid;
             }
+            try self.noteUse(try Resolver.methodKey(self.arena, field.value.owner, member.name), member.name_span);
             return self.substituteOn(field.value.type, base);
         }
         if (try self.propertyOf(base, member.name)) |property| {
+            try self.noteUse(property.getter, member.name_span);
             if (isSuper(member.base)) try self.super_members.put(self.arena, expression, property.getter);
             return self.substituteOn(try self.typeOfPropertyRead(member, property), base);
         }
@@ -7945,6 +8018,7 @@ fn typeOfParameterMethodCall(self: *Checker, call: Ast.Expression.Call, member: 
         return .invalid;
     }
     try self.parameter_calls.put(self.arena, call.callee, key);
+    try self.noteUse(key, member.name_span);
     return signature.return_type;
 }
 
@@ -8028,6 +8102,7 @@ fn typeOfOptionalObjectMember(self: *Checker, member: Ast.Expression.Member) Err
 fn typeOfMethodValue(self: *Checker, expression: *const Ast.Expression, owner: Type, name: []const u8, expected: ?Type) Error!Type {
     const key = (try self.memberKey(owner, name)).?;
     try self.method_calls.put(self.arena, expression, key);
+    try self.noteUse(key, expression.data.member.name_span);
     const declared = try self.signatureFor(key);
     if (takesSelf(declared, owner)) {
         try self.reportTakesSelf(expression.data.member.name_span, name, owner);
@@ -11149,6 +11224,7 @@ fn typeOfCall(
         return .invalid;
     };
     try self.checkTaskCapture(call.callee.span, name, binding);
+    if (self.module.getPtr(reference.key) == binding) try self.noteUse(reference.key, call.callee.span);
     if (try self.reportPrivateTypeMember(reference.key, call.callee.span)) {
         try self.typeArguments(call.arguments);
         return .invalid;

@@ -1,0 +1,4 @@
+diagnostics/deprecated-inside.em:23:5: warning: `old` is deprecated
+      old()
+      ^^^
+Use `newer` instead.

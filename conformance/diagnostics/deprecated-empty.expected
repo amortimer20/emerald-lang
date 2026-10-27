@@ -1,0 +1,4 @@
+diagnostics/deprecated-empty.em:1:13: `@deprecated` needs a message that says what to use instead
+  @deprecated("")
+              ^^
+A warning with nothing to say teaches nothing. Write the replacement, or why there is none.

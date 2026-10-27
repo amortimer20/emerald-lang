@@ -1,0 +1,4 @@
+diagnostics/deprecated-duplicate.em:2:1: `@deprecated` is already written on this declaration
+  @deprecated("Use `b` instead.")
+  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Write it once, with one message.
