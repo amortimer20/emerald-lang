@@ -203,8 +203,7 @@ and Bool pages are written on emerald-website's `claude/generics-pages` branch (
 example checked against a build of main), to merge and deploy with 0.8.0 rather than before it;
 the next release notes are drafted in
 [`release-notes-0.8.0.md`](release-notes-0.8.0.md) (generics, enum data, the new members, and the `Set` fix); the one review item deferred from the branch, passing the expected type as a parameter
-rather than through checker fields, is done (`claude/expected-type`). The
-`claude/generics` worktree (`~/.cache/emerald-worktrees/generics`) can be removed. The audience question (first course, or
+rather than through checker fields, is done (PR #45, `claude/expected-type`). The `claude/generics` worktree is removed. The audience question (first course, or
 through data structures) is undecided; the user leans toward elementary data structures. The parenthesis-free
 header block and a deprecation story
 still need the user's decisions. Still open from the QA pass: B4
