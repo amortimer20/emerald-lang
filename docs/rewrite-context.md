@@ -2338,10 +2338,17 @@ parameter is, that is an error asking for the type to be written where the value
   `name.mapped { text => text.count }` is a `Box[Int]`. Taken as a value, such a function needs a
   function type where it is kept (7.4). A constructor uses its type's parameters and takes none of
   its own.
-- Not yet built: constraints (`[T with Ordered]`) and generic enums, which are errors that say
-  they are not supported yet. A generic class cannot extend a class or be extended, a trait
-  takes no type parameters, and a trait's method, an overriding method, an `@operator` method,
-  and a test take none either.
+- A type parameter may require one trait, `[T with Ordered]`. Every type given for it must
+  adopt the trait, and inside the declaration its values have the trait's methods, with `Self`
+  meaning `T`, and what the trait allows: `==` and `!=` with `Equatable`, ordering and the List
+  methods that sort or choose with `Ordered`, keys and set members with `Hashable`. `Int`,
+  `Float`, and `String` count as adopting `Ordered`, `Equatable`, `Hashable`, and `Textual`;
+  `Bool` all but `Ordered`; `Bytes` `Equatable` and `Hashable`. For that, each has `compare`
+  (not `Bool`), `equals`, and `hash`, which give what `<`, `==`, and a dictionary give. More than
+  one trait is written as a trait that builds on them.
+- Not yet built: generic enums, which are an error that says so. A generic class cannot extend a
+  class or be extended, a trait takes no type parameters, and a trait's method, an overriding
+  method, an `@operator` method, and a test take none either.
 
 ### 11.4 `Self`
 
@@ -4054,7 +4061,7 @@ future subsystem before the first expression runs.
 
 The following are deliberately outside the initial implementation:
 
-- constraints on type parameters and generic enums, which are being built (11.3);
+- generic enums, which are being built (11.3);
 - a source-visible `Any` top type;
 - immutable collection views and collection covariance;
 - function and method overloading, and with it overloaded constructors and constructor

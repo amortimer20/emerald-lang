@@ -1,0 +1,4 @@
+diagnostics/generics-list-sort.em:2:18: `sort` needs a List of ordered values, but this is List[Item]
+      return items.sort()
+                   ^^^^
+`Item` could be any type. Write `Item with Ordered` where `Item` is declared to require that its values can be put in order.

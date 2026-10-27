@@ -275,6 +275,7 @@ fn analyzeOnce(gpa: std.mem.Allocator, project: *const Project, keep_unresolved:
         .type_names = .empty,
         .trait_calls = .empty,
         .widenings = .empty,
+        .parameter_calls = .empty,
     };
     return .{
         .prelude_source = prelude_source,
@@ -309,6 +310,7 @@ pub fn sessionAnalysis(analysis: *const Analysis) Interpreter.SessionAnalysis {
         .type_names = &analysis.checked.type_names,
         .trait_calls = &analysis.checked.trait_calls,
         .widenings = &analysis.checked.widenings,
+        .parameter_calls = &analysis.checked.parameter_calls,
         .facts = analysis.resolved.facts,
     };
 }
@@ -885,6 +887,7 @@ fn analyze(
         &checked.type_names,
         &checked.trait_calls,
         &checked.widenings,
+        &checked.parameter_calls,
         resolved.facts,
         running.out,
         running.in,

@@ -1,4 +1,4 @@
 diagnostics/generics-parameter-order.em:8:16: `Item` has no order
           return self.value > other
                  ^^^^^^^^^^^^^^^^^^
-`Item` could be any type, and not every type can be put in order with `>`.
+`Item` could be any type, and not every type can be put in order with `>`. Write `Item with Ordered` where `Item` is declared to require that it can.

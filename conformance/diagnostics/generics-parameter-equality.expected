@@ -1,4 +1,4 @@
 diagnostics/generics-parameter-equality.em:5:16: `Item` values cannot be compared with `==`
           return self.value == other
                  ^^^^^^^^^^^^^^^^^^^
-`Item` could be any type, and not every type can be compared with `==`.
+`Item` could be any type, and not every type can be compared with `==`. Write `Item with Equatable` where `Item` is declared to require that it can.

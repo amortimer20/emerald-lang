@@ -1,0 +1,12 @@
+9 pear 1.5
+Player(name: "Noah", score: 7)
+nothing
+["a", "b", "c"] ["b", "a"]
+-1 1 0
+12 nothing true
+3 true false
+true
+<4> <x> <true>
+true
+-1 1 1 true false
+true true

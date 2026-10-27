@@ -769,6 +769,44 @@ Program 7 runs (`conformance/run/generics-methods.em`), with generic functions i
   them (which nothing could ever call with types). Their parameters are then not also reported
   as unused.
 
+### Slice 3: constraints (2026-10-26)
+
+Programs 4 and 5 run (`conformance/run/generics-constraints.em`), with a struct's own
+`compare` and `equals`, `Textual` display, and keys through `Hashable`.
+
+- **The built-in conformance table (5.2), decided:** `Int`, `Float`, and `String` satisfy
+  `Ordered`, `Equatable`, `Hashable`, and `Textual`; `Bool` satisfies all but `Ordered` (`true <
+  false` stays rejected); `Bytes` satisfies `Equatable` and `Hashable`, the two it has as a key.
+  `Float` is `Hashable`, as it is already a key, and its `hash` raises on NaN as a NaN key
+  already does. Tuples and collections satisfy nothing: they adopt no trait, and the plan's
+  programs never needed them to. A user trait that builds on a prelude one is satisfied only by
+  types that adopt it. These are the open questions slice 0 left; each follows the existing key
+  and ordering rules rather than adding one.
+- **`compare`, `equals`, and `hash`** are real members of `Int`, `Float`, `String`, and `Bool`
+  (no `compare` on `Bool`), in the checker (`typeOfComparisonMember`), the interpreter
+  (`scalarMember`), the editor catalog, and the `int`, `float`, and `string` library pages. They
+  give exactly what `<`, `==`, and a dictionary give; `compare` answers `-1`, `0`, or `1`. A
+  declared method of the same name keeps the name.
+- **A bound** is resolved where the parameter list is checked and must name a trait. `[T with
+  Ordered, Textual]` is the one-trait error with the composing-trait help (5.2). A type given for
+  a bounded parameter is checked where it is written (`Box[List[Int]]`), where a construction or
+  call works it out, and where a generic function is taken as a value. A type parameter
+  satisfies a bound when its own bound builds on it, so `[U with Hashable]` may be passed where
+  `[T with Equatable]` is wanted.
+- **Inside the body:** `==` and `!=` need `Equatable`, ordering needs `Ordered`, both between
+  values of the same parameter. `contains?`, `remove`, `remove_all`, `unique`, and `unique!` on a
+  `List[T]` need `Equatable` (slice 1 had let them through; they are now refused without it), and
+  `sort`, `min`, `max`, `min_max`, `sort_by`, `min_by`, and `max_by` accept `Ordered` elements or
+  keys. `T with Hashable` is a key and a set member.
+- **Members** of a bounded `T` are the trait's methods with `Self` read as `T`
+  (`typeOfParameterMethodCall`), recorded in `Checked.parameter_calls`. The interpreter runs the
+  value's own version: a struct's or class's method by the trait key, or the scalar member. A
+  trait method that changes `self` cannot be called through `T` yet, since the change would have
+  nowhere to go; nor can a trait's properties be read through `T` yet.
+- **Known cascade:** a bad type argument in an annotation, `const box: Box[List[Int]] =
+  Box([1])`, is reported at the annotation and again at the construction, which works the same
+  type out from its argument.
+
 ### Reserved syntax
 **Reserved syntax (merged as PR #43, 2026-10-16).** The only built part; section 5's design is
 accepted for use only if the gate in section 3 is met.

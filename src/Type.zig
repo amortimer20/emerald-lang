@@ -462,10 +462,13 @@ fn eligibleKeyInner(self: Type, seen: *[256]*const User, depth: usize, equatable
         .bool, .int, .float, .string, .bytes => true,
         // Section 11.3: `T` could be any type, and not every type is a key.
         // Inside a use such as `Pair[String, Int]`, it is its argument.
+        // Inside a use such as `Pair[String, Int]`, it is its argument;
+        // otherwise only `T with Hashable` promises a key.
         .type_parameter => blk: {
             const position = self.parameter.?.position;
-            if (position >= arguments.len) break :blk false;
-            break :blk arguments[position].eligibleKeyInner(seen, depth, equatable, hashable, &.{});
+            if (position < arguments.len) break :blk arguments[position].eligibleKeyInner(seen, depth, equatable, hashable, &.{});
+            const bound = self.parameter.?.bound orelse break :blk false;
+            break :blk if (hashable) |trait| bound.conformsTo(trait) else false;
         },
         .tuple => blk: {
             for (self.elements) |element| {

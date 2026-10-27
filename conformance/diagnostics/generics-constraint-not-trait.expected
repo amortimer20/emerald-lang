@@ -1,0 +1,4 @@
+diagnostics/generics-constraint-not-trait.em:1:21: `with` needs a trait, but Int is not one
+  func show[Item with Int](item: Item) {
+                      ^^^
+A type parameter can require a trait, as in `Item with Ordered`, which every type given for it must adopt.

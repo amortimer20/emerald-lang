@@ -5701,3 +5701,29 @@ method's, or a test's type parameters) no longer also warn that the parameters a
 Validation: `zig build test -j1` in Debug and ReleaseSafe, `zig fmt --check`, `git diff --check`,
 Windows and macOS cross-builds, and an LSP sweep of 14,670 requests over the two new run cases
 with no errors.
+
+## 2026-10-26: Generics slice 3, constraints
+
+`[T with Trait]` works; programs 4 and 5 run. The built-in scalars got real `compare`,
+`equals`, and `hash` members so a constrained body can call them on an `Int` as on a struct, and
+the plan's open conformance questions were settled by the existing key and ordering rules (a
+`Float` is `Hashable`, a `Bool` is not `Ordered`, tuples and collections adopt nothing). A call
+on a bounded `T` is recorded separately from ordinary method calls, because the interpreter's
+method-call path assumes a struct receiver; it dispatches on the runtime value instead. Slice 0
+had already found that operators dispatch on the value, which held: `<` and `==` in a generic
+body needed no runtime change.
+
+Found while building: slice 1 had let `contains?`, `remove`, and `unique` run on a `List[T]`
+with no `Equatable` (the checker never guards them for concrete elements, which all have `==`);
+they are now refused unless `T` requires it. A first attempt to silence a cascade, by skipping a
+generic call's checks when the expected type was already invalid, also silenced every call
+passed to `print`, whose arguments are checked against an invalid expected type meaning "no
+opinion"; it was reverted, and the one cascade it was for is recorded in the plan.
+
+The new members reached two existing checks: the catalog-and-checker name parity test, which
+now lists them (`Checker.ordered_scalar_methods`), and six LSP completion goldens for scalar
+receivers, whose only change is the new entries. Validation: `zig build test -j1` in Debug and
+ReleaseSafe, `zig fmt --check`, `git diff --check`, Windows and macOS cross-builds, and an LSP
+sweep of 13,975 requests over the constraints case with no errors. `tools/check-doc-examples.sh`
+needs bash 4, which this machine lacks; the one new link from the library pages names a file that
+exists and runs.

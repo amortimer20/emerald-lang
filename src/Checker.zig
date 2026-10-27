@@ -107,6 +107,10 @@ pub const Checked = struct {
     /// `Float` (11.3). A type parameter is erased at run time, so nothing else
     /// would widen it.
     widenings: Widenings,
+    /// Every method call on a `T with Trait`, mapped to the trait member's
+    /// key. The value's own version runs: a struct's or class's method, or a
+    /// built-in one for a scalar.
+    parameter_calls: MethodCalls,
 
     pub fn ok(self: Checked) bool {
         return !Diagnostic.anyErrors(self.diagnostics);
@@ -127,6 +131,7 @@ pub const Checked = struct {
             if (element.optional) return false;
             if (element.kind == .int or element.kind == .float or element.kind == .string) return true;
             const ordered = self.structs.get(Resolver.preludeKey("Ordered")) orelse return false;
+            if (element.kind == .type_parameter) return if (element.parameter.?.bound) |bound| bound.conformsTo(ordered.user.?) else false;
             return element.kind == .struct_value and element.user.?.conformsTo(ordered.user.?);
         }
         return true;
@@ -374,6 +379,9 @@ value_expected: ?Type = null,
 /// The same, passed from `typeOfUnrecorded` to the member expression it
 /// dispatches, which takes it before evaluating anything.
 member_capture: ?Type = null,
+/// Every method call on a `T with Trait`, by callee, mapped to the trait
+/// member's key. The interpreter runs the value's own version (5.7 of the plan).
+parameter_calls: MethodCalls = .empty,
 /// Each generic function's and method's own parameters, by key.
 function_parameters: std.StringHashMapUnmanaged([]const *const Type.Parameter) = .empty,
 /// Section 6.3's cases whose arms cover every value their subject can have,
@@ -673,6 +681,7 @@ pub fn checkWithOptions(
         .type_names = checker.type_names,
         .trait_calls = checker.trait_calls,
         .widenings = checker.widenings,
+        .parameter_calls = checker.parameter_calls,
     };
 }
 
@@ -1410,7 +1419,7 @@ fn functionTypeParameters(self: *Checker, key: []const u8, declaration: Ast.Func
         .written = written,
         .owner = declaration.name,
     });
-    try self.checkTypeParameterList(written, declaration.name);
+    try self.checkTypeParameterList(written, parameters, declaration.name);
     // Decided in the plan's decision 10 and section 5.1: these would each
     // need rules of their own.
     const receiver = self.receivers.get(key);
@@ -1432,8 +1441,9 @@ fn functionTypeParameters(self: *Checker, key: []const u8, declaration: Ast.Func
 }
 
 /// Section 11.3's declaration rules for a `[T]` list.
-fn checkTypeParameters(self: *Checker, declaration: Ast.StructDeclaration) Error!void {
-    try self.checkTypeParameterList(declaration.type_parameters, declaration.name);
+fn checkTypeParameters(self: *Checker, declaration: Ast.StructDeclaration, key: []const u8) Error!void {
+    const user = self.structs.get(key).?;
+    try self.checkTypeParameterList(declaration.type_parameters, user.user.?.type_parameters, declaration.name);
     if (declaration.enumeration and declaration.type_parameters.len > 0) {
         try self.reportWithHelp(
             declaration.type_parameters[0].span,
@@ -1445,16 +1455,41 @@ fn checkTypeParameters(self: *Checker, declaration: Ast.StructDeclaration) Error
     }
 }
 
-fn checkTypeParameterList(self: *Checker, list: []const Ast.TypeParameter, owner: []const u8) Error!void {
+/// Checks a `[T]` list and settles each `with Trait`. `made` is empty when
+/// the parameters were refused as a whole (an enum's, for now).
+fn checkTypeParameterList(self: *Checker, list: []const Ast.TypeParameter, made: []const *const Type.Parameter, owner: []const u8) Error!void {
     for (list, 0..) |parameter, position| {
         try self.checkPascalCase(parameter.name, parameter.span);
-        if (parameter.bound) |bound| try self.reportWithHelp(
-            bound.span,
-            "a type parameter cannot require a trait yet",
-            .{},
-            "Emerald does not have constraints on type parameters yet. Remove `with {s}`.",
-            .{bound.name},
-        );
+        if (parameter.bound) |bound| if (made.len == list.len) {
+            const resolved = try self.resolveTypeExpression(bound);
+            if (resolved.kind == .struct_value and !resolved.optional and !resolved.opaque_self and resolved.user.?.trait) {
+                @constCast(made[position]).bound = resolved.user.?;
+            } else if (resolved.kind != .invalid) {
+                try self.reportWithHelp(
+                    bound.span,
+                    "`with` needs a trait, but {f} is not one",
+                    .{resolved},
+                    "A type parameter can require a trait, as in `{s} with Ordered`, which every type given for it must adopt.",
+                    .{parameter.name},
+                );
+            }
+        };
+        // Section 5.2 of the plan: `[T with Ordered, Textual]` reads as a
+        // second parameter named `Textual`.
+        if (position > 0 and list[position - 1].bound != null) {
+            const key = try self.typeKeyOf(parameter.name);
+            if (self.structs.get(key)) |named| if (named.user.?.trait) {
+                try self.reportWithHelp(
+                    parameter.span,
+                    "a type parameter can require only one trait",
+                    .{},
+                    "Write a trait that builds on both, as in `trait Sortable with {s}, {s} {{ }}`, and require that one: `{s} with Sortable`.",
+                    .{ list[position - 1].bound.?.name, parameter.name, list[position - 1].name },
+                );
+                if (made.len == list.len) try self.used_parameters.put(self.arena, made[position], {});
+                continue;
+            };
+        }
         const repeated = for (list[0..position]) |earlier| {
             if (std.mem.eql(u8, earlier.name, parameter.name)) break true;
         } else false;
@@ -1568,7 +1603,114 @@ fn applyTypeArguments(self: *Checker, written_type: Type, annotation: Ast.TypeEx
             return .invalid;
         }
     }
+    for (parameters, arguments, written) |parameter, argument, argument_written| {
+        if (parameter.bound == null or self.satisfies(argument, parameter.bound.?)) continue;
+        try self.reportUnsatisfied(argument_written.span, user.display_name, parameter, argument);
+        return .invalid;
+    }
     return written_type.withArguments(arguments);
+}
+
+/// Section 5.2 of the generics plan: whether `argument` may be given for a
+/// parameter that requires `bound`. The built-in scalars count as adopting
+/// the prelude's comparison and display traits; a struct, class, or trait
+/// must adopt the trait itself; a type parameter must require it, or one
+/// that builds on it.
+fn satisfies(self: *Checker, argument: Type, bound: *const Type.User) bool {
+    if (argument.kind == .invalid) return true;
+    if (argument.optional) return false;
+    return switch (argument.kind) {
+        .int, .float, .string => self.isPreludeTrait(bound, &.{ "Ordered", "Equatable", "Hashable", "Textual" }),
+        .bool => self.isPreludeTrait(bound, &.{ "Equatable", "Hashable", "Textual" }),
+        .bytes => self.isPreludeTrait(bound, &.{ "Equatable", "Hashable" }),
+        .type_parameter => if (argument.parameter.?.bound) |own| own.conformsTo(bound) else false,
+        .struct_value => argument.user.?.conformsTo(bound),
+        else => false,
+    };
+}
+
+fn isPreludeTrait(self: *Checker, trait: *const Type.User, names: []const []const u8) bool {
+    _ = self;
+    const prefix = Resolver.prelude_namespace ++ ".";
+    if (!std.mem.startsWith(u8, trait.name, prefix)) return false;
+    for (names) |name| {
+        if (std.mem.eql(u8, trait.name[prefix.len..], name)) return true;
+    }
+    return false;
+}
+
+/// Whether `t` is a type parameter that requires `trait_name`, directly or
+/// through a trait built on it.
+fn parameterRequires(self: *Checker, t: Type, comptime trait_name: []const u8) bool {
+    if (t.kind != .type_parameter) return false;
+    const bound = t.parameter.?.bound orelse return false;
+    const trait = self.structs.get(Resolver.preludeKey(trait_name)) orelse return false;
+    return bound.conformsTo(trait.user.?);
+}
+
+/// What a trait lets a type parameter's values do, for a diagnostic.
+fn traitPromise(bound: *const Type.User) []const u8 {
+    const name = bound.display_name;
+    if (std.mem.eql(u8, name, "Ordered")) return "can be put in order";
+    if (std.mem.eql(u8, name, "Equatable")) return "can be compared with `==`";
+    if (std.mem.eql(u8, name, "Hashable")) return "can be dictionary keys";
+    if (std.mem.eql(u8, name, "Textual")) return "have their own text";
+    return "";
+}
+
+/// Reports a type given for `parameter` that does not adopt what it
+/// requires, at `span`. `user` is what needs it: a type or a function.
+fn reportUnsatisfied(self: *Checker, span: Source.Span, user: []const u8, parameter: *const Type.Parameter, argument: Type) Error!void {
+    const bound = parameter.bound.?;
+    const promise = traitPromise(bound);
+    const help: []const u8 = if (argument.kind == .struct_value and !argument.user.?.trait)
+        try std.fmt.allocPrint(self.arena, "Add `with {s}` to `{s}` and give it what `{s}` requires.", .{ bound.display_name, argument.user.?.display_name, bound.display_name })
+    else if (argument.kind == .type_parameter)
+        try std.fmt.allocPrint(self.arena, "Write `{s} with {s}` where `{s}` is declared.", .{ argument.parameter.?.name, bound.display_name, argument.parameter.?.name })
+    else if (self.isPreludeTrait(bound, &.{"Ordered"}))
+        "Pass Ints, Floats, Strings, or values of a type declared `with Ordered`."
+    else if (self.isPreludeTrait(bound, &.{ "Equatable", "Hashable" }))
+        try std.fmt.allocPrint(self.arena, "Pass numbers, Strings, Bools, Bytes, or values of a type declared `with {s}`.", .{bound.display_name})
+    else if (self.isPreludeTrait(bound, &.{"Textual"}))
+        "Pass numbers, Strings, Bools, or values of a type declared `with Textual`."
+    else
+        try std.fmt.allocPrint(self.arena, "Pass values of a type declared `with {s}`.", .{bound.display_name});
+    if (promise.len > 0) {
+        try self.reportWithHelp(span, "`{s}` needs `{s}` values that {s}, and {f} cannot", .{ user, parameter.name, promise, argument }, "{s}", .{help});
+    } else {
+        try self.reportWithHelp(span, "`{s}` needs `{s}` to adopt `{s}`, and {f} does not", .{ user, parameter.name, bound.display_name, argument }, "{s}", .{help});
+    }
+}
+
+/// The correction for a List whose elements have no order.
+fn orderHelp(self: *Checker, element: Type) Error![]const u8 {
+    if (element.kind == .type_parameter) return std.fmt.allocPrint(
+        self.arena,
+        "`{s}` could be any type. Write `{s} with Ordered` where `{s}` is declared to require that its values can be put in order.",
+        .{ element.parameter.?.name, element.parameter.?.name, element.parameter.?.name },
+    );
+    return "Ints, Floats, Strings, and types that adopt `Ordered` have an order. Use another operation for these elements.";
+}
+
+/// Section 5.3 of the generics plan: these List methods compare elements
+/// with `==`, which `T` has only when it requires `Equatable`. Returns whether
+/// it reported.
+fn rejectUnequatableElements(self: *Checker, member: Ast.Expression.Member, element: Type) Error!bool {
+    const comparing = [_][]const u8{ "contains?", "remove", "remove_all", "unique", "unique!" };
+    const found = for (comparing) |name| {
+        if (std.mem.eql(u8, name, member.name)) break true;
+    } else false;
+    const present = element.payload();
+    if (!found or present.kind != .type_parameter or self.parameterRequires(present, "Equatable")) return false;
+    const name = present.parameter.?.name;
+    try self.reportWithHelp(
+        member.name_span,
+        "`{s}` compares `{s}` values with `==`, and `{s}` could be any type",
+        .{ member.name, name, name },
+        "Write `{s} with Equatable` where `{s}` is declared to require that its values can be compared.",
+        .{ name, name },
+    );
+    return true;
 }
 
 /// A choice to show as an example of an enum's values: the first that is a
@@ -1586,7 +1728,7 @@ fn conformsToTextual(self: *Checker, user: *const Type.User) bool {
 }
 
 fn checkStructDeclaration(self: *Checker, key: []const u8, declaration: Ast.StructDeclaration) Error!void {
-    try self.checkTypeParameters(declaration);
+    try self.checkTypeParameters(declaration, key);
     const struct_type = self.structs.get(key).?;
     const user = @constCast(struct_type.user.?);
     const inherited: []const Type.User.Field = if (user.base) |base| blk: {
@@ -4588,6 +4730,12 @@ fn replaceSelf(self: *Checker, t: Type, receiver: Type) Error!Type {
                 for (t.type_arguments, arguments) |argument, *slot| slot.* = try self.replaceSelf(argument, receiver);
                 return t.withArguments(arguments);
             }
+            // A trait's `Self` on a `T with Trait` is `T`.
+            if (receiver.kind == .type_parameter) {
+                var replaced = receiver;
+                replaced.optional = t.optional;
+                return replaced;
+            }
             var replaced = if (receiver.opaque_self or receiver.user.?.trait)
                 receiver
             else if (adopterOf(receiver.user.?, t.user.?) == receiver.user.?)
@@ -5780,7 +5928,7 @@ fn typeOfStructMethodCall(
     try self.checkArguments(call, member.name, parameters);
     if (!isClass(base) and try self.methodChanges(key)) try self.requireMutableReceiver(member, member.name);
     if (!self.in_function) try self.checkCaptures(expression.span, key, member.name);
-    if (inference) |*working| return self.finishGenericCall(call, member.name, working, signature.return_type);
+    if (inference) |*working| return self.finishGenericCall(call, member.name, working, signature.return_type, expected);
     return signature.return_type;
 }
 
@@ -6667,6 +6815,10 @@ fn capturedFunction(self: *Checker, signature: Signature, expected: ?Type, name:
                 "Wrap the call in a block that handles the missing value first.",
                 .{},
             );
+            return .invalid;
+        }
+        if (parameter.bound != null and !self.satisfies(found, parameter.bound.?)) {
+            try self.reportUnsatisfied(span, name, parameter, found);
             return .invalid;
         }
     }
@@ -7708,6 +7860,91 @@ fn genericAnywhere(t: Type) bool {
     };
 }
 
+/// Section 5.2 of the generics plan: a `T with Trait` has the trait's methods,
+/// with `Self` meaning `T`. Which version runs is the value's own, decided
+/// while the program runs: a struct's or class's method, or the built-in one
+/// for a number, a string, or a `Bool`.
+fn typeOfParameterMethodCall(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member, parameter_type: Type) Error!Type {
+    const parameter = parameter_type.parameter.?;
+    const bound = parameter.bound orelse {
+        try self.reportTypeParameterMember(parameter_type, member);
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    };
+    const key = (try self.memberKey(Type.structOf(bound), member.name)) orelse {
+        try self.reportWithHelp(
+            member.name_span,
+            "`{s}` has no method `{s}`",
+            .{ parameter.name, member.name },
+            "`{s} with {s}` promises only what `{s}` declares.",
+            .{ parameter.name, bound.display_name, bound.display_name },
+        );
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    };
+    if (self.properties.contains(key)) {
+        try self.reportWithHelp(member.name_span, "`{s}` is a property, not a method", .{member.name}, "Read it without parentheses, as in `.{s}`.", .{member.name});
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    }
+    try self.reachKey(key);
+    const signature = try self.signatureOn(try self.signatureFor(key), parameter_type);
+    const parameters = try self.parametersOf(
+        signature,
+        (try self.declarationWithDefaults(key)).parameters,
+        "Match the number of arguments to the method's parameters.",
+    );
+    try self.checkArguments(call, member.name, parameters);
+    if (try self.methodChanges(key)) {
+        try self.reportWithHelp(
+            member.name_span,
+            "`{s}` changes the value it is called on, which cannot be done through `{s}` yet",
+            .{ member.name, parameter.name },
+            "Call it on a value whose type is known.",
+            .{},
+        );
+        return .invalid;
+    }
+    try self.parameter_calls.put(self.arena, call.callee, key);
+    return signature.return_type;
+}
+
+/// The comparison members every built-in scalar has, so that a
+/// `T with Ordered` given an `Int` can call `compare` (5.2 of the plan). A
+/// `Bool` has no order, and so no `compare`.
+/// The comparison members of `Int`, `Float`, and `String` (11.3). A `Bool`
+/// has the last two.
+pub const ordered_scalar_methods = [_][]const u8{ "compare", "equals", "hash" };
+
+fn isComparisonMember(base: Type, name: []const u8) bool {
+    const scalar = base.kind == .int or base.kind == .float or base.kind == .string or base.kind == .bool;
+    if (!scalar) return false;
+    if (std.mem.eql(u8, name, "compare")) return base.kind != .bool;
+    return std.mem.eql(u8, name, "equals") or std.mem.eql(u8, name, "hash");
+}
+
+/// `3.compare(4)`, `"a".equals("b")`, `2.5.hash()`: what `<`, `==`, and a
+/// dictionary already do, as methods.
+fn typeOfComparisonMember(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member, base: Type) Error!Type {
+    const takes_other = !std.mem.eql(u8, member.name, "hash");
+    const count: usize = if (takes_other) 1 else 0;
+    if (!try self.requireArity(member, call.arguments, count, count)) return .invalid;
+    if (takes_other) {
+        const actual = try self.typeOfExpected(call.arguments[0], base);
+        if (!actual.assignableTo(base)) {
+            try self.reportWithHelp(
+                call.arguments[0].span,
+                "this is {f}, but `{s}` on {f} needs another {f}",
+                .{ actual, member.name, base, base },
+                "Compare a value with one of its own type, or convert it first.",
+                .{},
+            );
+            return .invalid;
+        }
+    }
+    return if (std.mem.eql(u8, member.name, "equals")) .bool else .int;
+}
+
 /// Section 11.3: nothing is known about what a `T` holds, so it has no members.
 fn reportTypeParameterMember(self: *Checker, parameter: Type, member: Ast.Expression.Member) Error!void {
     const written = parameter.parameter.?;
@@ -7813,10 +8050,17 @@ fn typeOfMethodCall(
         return .invalid;
     }
     if (base.payload().kind == .type_parameter) {
-        try self.reportTypeParameterMember(base.payload(), member);
+        if (!try self.requirePresent(base, member.base, member.name)) {
+            try self.typeArguments(call.arguments);
+            return .invalid;
+        }
+        return self.typeOfParameterMethodCall(call, member, base);
+    }
+    if (base.kind == .list and !base.optional and try self.rejectUnequatableElements(member, base.element.?.*)) {
         try self.typeArguments(call.arguments);
         return .invalid;
     }
+    if (!base.optional and isComparisonMember(base, member.name)) return self.typeOfComparisonMember(call, member, base);
     // Counting spellings are native operations only after resolving the
     // receiver. A declared type owns its members, whatever their names.
     if (base.kind != .struct_value) {
@@ -8126,7 +8370,7 @@ fn typeOfMethodCall(
             );
             return .invalid;
         }
-        if (element.kind == .int or element.kind == .float or element.kind == .string) return element.optionalOf();
+        if (element.kind == .int or element.kind == .float or element.kind == .string or self.parameterRequires(element, "Ordered")) return element.optionalOf();
         if (element.kind == .struct_value) {
             const ordered = try self.typeOfOperatorCall(member.name_span, member.name, .ordered, null, element, element);
             return if (ordered.kind == .invalid) .invalid else element.optionalOf();
@@ -8135,7 +8379,7 @@ fn typeOfMethodCall(
             member.name_span,
             "`{s}` needs a List of ordered values, but this is {f}",
             .{ member.name, base },
-            "Ints, Floats, Strings, and types that adopt `Ordered` have an order. Use another operation for these elements.",
+            try self.orderHelp(element),
         );
         return .invalid;
     }
@@ -8155,7 +8399,7 @@ fn typeOfMethodCall(
             return .invalid;
         }
         const eligible = eligible: {
-            if (element.kind == .int or element.kind == .float or element.kind == .string) break :eligible true;
+            if (element.kind == .int or element.kind == .float or element.kind == .string or self.parameterRequires(element, "Ordered")) break :eligible true;
             if (element.kind == .struct_value) {
                 const ordered = try self.typeOfOperatorCall(member.name_span, member.name, .ordered, null, element, element);
                 break :eligible ordered.kind != .invalid;
@@ -8167,7 +8411,7 @@ fn typeOfMethodCall(
                 member.name_span,
                 "`{s}` needs a List of ordered values, but this is {f}",
                 .{ member.name, base },
-                "Ints, Floats, Strings, and types that adopt `Ordered` have an order. Use another operation for these elements.",
+                try self.orderHelp(element),
             );
             return .invalid;
         }
@@ -8559,7 +8803,7 @@ fn typeOfExtremeBy(self: *Checker, call: Ast.Expression.Call, member: Ast.Expres
         );
         return .invalid;
     }
-    if (key.kind == .int or key.kind == .float or key.kind == .string) return element.optionalOf();
+    if (key.kind == .int or key.kind == .float or key.kind == .string or self.parameterRequires(key, "Ordered")) return element.optionalOf();
     if (key.kind == .struct_value) {
         const ordered = try self.typeOfOperatorCall(member.name_span, member.name, .ordered, null, key, key);
         return if (ordered.kind == .invalid) .invalid else element.optionalOf();
@@ -8588,7 +8832,7 @@ fn typeOfMinMax(self: *Checker, call: Ast.Expression.Call, member: Ast.Expressio
         return .invalid;
     }
     const pair = try Type.tupleOf(self.arena, &.{ element.optionalOf(), element.optionalOf() });
-    if (element.kind == .int or element.kind == .float or element.kind == .string) return pair;
+    if (element.kind == .int or element.kind == .float or element.kind == .string or self.parameterRequires(element, "Ordered")) return pair;
     if (element.kind == .struct_value) {
         const ordered = try self.typeOfOperatorCall(member.name_span, member.name, .ordered, null, element, element);
         return if (ordered.kind == .invalid) .invalid else pair;
@@ -8597,7 +8841,7 @@ fn typeOfMinMax(self: *Checker, call: Ast.Expression.Call, member: Ast.Expressio
         member.name_span,
         "`min_max` needs a List of ordered values, but this is {f}",
         .{base},
-        "Ints, Floats, Strings, and types that adopt `Ordered` have an order. Use another operation for these elements.",
+        try self.orderHelp(element),
     );
     return .invalid;
 }
@@ -8621,7 +8865,7 @@ fn typeOfSortBy(self: *Checker, call: Ast.Expression.Call, member: Ast.Expressio
         );
         return .invalid;
     }
-    if (key.kind == .int or key.kind == .float or key.kind == .string) return Type.listOf(self.arena, element);
+    if (key.kind == .int or key.kind == .float or key.kind == .string or self.parameterRequires(key, "Ordered")) return Type.listOf(self.arena, element);
     if (key.kind == .struct_value) {
         const ordered = try self.typeOfOperatorCall(member.name_span, member.name, .ordered, null, key, key);
         return if (ordered.kind == .invalid) .invalid else Type.listOf(self.arena, element);
@@ -10675,27 +10919,40 @@ fn typeOfComparison(self: *Checker, comparison: Ast.Expression.Comparison) Error
         const parameter: ?Type = if (left.payload().kind == .type_parameter) left.payload() else if (right.payload().kind == .type_parameter) right.payload() else null;
         const against_nothing = left.kind == .nothing or right.kind == .nothing;
 
-        if (!unknown and parameter != null and !(operator.isEquality() and against_nothing)) {
+        const requires = if (parameter) |found| (if (operator.isEquality()) self.parameterRequires(found, "Equatable") else self.parameterRequires(found, "Ordered")) else false;
+        const allowed = parameter != null and left.payload().same(right.payload()) and
+            !left.optional and !right.optional and requires;
+        if (!unknown and parameter != null and !(operator.isEquality() and against_nothing) and !allowed) {
             // Section 11.3: `T` could be any type, and not every type has an
-            // order or an equality.
+            // order or an equality, unless it requires one.
             const written = parameter.?.parameter.?;
-            if (operator.isEquality()) {
+            if (requires) {
+                try self.report(
+                    pair,
+                    "{f} and {f} cannot be compared",
+                    .{ left, right },
+                    "`==` and `!=` compare two values of the same type, and a type parameter's values compare only with each other.",
+                );
+            } else if (operator.isEquality()) {
                 try self.reportWithHelp(
                     pair,
                     "`{s}` values cannot be compared with `{s}`",
                     .{ written.name, operator.lexeme() },
-                    "`{s}` could be any type, and not every type can be compared with `{s}`.",
-                    .{ written.name, operator.lexeme() },
+                    "`{s}` could be any type, and not every type can be compared with `{s}`. Write `{s} with Equatable` where `{s}` is declared to require that it can.",
+                    .{ written.name, operator.lexeme(), written.name, written.name },
                 );
             } else {
                 try self.reportWithHelp(
                     pair,
                     "`{s}` has no order",
                     .{written.name},
-                    "`{s}` could be any type, and not every type can be put in order with `{s}`.",
-                    .{ written.name, operator.lexeme() },
+                    "`{s}` could be any type, and not every type can be put in order with `{s}`. Write `{s} with Ordered` where `{s}` is declared to require that it can.",
+                    .{ written.name, operator.lexeme(), written.name, written.name },
                 );
             }
+        } else if (allowed) {
+            // A runtime value decides how: a native order, or its `compare`
+            // or `equals` (5.7 of the plan).
         } else if (!unknown and !operator.isEquality() and left.kind == .struct_value and !left.optional) {
             // Section 11.5: ordering a user type runs its `compare`.
             _ = try self.typeOfOperatorCall(pair, operator.lexeme(), .ordered, left_node, left, right);
@@ -11013,7 +11270,7 @@ fn typeOfCall(
     try self.checkArguments(call, name, parameters);
 
     if (!self.in_function) try self.checkCaptures(expression.span, key, name);
-    if (inference) |*working| return self.finishGenericCall(call, name, working, signature.return_type);
+    if (inference) |*working| return self.finishGenericCall(call, name, working, signature.return_type, expected_construction);
     return signature.return_type;
 }
 
@@ -11730,7 +11987,8 @@ fn checkConstruction(self: *Checker, call: Ast.Expression.Call, key: []const u8,
 /// Section 11.3: a call to a generic function or method, whose own types
 /// come from its arguments and, for what they leave open, from where its
 /// result goes. Returns the result with them in place.
-fn finishGenericCall(self: *Checker, call: Ast.Expression.Call, name: []const u8, inference: *Inference, result: Type) Error!Type {
+fn finishGenericCall(self: *Checker, call: Ast.Expression.Call, name: []const u8, inference: *Inference, result: Type, expected: ?Type) Error!Type {
+    _ = expected;
     if (!inference.bound) return .invalid;
     for (inference.parameters, inference.solved) |parameter, answer| {
         const found = answer orelse {
@@ -11751,6 +12009,10 @@ fn finishGenericCall(self: *Checker, call: Ast.Expression.Call, name: []const u8
                 "Pass a value that is there, using `.or(...)` or a check against `nothing` first, or wrap it in a struct.",
                 .{},
             );
+            return .invalid;
+        }
+        if (parameter.bound != null and !self.satisfies(found, parameter.bound.?)) {
+            try self.reportUnsatisfied(call.callee.span, name, parameter, found);
             return .invalid;
         }
     }
@@ -11800,6 +12062,10 @@ fn typeOfGenericConstruction(
                 "Pass a value that is there, using `.or(...)` or a check against `nothing` first, or wrap it in a struct.",
                 .{},
             );
+            return .invalid;
+        }
+        if (parameter.bound != null and !self.satisfies(argument.*, parameter.bound.?)) {
+            try self.reportUnsatisfied(call.callee.span, user.display_name, parameter, argument.*);
             return .invalid;
         }
     }

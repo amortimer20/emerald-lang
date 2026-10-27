@@ -1,0 +1,4 @@
+diagnostics/generics-constraint-scalar.em:5:7: `largest` needs `Item` values that can be put in order, and Bool cannot
+  print(largest([true, false]))
+        ^^^^^^^
+Pass Ints, Floats, Strings, or values of a type declared `with Ordered`.

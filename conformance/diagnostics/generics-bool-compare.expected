@@ -1,0 +1,4 @@
+diagnostics/generics-bool-compare.em:1:12: Bool has no method `compare`
+  print(true.compare(false))
+             ^^^^^^^
+Check the spelling, or what kind of value this is.

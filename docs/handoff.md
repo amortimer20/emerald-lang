@@ -196,9 +196,12 @@ Godot bindings, and a debugger come after 1.0). Item 3: the enum plan is built a
 `~/.cache/emerald-worktrees/generics`), following
 [`generics-design-plan.md`](generics-design-plan.md): the user chose on 2026-10-17, and confirmed
 on 2026-10-26, to build without waiting for the wall log, which stays as a record. Slices 1
-(generic structs and classes, unconstrained) and 2 (generic functions and methods) are done on
-the branch; slice 3 (constraints, `[T with Ordered]`, with `compare`, `equals`, and `hash` on the
-built-ins) is next, then generic enums, and editor support and teaching. No pull request yet. The
+(generic structs and classes), 2 (generic functions and methods), and 3 (constraints, with
+`compare`, `equals`, and `hash` on the built-in scalars) are done on the branch; slice 4 (generic
+enums) is next, then editor support and teaching. No pull request yet. **Website, when this
+ships:** the Int, Float, String, and Bool pages need `compare`, `equals`, and `hash` sections
+with those anchors (the catalog links `builtins/types/<type>/#compare` and so on, which the
+website's parity and link checks will look for), and generics need their own pages. The
 plan's "Settled while building" has each slice's decisions. An abandoned 2026-10-17 worktree
 directory is kept at `~/.cache/emerald-worktrees/generics-orphan-2026-10-17`; its work is in the
 branch, so it can be deleted once the user agrees. The audience question (first course, or
@@ -816,7 +819,7 @@ not yet discussed:
 
 ## Validation and repository state
 
-Latest (2026-10-26, `claude/generics` slice 2): the same gate as slice 1 passed again, with an LSP sweep of 14,670 requests over the new cases. Slice 1: `zig build test -j1` passed in Debug and in
+Latest (2026-10-27, `claude/generics` slice 3): the same gate again, with an LSP sweep of 13,975 requests; `tools/check-doc-examples.sh` was not run (no bash 4 here). Slice 2: the same gate as slice 1 passed again, with an LSP sweep of 14,670 requests over the new cases. Slice 1: `zig build test -j1` passed in Debug and in
 ReleaseSafe (816 conformance cases), with `zig fmt --check`, `git diff --check`, and Windows and
 macOS cross-builds; an LSP sweep (hover, completion, definition, references, signature help at
 every position) over six generic documents sent 16,650 requests with no errors. No `.em` link in

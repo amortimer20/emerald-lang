@@ -1,4 +1,0 @@
-diagnostics/generics-constraint.em:1:22: a type parameter cannot require a trait yet
-  struct Box[Item with Ordered] {
-                       ^^^^^^^
-Emerald does not have constraints on type parameters yet. Remove `with Ordered`.

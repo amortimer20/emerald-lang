@@ -1,0 +1,4 @@
+runtime-errors/generics-compare-nan.em:2:7: `compare` cannot order NaN
+  print(values[0].compare(values[1]))
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+NaN has no place in an order. Check `nan?()` first.

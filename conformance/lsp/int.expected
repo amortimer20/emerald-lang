@@ -27,6 +27,14 @@
       "insertTextFormat": 2
     },
     {
+      "label": "compare",
+      "kind": 2,
+      "detail": "compare(other: Int): Int",
+      "documentation": "A negative number when this number comes before `other`, zero when they are equal, and a positive number when it comes after, as `<` orders them.",
+      "insertText": "compare($0)",
+      "insertTextFormat": 2
+    },
+    {
       "label": "digits",
       "kind": 2,
       "detail": "digits(): List[Int]",
@@ -40,6 +48,14 @@
       "detail": "down_to(target: Int): Range\ndown_to(target: Int) { value: Int => ... }: Nothing",
       "documentation": "A `Range` from this number down to `target`, including both.",
       "insertText": "down_to($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "equals",
+      "kind": 2,
+      "detail": "equals(other: Int): Bool",
+      "documentation": "Whether this number and `other` are equal, as `==` decides.",
+      "insertText": "equals($0)",
       "insertTextFormat": 2
     },
     {
@@ -73,6 +89,14 @@
       "documentation": "The greatest common divisor: the largest number that divides both this number and `other` evenly.",
       "insertText": "gcd($0)",
       "insertTextFormat": 2
+    },
+    {
+      "label": "hash",
+      "kind": 2,
+      "detail": "hash(): Int",
+      "documentation": "A number for the number, the same for equal values, as a dictionary uses; it can change between runs.",
+      "insertText": "hash()",
+      "insertTextFormat": 1
     },
     {
       "label": "lcm",

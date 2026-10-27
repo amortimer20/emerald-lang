@@ -1,0 +1,4 @@
+diagnostics/generics-constraint-weaker-parameter.em:6:12: `distinct` needs `Item` values that can be dictionary keys, and Value cannot
+      return distinct(items)
+             ^^^^^^^^
+Write `Value with Hashable` where `Value` is declared.

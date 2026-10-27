@@ -1,0 +1,4 @@
+diagnostics/generics-constraint-unsatisfied.em:9:7: `largest` needs `Item` values that can be put in order, and Player cannot
+  print(largest([Player(1)]))
+        ^^^^^^^
+Add `with Ordered` to `Player` and give it what `Ordered` requires.
