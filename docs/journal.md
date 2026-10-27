@@ -6008,3 +6008,12 @@ its diagnostic found that the help always showed an `if` example, even under `wh
 never offered a named result; it now offers both corrections without naming a keyword.
 Deprecation gets `@deprecated("message")` and a release policy, in an accepted plan that waits for
 a go-ahead to build; warnings keep their exit status of `1`, deprecations included.
+
+## Named labels are references (2026-10-28)
+
+Renaming a struct field left `Point(x: 1)` unchanged and broke it, and renaming an enum choice's
+data item was refused for the same reason: the resolver records no target for a named argument's
+label. The language server now matches each label by name in what the call reaches (a struct's
+fields, or its custom constructor's parameters; a choice's data items; a function or method's
+parameters), so find references, rename, and go to definition all work from either end, and the
+refusal is gone.
