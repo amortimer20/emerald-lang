@@ -1,0 +1,4 @@
+diagnostics/generics-override.em:9:19: a method that overrides another cannot take type parameters yet
+      func describe[Item](): String {
+                    ^^^^
+Give the method another name, without `@override`.

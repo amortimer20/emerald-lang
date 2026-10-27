@@ -736,6 +736,39 @@ into `~/Workspace/emerald/`; it was carried into this branch unchanged and finis
 - **Not decided yet:** `type_name` of a generic value prints `Pair` without its types (slice 5
   decides). Editor features for type parameters are slice 5's.
 
+### Slice 2: generic functions and methods (2026-10-26)
+
+Program 7 runs (`conformance/run/generics-methods.em`), with generic functions in
+`generics-functions.em`. Program 8 needs a generic enum and waits for slice 4.
+
+- **Where they go.** `[T]` after the name of a function, a method (of a generic type or not), a
+  type-level function, or a nested function. Its scope runs from the name through the body, and
+  lookup walks outward, so a method's own `[U]` and its type's `T` are both visible inside it. A
+  type-level function's own parameters are visible in it; its type's are still masked (slice 1).
+  `Signature.type_parameters` carries them. A constructor takes none: it uses its type's.
+- **Inference at a call** (functions, type-level functions, and methods share
+  `checkArguments`'s `Inference`). The expected type of the result is unified first, as the
+  annotation seeds a construction, so `const rates: List[Float] = repeated([1, 2], 3)` builds the
+  literal as Floats; a non-optional result may go where an optional is expected. Then the
+  arguments, left to right. Then a block whose parameter types are known by then is checked with
+  an open result, and its result decides what is left: `mapped { text => text.count }` makes `U`
+  an `Int`. Nothing deciding a parameter is "Emerald cannot tell what `T` is for this call to
+  `f`"; an optional answer is refused (5.5). When the expected type and the arguments disagree,
+  the errors point at the arguments, as they do for a construction.
+- **Taken as a value** (7.4): a generic function or method needs an expected function type, which
+  is unified with its own (`const whole: func(Int): Int = same`); otherwise it is an error that
+  says why. `typeOfExpected` hands the expected type to name and member expressions for this.
+  Passing one where a built-in method expects a block (`[1, 2].map(same)`) is that same error,
+  since those blocks are checked without a full expected type.
+- **Widening through a value.** A function value's static type can say `Float` where the
+  function it holds erased `T`, so every call through a value now marks an `Int` argument given
+  as a `Float`. For an ordinary function this changes nothing: its own declared kind widens it
+  too.
+- **Refused for now**, each with its own message: a trait's method with type parameters, an
+  overriding method with them, an `@operator` method with them, and a `@test` function with
+  them (which nothing could ever call with types). Their parameters are then not also reported
+  as unused.
+
 ### Reserved syntax
 **Reserved syntax (merged as PR #43, 2026-10-16).** The only built part; section 5's design is
 accepted for use only if the gate in section 3 is met.

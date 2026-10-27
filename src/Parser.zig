@@ -1556,6 +1556,7 @@ fn parseTypeFunction(self: *Parser, type_name: ?Token) Error!Ast.StructDeclarati
 
     const member_name = try self.identifier(member);
     const full_name = try std.fmt.allocPrint(self.arena, "{s}.{s}", .{ try self.identifier(receiver), member_name });
+    const type_parameters: []const Ast.TypeParameter = if (self.check(.left_bracket)) try self.parseTypeParameters() else &.{};
     const parameters = try self.parseParameterList(
         full_name,
         "Every function declares its parameters in parentheses, even when there are none.",
@@ -1574,6 +1575,7 @@ fn parseTypeFunction(self: *Parser, type_name: ?Token) Error!Ast.StructDeclarati
         .declaration = .{
             .name = full_name,
             .name_span = spanning(receiver.span, member.span),
+            .type_parameters = type_parameters,
             .parameters = parameters,
             .return_annotation = return_annotation,
             .body = body,
@@ -2005,6 +2007,8 @@ fn parseFunctionDeclarationWith(self: *Parser, method: bool, body_rule: Body) Er
     }
     _ = self.advance();
 
+    // Section 11.3's `[T]` after the name.
+    const type_parameters: []const Ast.TypeParameter = if (self.check(.left_bracket)) try self.parseTypeParameters() else &.{};
     const parameters = try self.parseParameterList(
         self.text(name),
         "Every function declares its parameters in parentheses, even when there are none.",
@@ -2020,6 +2024,7 @@ fn parseFunctionDeclarationWith(self: *Parser, method: bool, body_rule: Body) Er
             .data = .{ .function_declaration = .{
                 .name = try self.identifier(name),
                 .name_span = name.span,
+                .type_parameters = type_parameters,
                 .parameters = parameters,
                 .return_annotation = return_annotation,
                 .body = .{ .span = end, .statements = &.{} },
@@ -2050,6 +2055,7 @@ fn parseFunctionDeclarationWith(self: *Parser, method: bool, body_rule: Body) Er
         .data = .{ .function_declaration = .{
             .name = try self.identifier(name),
             .name_span = name.span,
+            .type_parameters = type_parameters,
             .parameters = parameters,
             .return_annotation = return_annotation,
             .body = body,
@@ -2060,13 +2066,14 @@ fn parseFunctionDeclarationWith(self: *Parser, method: bool, body_rule: Body) Er
 /// `(count: Int, label: String)`, after whatever `after` names.
 fn parseParameterList(self: *Parser, after: []const u8, missing_help: []const u8) Error![]const Ast.Parameter {
     const opening = self.peek();
-    // Section 11.3 reserves a bracketed list after the name for generics.
+    // Section 11.3: only a constructor reaches here with brackets, since a
+    // function's or method's were read before its parameters.
     if (opening.kind == .left_bracket) {
         return self.reportFmt(
             opening.span,
-            "`{s}` cannot take type parameters in brackets yet",
+            "`{s}` cannot take type parameters in brackets",
             .{after},
-            "Emerald does not have generic functions yet. Write one function for each kind of value, or take the values in a `List`.",
+            "A constructor uses its type's parameters. Write them on the type, as in `class Box[Item]`, and the constructor can use `Item`.",
         );
     }
     if (opening.kind != .left_paren) {

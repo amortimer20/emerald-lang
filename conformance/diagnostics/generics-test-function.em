@@ -1,0 +1,3 @@
+@test
+func checks[Item]() {
+}

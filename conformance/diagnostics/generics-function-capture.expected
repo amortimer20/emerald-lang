@@ -1,0 +1,4 @@
+diagnostics/generics-function-capture.em:5:14: `same` has type parameters, so it needs a function type here
+  const keep = same
+               ^^^^
+Emerald works out what `Item` is where `same` is called. Write the function's type where the value is kept, as in `const change: func(Int): Int = ...`, or wrap the call in a block.

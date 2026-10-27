@@ -1,0 +1,4 @@
+diagnostics/generics-function-equality.em:2:12: `Item` values cannot be compared with `==`
+      return first == second
+             ^^^^^^^^^^^^^^^
+`Item` could be any type, and not every type can be compared with `==`.

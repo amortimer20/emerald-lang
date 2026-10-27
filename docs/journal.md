@@ -5679,3 +5679,25 @@ Validation: `zig build test -j1` in Debug and ReleaseSafe, `zig fmt --check`, `g
 Windows and macOS cross-builds, and an LSP sweep of 16,650 requests over six generic documents
 with no errors. The first full run failed one case whose expectation had been captured from the
 CLI with its `[E2001]` code, which the conformance runner does not print.
+
+## 2026-10-26: Generics slice 2, generic functions and methods
+
+Functions, methods, type-level functions, and nested functions take `[T]`; program 7 runs. The
+lookup that found a type parameter now walks outward from the innermost declaration, since a
+method's own `[U]` scope sits inside its type's `[T]` and the first draft stopped at the
+innermost. Inference reuses slice 1's `Inference` with two additions: the expected result is
+unified first, and a block whose parameters are known is checked with an open result so its
+result can decide a parameter. The plan's "Settled while building" records the rules.
+
+Found while building: arguments-first inference made `const rates: List[Float] =
+repeated([1, 2], 1)` an error (the literal had already become a `List[Int]`), which is why the
+expected result now comes first, matching construction. A generic function taken as a value was
+silently accepted with its parameters still in its type; it now needs an expected function type.
+And `const real: func(Float): Float = same` then `real(3)` printed `3`: a call through a function
+value widened by the held function's declared kinds, which an erased `T` lacks, so value calls
+now mark the argument for widening as well. Refusals (a trait's, an overriding, an `@operator`
+method's, or a test's type parameters) no longer also warn that the parameters are unused.
+
+Validation: `zig build test -j1` in Debug and ReleaseSafe, `zig fmt --check`, `git diff --check`,
+Windows and macOS cross-builds, and an LSP sweep of 14,670 requests over the two new run cases
+with no errors.

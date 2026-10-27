@@ -100,6 +100,9 @@ pub const Signature = struct {
     /// names.
     parameter_names: []const []const u8 = &.{},
     return_type: Type,
+    /// Section 11.3: a generic function's or method's own `[T]`, which each
+    /// call works out from its arguments.
+    type_parameters: []const *const Parameter = &.{},
 };
 
 /// One name in a generic declaration's `[T]` list (11.3). Identity is the

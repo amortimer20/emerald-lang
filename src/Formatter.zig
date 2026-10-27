@@ -753,18 +753,7 @@ const Printer = struct {
         try self.write(s.keyword());
         try self.write(" ");
         try self.write(s.name);
-        if (s.type_parameters.len > 0) {
-            try self.write("[");
-            for (s.type_parameters, 0..) |parameter, i| {
-                if (i > 0) try self.write(", ");
-                try self.write(parameter.name);
-                if (parameter.bound) |bound| {
-                    try self.write(" with ");
-                    try self.printType(bound);
-                }
-            }
-            try self.write("]");
-        }
+        try self.printTypeParameters(s.type_parameters);
         if (s.base) |base| {
             try self.write(" extends ");
             try self.printType(base);
@@ -883,6 +872,7 @@ const Printer = struct {
         }
         try self.write("func ");
         try self.write(f.name);
+        try self.printTypeParameters(f.type_parameters);
         try self.write("(");
         try self.printParameters(f.parameters);
         try self.write(")");
@@ -899,6 +889,21 @@ const Printer = struct {
     /// language keeps them short enough that this has not needed the same
     /// line-preserving treatment call arguments and literals get; revisit if
     /// a real signature needs to wrap.
+    /// Section 11.3's `[T]` or `[T with Trait]`, after a declaration's name.
+    fn printTypeParameters(self: *Printer, parameters: []const Ast.TypeParameter) PrintError!void {
+        if (parameters.len == 0) return;
+        try self.write("[");
+        for (parameters, 0..) |parameter, i| {
+            if (i > 0) try self.write(", ");
+            try self.write(parameter.name);
+            if (parameter.bound) |bound| {
+                try self.write(" with ");
+                try self.printType(bound);
+            }
+        }
+        try self.write("]");
+    }
+
     fn printParameters(self: *Printer, parameters: []const Ast.Parameter) PrintError!void {
         for (parameters, 0..) |p, i| {
             if (i > 0) try self.write(", ");

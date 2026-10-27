@@ -303,6 +303,9 @@ pub const For = struct {
 pub const FunctionDeclaration = struct {
     name: []const u8,
     name_span: Source.Span,
+    /// Section 11.3's `[T]` after the name, in scope from the name through
+    /// the body; empty for an ordinary function.
+    type_parameters: []const TypeParameter = &.{},
     parameters: []const Parameter,
     /// Omitted for a function with no result, whose return type is then
     /// `Nothing`, exactly as if `: Nothing` were written (section 7.2).

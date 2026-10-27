@@ -2332,12 +2332,16 @@ parameter is, that is an error asking for the type to be written where the value
 - Type-level members and nested types belong to the type as a whole and cannot use its
   parameters. `is` cannot test for a type with arguments, since the program does not keep them
   while it runs, and `Json` and `Csv` do not encode or decode a generic type.
-- Not yet built: generic functions and methods, constraints (`[T with Ordered]`), and generic
-  enums, which are errors that say they are not supported yet. A generic class cannot extend a
-  class or be extended, and a trait takes no type parameters.
-
-The bracketed syntax after a function, method, or constructor name (`func largest[T](...)`)
-remains reserved with a plain "not yet" error.
+- A function, method, or type-level function may take its own type parameters,
+  `func first_or[Item](items: List[Item], fallback: Item): Item`. Each call works them out from
+  where its result goes, then its arguments, then the result of a block passed to it, so
+  `name.mapped { text => text.count }` is a `Box[Int]`. Taken as a value, such a function needs a
+  function type where it is kept (7.4). A constructor uses its type's parameters and takes none of
+  its own.
+- Not yet built: constraints (`[T with Ordered]`) and generic enums, which are errors that say
+  they are not supported yet. A generic class cannot extend a class or be extended, a trait
+  takes no type parameters, and a trait's method, an overriding method, an `@operator` method,
+  and a test take none either.
 
 ### 11.4 `Self`
 
@@ -4050,7 +4054,7 @@ future subsystem before the first expression runs.
 
 The following are deliberately outside the initial implementation:
 
-- generic functions, constraints, and generic enums, which are being built (11.3);
+- constraints on type parameters and generic enums, which are being built (11.3);
 - a source-visible `Any` top type;
 - immutable collection views and collection covariance;
 - function and method overloading, and with it overloaded constructors and constructor

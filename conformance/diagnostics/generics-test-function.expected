@@ -1,0 +1,4 @@
+diagnostics/generics-test-function.em:2:13: a test function cannot take type parameters
+  func checks[Item]() {
+              ^^^^
+A test runs on its own, so nothing could say what its types are. Test a generic function by calling it with real types.

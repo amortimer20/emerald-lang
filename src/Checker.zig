@@ -192,6 +192,8 @@ const GenericScope = struct {
     file: u32,
     span: Source.Span,
     parameters: []const *const Type.Parameter,
+    /// The `[T]` list as written, for reporting at a parameter's name.
+    written: []const Ast.TypeParameter,
     owner: []const u8,
     masked: bool = false,
 };
@@ -365,6 +367,15 @@ construction_expected: ?Type = null,
 /// `Float` (11.3, 5.6 of the plan). Its own type is erased at run time, so the
 /// interpreter widens these where it would otherwise widen by declared type.
 widenings: Widenings = .empty,
+/// The type a name or member expression is expected to have, set by
+/// `typeOfExpected` and taken at once by `typeOfUnrecorded`, so a generic
+/// function taken as a value can learn its types from it (7.4, 11.3).
+value_expected: ?Type = null,
+/// The same, passed from `typeOfUnrecorded` to the member expression it
+/// dispatches, which takes it before evaluating anything.
+member_capture: ?Type = null,
+/// Each generic function's and method's own parameters, by key.
+function_parameters: std.StringHashMapUnmanaged([]const *const Type.Parameter) = .empty,
 /// Section 6.3's cases whose arms cover every value their subject can have,
 /// with or without `else`. A statement `case` among them cannot finish without
 /// running an arm, which is what `stmtCompletes` needs to know.
@@ -1314,7 +1325,7 @@ fn registerTypeParameters(self: *Checker, user: *Type.User, declaration: Ast.Str
     }
     user.type_parameters = parameters;
     user.own_arguments = own;
-    const scope: GenericScope = .{ .file = self.file, .span = declaration.span, .parameters = parameters, .owner = user.display_name };
+    const scope: GenericScope = .{ .file = self.file, .span = declaration.span, .parameters = parameters, .written = written, .owner = user.display_name };
     try self.generic_scopes.append(self.arena, scope);
     // A nested type and a type-level member belong to the type as a whole,
     // not to one `Box[Int]`, so nothing there says what `T` is.
@@ -1338,18 +1349,28 @@ fn registerTypeParameters(self: *Checker, user: *Type.User, declaration: Ast.Str
 /// The type parameter `name` written at `span`, from the innermost generic
 /// declaration around it, or null when none there has one by that name.
 fn typeParameterAt(self: *Checker, name: []const u8, span: Source.Span) Error!?Type {
-    var innermost: ?GenericScope = null;
+    // Every declaration around the name, innermost first: a method's own
+    // `[U]` inside its type's `[T]`, so `T` is found one further out.
+    var around: std.ArrayList(GenericScope) = .empty;
     for (self.generic_scopes.items) |scope| {
         if (scope.file != self.file or span.start < scope.span.start or span.end > scope.span.end) continue;
-        if (innermost) |found| {
-            // A nested generic type's own scope and its mask in the type
-            // around it cover the same text; its own parameters win.
-            if (scope.span.len() > found.span.len()) continue;
-            if (scope.span.len() == found.span.len() and scope.masked) continue;
-        }
-        innermost = scope;
+        try around.append(self.arena, scope);
     }
-    const scope = innermost orelse return null;
+    std.mem.sort(GenericScope, around.items, {}, innerFirst);
+    for (around.items) |scope| {
+        if (try self.parameterIn(scope, name, span)) |found| return found;
+    }
+    return null;
+}
+
+/// A nested declaration's own scope and its mask in the one around it can
+/// cover the same text; its own parameters win.
+fn innerFirst(_: void, a: GenericScope, b: GenericScope) bool {
+    if (a.span.len() != b.span.len()) return a.span.len() < b.span.len();
+    return !a.masked and b.masked;
+}
+
+fn parameterIn(self: *Checker, scope: GenericScope, name: []const u8, span: Source.Span) Error!?Type {
     for (scope.parameters) |parameter| {
         if (!std.mem.eql(u8, parameter.name, name)) continue;
         if (scope.masked) {
@@ -1368,9 +1389,64 @@ fn typeParameterAt(self: *Checker, name: []const u8, span: Source.Span) Error!?T
     return null;
 }
 
+/// Section 11.3's `[T]` on a function or method: its parameters, in scope
+/// from its name through its body. Made once, the first time its signature
+/// is needed, with the file already the one that declares it.
+fn functionTypeParameters(self: *Checker, key: []const u8, declaration: Ast.FunctionDeclaration) Error![]const *const Type.Parameter {
+    const written = declaration.type_parameters;
+    if (written.len == 0) return &.{};
+    if (self.function_parameters.get(key)) |made| return made;
+    const parameters = try self.arena.alloc(*const Type.Parameter, written.len);
+    for (written, parameters, 0..) |parameter, *slot, position| {
+        const created = try self.arena.create(Type.Parameter);
+        created.* = .{ .name = parameter.name, .position = position, .owner = declaration.name };
+        slot.* = created;
+    }
+    try self.function_parameters.put(self.arena, key, parameters);
+    try self.generic_scopes.append(self.arena, .{
+        .file = self.file,
+        .span = .{ .start = declaration.name_span.start, .end = @max(declaration.body.span.end, declaration.name_span.end) },
+        .parameters = parameters,
+        .written = written,
+        .owner = declaration.name,
+    });
+    try self.checkTypeParameterList(written, declaration.name);
+    // Decided in the plan's decision 10 and section 5.1: these would each
+    // need rules of their own.
+    const receiver = self.receivers.get(key);
+    const refusals = self.diagnostics.items.len;
+    if (receiver != null and receiver.?.user.?.trait) {
+        try self.report(written[0].span, "a trait's method cannot take type parameters yet", .{}, "Every type that adopts the trait would have to supply a generic method. Take a block instead, or move the method out of the trait.");
+    } else if (declaration.override_span != null) {
+        try self.report(written[0].span, "a method that overrides another cannot take type parameters yet", .{}, "Give the method another name, without `@override`.");
+    } else if (declaration.test_span != null) {
+        try self.report(written[0].span, "a test function cannot take type parameters", .{}, "A test runs on its own, so nothing could say what its types are. Test a generic function by calling it with real types.");
+    } else if (declaration.operator != null) {
+        try self.report(written[0].span, "an `@operator` method cannot take type parameters yet", .{}, "Write the operand's type in the method's parameter instead.");
+    } else if (receiver != null and self.properties.contains(key)) {
+        try self.report(written[0].span, "a property cannot take type parameters", .{}, "A property is read without a call, so nothing could say what its types are. Make it a method.");
+    }
+    // Refused, so whether each is used is beside the point.
+    if (self.diagnostics.items.len != refusals) for (parameters) |parameter| try self.used_parameters.put(self.arena, parameter, {});
+    return parameters;
+}
+
 /// Section 11.3's declaration rules for a `[T]` list.
 fn checkTypeParameters(self: *Checker, declaration: Ast.StructDeclaration) Error!void {
-    for (declaration.type_parameters, 0..) |parameter, position| {
+    try self.checkTypeParameterList(declaration.type_parameters, declaration.name);
+    if (declaration.enumeration and declaration.type_parameters.len > 0) {
+        try self.reportWithHelp(
+            declaration.type_parameters[0].span,
+            "an enum cannot take type parameters yet",
+            .{},
+            "Emerald's generics cover structs and classes so far. Write one enum for each kind of item for now.",
+            .{},
+        );
+    }
+}
+
+fn checkTypeParameterList(self: *Checker, list: []const Ast.TypeParameter, owner: []const u8) Error!void {
+    for (list, 0..) |parameter, position| {
         try self.checkPascalCase(parameter.name, parameter.span);
         if (parameter.bound) |bound| try self.reportWithHelp(
             bound.span,
@@ -1379,14 +1455,14 @@ fn checkTypeParameters(self: *Checker, declaration: Ast.StructDeclaration) Error
             "Emerald does not have constraints on type parameters yet. Remove `with {s}`.",
             .{bound.name},
         );
-        const repeated = for (declaration.type_parameters[0..position]) |earlier| {
+        const repeated = for (list[0..position]) |earlier| {
             if (std.mem.eql(u8, earlier.name, parameter.name)) break true;
         } else false;
         if (repeated) {
             try self.reportWithHelp(
                 parameter.span,
                 "`{s}` is already a type parameter of `{s}`",
-                .{ parameter.name, declaration.name },
+                .{ parameter.name, owner },
                 "Give each its own name, as in `Pair[First, Second]`.",
                 .{},
             );
@@ -1400,18 +1476,9 @@ fn checkTypeParameters(self: *Checker, declaration: Ast.StructDeclaration) Error
                 "`{s}` is already the name of a type",
                 .{parameter.name},
                 "Inside `{s}`, a type parameter named `{s}` would hide the real `{s}`. Give the parameter another name, such as `Item`.",
-                .{ declaration.name, parameter.name, parameter.name },
+                .{ owner, parameter.name, parameter.name },
             );
         }
-    }
-    if (declaration.enumeration and declaration.type_parameters.len > 0) {
-        try self.reportWithHelp(
-            declaration.type_parameters[0].span,
-            "an enum cannot take type parameters yet",
-            .{},
-            "Emerald's generics cover structs and classes so far. Write one enum for each kind of item for now.",
-            .{},
-        );
     }
 }
 
@@ -1428,8 +1495,7 @@ fn checkUnusedTypeParameters(self: *Checker, prelude_file: ?usize) Error!void {
                 if (std.mem.eql(u8, earlier.name, parameter.name)) break true;
             } else false;
             if (repeated) continue;
-            const declaration = self.struct_declarations.get(self.genericKeyOf(scope) orelse continue) orelse continue;
-            const written = declaration.type_parameters[parameter.position];
+            const written = scope.written[parameter.position];
             const outer_file = self.file;
             defer self.file = outer_file;
             self.file = scope.file;
@@ -1441,15 +1507,6 @@ fn checkUnusedTypeParameters(self: *Checker, prelude_file: ?usize) Error!void {
             );
         }
     }
-}
-
-fn genericKeyOf(self: *Checker, scope: GenericScope) ?[]const u8 {
-    var types = self.structs.iterator();
-    while (types.next()) |entry| {
-        const user = entry.value_ptr.user orelse continue;
-        if (user.type_parameters.ptr == scope.parameters.ptr) return entry.key_ptr.*;
-    }
-    return null;
 }
 
 /// `Box[Int]`: a type written with its arguments, which must be exactly the
@@ -4361,6 +4418,7 @@ fn signatureFor(self: *Checker, key: []const u8) Error!Signature {
     const outer_self = self.written_self;
     defer self.written_self = outer_self;
     self.written_self = self.selfInSignatureOf(key);
+    const type_parameters = try self.functionTypeParameters(key, declaration);
 
     const parameter_types = try self.arena.alloc(Type, declaration.parameters.len);
     const parameter_names = try self.arena.alloc([]const u8, declaration.parameters.len);
@@ -4373,6 +4431,7 @@ fn signatureFor(self: *Checker, key: []const u8) Error!Signature {
         .parameters = parameter_types,
         .parameter_names = parameter_names,
         .return_type = .invalid,
+        .type_parameters = type_parameters,
     };
 
     const return_annotation = if (declaration.return_annotation) |annotation|
@@ -4481,6 +4540,7 @@ fn signatureOn(self: *Checker, signature: Signature, receiver: Type) Error!Signa
             .parameters = parameters,
             .parameter_names = signature.parameter_names,
             .return_type = try self.replaceSelf(signature.return_type, receiver.payload()),
+            .type_parameters = signature.type_parameters,
         };
     };
     // Section 11.3: `T` in a member of `Box[T]` is `Int` on a `Box[Int]`.
@@ -4494,6 +4554,7 @@ fn signatureOn(self: *Checker, signature: Signature, receiver: Type) Error!Signa
         .parameters = parameters,
         .parameter_names = replaced_self.parameter_names,
         .return_type = try self.substituteOn(replaced_self.return_type, present),
+        .type_parameters = replaced_self.type_parameters,
     };
 }
 
@@ -5653,6 +5714,7 @@ fn typeOfStructMethodCall(
     call: Ast.Expression.Call,
     member: Ast.Expression.Member,
     base: Type,
+    expected: ?Type,
 ) Error!Type {
     const key = try self.memberKey(base, member.name) orelse try Resolver.methodKey(self.arena, base.user.?.name, member.name);
     if (try self.memberOwner(base, member.name)) |owner| {
@@ -5709,9 +5771,16 @@ fn typeOfStructMethodCall(
     );
     parameters.named_units = takesNamedUnits(key);
     if (base.payload().type_arguments.len > 0) parameters.declared = declared.parameters;
+    var inference: ?Inference = null;
+    if (signature.type_parameters.len > 0) {
+        inference = try Inference.init(self.arena, signature.type_parameters);
+        inference.?.seed(signature.return_type, expected);
+        parameters.inference = &inference.?;
+    }
     try self.checkArguments(call, member.name, parameters);
     if (!isClass(base) and try self.methodChanges(key)) try self.requireMutableReceiver(member, member.name);
     if (!self.in_function) try self.checkCaptures(expression.span, key, member.name);
+    if (inference) |*working| return self.finishGenericCall(call, member.name, working, signature.return_type);
     return signature.return_type;
 }
 
@@ -6457,6 +6526,8 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
 }
 
 fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression) Error!Type {
+    const capture_expected = self.value_expected;
+    self.value_expected = null;
     return switch (expression.data) {
         .int_literal => .int,
         .float_literal => .float,
@@ -6479,7 +6550,7 @@ fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression) Error!Typ
             }
             if (binding.is_function) {
                 try self.checkNestedUse(expression);
-                break :blk try self.typeOfFunctionValue(expression, .{ .key = binding.function_key orelse self.keyOf(name), .display = name });
+                break :blk try self.typeOfFunctionValue(expression, .{ .key = binding.function_key orelse self.keyOf(name), .display = name }, capture_expected);
             }
             if (self.constructing != null and std.mem.eql(u8, name, "self")) {
                 try self.requireSelfReady(expression.span);
@@ -6525,10 +6596,14 @@ fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression) Error!Typ
         .slice => |slice| self.typeOfSlice(slice),
         // A namespace-qualified name is a reference, not a property access:
         // `Shapes.area` names one declaration, as the resolver worked out.
-        .member => |member| if (try self.referenceOf(expression)) |reference|
-            self.typeOfQualified(expression, reference)
-        else
-            self.typeOfMember(expression, member),
+        .member => |member| blk: {
+            self.member_capture = capture_expected;
+            defer self.member_capture = null;
+            break :blk if (try self.referenceOf(expression)) |reference|
+                self.typeOfQualified(expression, reference)
+            else
+                self.typeOfMember(expression, member);
+        },
         .range => self.typeOfCountingValue(expression, null),
         .lambda => self.typeOfLambda(expression, null),
         .tuple_literal => self.typeOfTuple(expression, null),
@@ -6540,7 +6615,7 @@ fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression) Error!Typ
 /// Section 7.5's captured function. Section 15.2's prelude functions are the
 /// exception: `print` and `write` take any number of arguments of any type, and
 /// no type that can be written describes that, so they can only be called.
-fn typeOfFunctionValue(self: *Checker, expression: *const Ast.Expression, reference: Reference) Error!Type {
+fn typeOfFunctionValue(self: *Checker, expression: *const Ast.Expression, reference: Reference, expected: ?Type) Error!Type {
     if (!self.declarations.contains(reference.key)) {
         // An explicitly qualified built-in value needs a qualified call in
         // its fix: bare `print` may be the program's own function (14.2).
@@ -6558,11 +6633,44 @@ fn typeOfFunctionValue(self: *Checker, expression: *const Ast.Expression, refere
         return .invalid;
     }
     const signature = try self.signatureFor(reference.key);
-    return Type.functionOf(self.arena, .{
+    return self.capturedFunction(signature, expected, reference.display, expression.span);
+}
+
+/// A function or method taken as a value. A generic one has no types of its
+/// own to give, so where it goes must say them, as for `numbers.map` (7.4):
+/// `const pick: func(Int): Int = first`.
+fn capturedFunction(self: *Checker, signature: Signature, expected: ?Type, name: []const u8, span: Source.Span) Error!Type {
+    const plain = try Type.functionOf(self.arena, .{
         .parameters = signature.parameters,
         .parameter_names = signature.parameter_names,
         .return_type = signature.return_type,
     });
+    if (signature.type_parameters.len == 0) return plain;
+    var inference = try Inference.init(self.arena, signature.type_parameters);
+    if (expected) |wanted| if (wanted.kind == .function and !wanted.optional) inference.unify(plain, wanted);
+    for (inference.parameters, inference.solved) |parameter, answer| {
+        const found = answer orelse {
+            try self.reportWithHelp(
+                span,
+                "`{s}` has type parameters, so it needs a function type here",
+                .{name},
+                "Emerald works out what `{s}` is where `{s}` is called. Write the function's type where the value is kept, as in `const change: func(Int): Int = ...`, or wrap the call in a block.",
+                .{ parameter.name, name },
+            );
+            return .invalid;
+        };
+        if (found.optional) {
+            try self.reportWithHelp(
+                span,
+                "this would make `{s}` {f} for `{s}`, and a type parameter cannot be optional",
+                .{ parameter.name, found, name },
+                "Wrap the call in a block that handles the missing value first.",
+                .{},
+            );
+            return .invalid;
+        }
+    }
+    return inference.substituted(self.arena, plain);
 }
 
 /// `typeOf`, for a place where a value of `expected` is wanted. A list literal
@@ -6580,6 +6688,12 @@ fn typeOfExpected(self: *Checker, expression: *const Ast.Expression, expected: ?
         },
         .list_literal => try self.typeOfList(expression, expected),
         .lambda => try self.typeOfLambda(expression, expected),
+        // A generic function taken as a value learns its types from here.
+        .name, .member => {
+            self.value_expected = expected;
+            defer self.value_expected = null;
+            return self.typeOf(expression);
+        },
         .tuple_literal => try self.typeOfTuple(expression, expected),
         .dictionary_literal => try self.typeOfDictionary(expression, expected),
         .case_expression => try self.typeOfCase(expression, expected),
@@ -7243,6 +7357,8 @@ fn requireIndex(self: *Checker, index: *const Ast.Expression) Error!void {
 /// Section 14.2's `Shapes.area` used as a value rather than called. It is the
 /// name branch of `typeOf`, reached through a member expression.
 fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference: Reference) Error!Type {
+    const capture = self.member_capture;
+    self.member_capture = null;
     try self.reachKey(reference.key);
     if (std.mem.eql(u8, reference.key, Resolver.float_infinity_key) or
         std.mem.eql(u8, reference.key, Resolver.float_nan_key) or
@@ -7285,7 +7401,7 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
         return .invalid;
     }
     // `Emerald.print` as a value: a built-in function, which can only be called.
-    if (Resolver.builtinFunctionName(reference.key) != null) return self.typeOfFunctionValue(expression, reference);
+    if (Resolver.builtinFunctionName(reference.key) != null) return self.typeOfFunctionValue(expression, reference, null);
     if (try self.reportPrivateTypeMember(reference.key, expression.span)) return .invalid;
     // Section 11.2's `Named.introduction(self)` is a call that runs one trait's
     // default; taking it as a value is not part of that yet.
@@ -7340,7 +7456,7 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
                 );
             }
         }
-        return self.typeOfFunctionValue(expression, reference);
+        return self.typeOfFunctionValue(expression, reference, capture);
     }
     if (!binding.assigned) {
         try self.reportUnassigned(expression.span, reference.display, binding.*);
@@ -7351,6 +7467,8 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
 
 /// A property: `count` is the only one so far (8.5).
 fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.Expression.Member) Error!Type {
+    const capture = self.member_capture;
+    self.member_capture = null;
     if (member.optional) return self.typeOfOptionalObjectMember(member);
     // Section 4.4's `type_name`, which every value has, `nothing` included,
     // so it needs no proof that an optional is there. It reads no field, so
@@ -7417,7 +7535,7 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
                 );
                 return .invalid;
             }
-            return self.typeOfMethodValue(expression, building, member.name);
+            return self.typeOfMethodValue(expression, building, member.name, capture);
         }
         // Not a field. Reported directly, since going through `typeOf(self)`
         // would first complain that `self` is not ready yet.
@@ -7462,7 +7580,7 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
         if (try self.reportTypeMemberThroughValue(base, member.name, member.name_span)) return .invalid;
         if (try self.memberKey(base, member.name)) |key| {
             if (try self.reportAbstractThroughSuper(member, key)) return .invalid;
-            return self.typeOfMethodValue(expression, base, member.name);
+            return self.typeOfMethodValue(expression, base, member.name, capture);
         }
         if (try self.reportTraitPrivate(base, member.name, member.name_span)) return .invalid;
         try self.report(
@@ -7631,7 +7749,7 @@ fn typeOfOptionalObjectMember(self: *Checker, member: Ast.Expression.Member) Err
 /// calls the method on its own copy of the receiver, which a changing method
 /// keeps changing from one call to the next. Nothing about the receiver's
 /// place is checked, since the copy is the only thing that can change.
-fn typeOfMethodValue(self: *Checker, expression: *const Ast.Expression, owner: Type, name: []const u8) Error!Type {
+fn typeOfMethodValue(self: *Checker, expression: *const Ast.Expression, owner: Type, name: []const u8, expected: ?Type) Error!Type {
     const key = (try self.memberKey(owner, name)).?;
     try self.method_calls.put(self.arena, expression, key);
     const declared = try self.signatureFor(key);
@@ -7640,11 +7758,7 @@ fn typeOfMethodValue(self: *Checker, expression: *const Ast.Expression, owner: T
         return .invalid;
     }
     const signature = try self.signatureOn(declared, owner);
-    return Type.functionOf(self.arena, .{
-        .parameters = signature.parameters,
-        .parameter_names = signature.parameter_names,
-        .return_type = signature.return_type,
-    });
+    return self.capturedFunction(signature, expected, name, expression.data.member.name_span);
 }
 
 /// A method call such as `scores.append(10)`.
@@ -7668,6 +7782,7 @@ fn typeOfMethodCall(
     expression: *const Ast.Expression,
     call: Ast.Expression.Call,
     member: Ast.Expression.Member,
+    expected_result: ?Type,
 ) Error!Type {
     if (member.optional) return self.typeOfOptionalObjectMethodCall(expression, call, member);
     // Section 10.2: "Before all fields are ready ... instance methods may not
@@ -7828,7 +7943,7 @@ fn typeOfMethodCall(
         try self.typeArguments(call.arguments);
         return .invalid;
     }
-    if (base.kind == .struct_value) return self.typeOfStructMethodCall(expression, call, member, base);
+    if (base.kind == .struct_value) return self.typeOfStructMethodCall(expression, call, member, base, expected_result);
     if (base.kind == .range) return self.typeOfRangeMethod(call, member);
     if (base.kind == .string) return self.typeOfStringMethod(call, member);
     if (base.kind == .bytes) return self.typeOfBytesMethod(call, member);
@@ -8130,7 +8245,7 @@ fn typeOfOptionalObjectMethodCall(self: *Checker, expression: *const Ast.Express
         return .invalid;
     }
     const present = base.payload();
-    const result = try self.typeOfStructMethodCall(expression, call, member, present);
+    const result = try self.typeOfStructMethodCall(expression, call, member, present, null);
     if (result.kind != .invalid) {
         // A struct's changing method has nowhere to write its change back to
         // through `?.`, which only ever reads the receiver's value (4.5); a
@@ -10657,7 +10772,7 @@ fn typeOfCall(
         // A tuple position holding a block is called through its value, not as
         // a method of the tuple.
         if (call.callee.data == .member and call.callee.data.member.position == null) {
-            return self.typeOfMethodCall(expression, call, call.callee.data.member);
+            return self.typeOfMethodCall(expression, call, call.callee.data.member, expected_construction);
         }
         // Anything that is not a plain name — a lambda called where it is
         // written, an element of a list of functions — is called through its
@@ -10884,13 +10999,21 @@ fn typeOfCall(
     }
 
     const signature = try self.signatureFor(key);
-    try self.checkArguments(call, name, try self.parametersOf(
+    var parameters = try self.parametersOf(
         signature,
         self.declarations.get(key).?.parameters,
         "Match the number of arguments to the function's parameters.",
-    ));
+    );
+    var inference: ?Inference = null;
+    if (signature.type_parameters.len > 0) {
+        inference = try Inference.init(self.arena, signature.type_parameters);
+        inference.?.seed(signature.return_type, expected_construction);
+        parameters.inference = &inference.?;
+    }
+    try self.checkArguments(call, name, parameters);
 
     if (!self.in_function) try self.checkCaptures(expression.span, key, name);
+    if (inference) |*working| return self.finishGenericCall(call, name, working, signature.return_type);
     return signature.return_type;
 }
 
@@ -11604,6 +11727,36 @@ fn checkConstruction(self: *Checker, call: Ast.Expression.Call, key: []const u8,
     });
 }
 
+/// Section 11.3: a call to a generic function or method, whose own types
+/// come from its arguments and, for what they leave open, from where its
+/// result goes. Returns the result with them in place.
+fn finishGenericCall(self: *Checker, call: Ast.Expression.Call, name: []const u8, inference: *Inference, result: Type) Error!Type {
+    if (!inference.bound) return .invalid;
+    for (inference.parameters, inference.solved) |parameter, answer| {
+        const found = answer orelse {
+            try self.reportWithHelp(
+                call.callee.span,
+                "Emerald cannot tell what `{s}` is for this call to `{s}`",
+                .{ parameter.name, name },
+                "Nothing passed here says what `{s}` is. Pass a value that does, or write the type where the result is kept, as in `const value: Int = ...`.",
+                .{parameter.name},
+            );
+            return .invalid;
+        };
+        if (found.optional) {
+            try self.reportWithHelp(
+                call.callee.span,
+                "this would make `{s}` {f} for this call to `{s}`, and a type parameter cannot be optional",
+                .{ parameter.name, found, name },
+                "Pass a value that is there, using `.or(...)` or a check against `nothing` first, or wrap it in a struct.",
+                .{},
+            );
+            return .invalid;
+        }
+    }
+    return inference.substituted(self.arena, result);
+}
+
 /// Section 11.3's `Grid(3, 3, ".")`: a generic type is built without its
 /// types, which come from where the value goes, then from its arguments.
 fn typeOfGenericConstruction(
@@ -11932,6 +12085,16 @@ const Inference = struct {
         name: []const u8,
     };
 
+    /// What the type a call is expected to give says, first, as an
+    /// annotation does for a construction: `const rates: List[Float] =
+    /// repeated([1, 2], 3)` makes the whole numbers Floats. A result that is
+    /// always there may go where an optional is expected.
+    fn seed(self: *Inference, result: Type, expected: ?Type) void {
+        const wanted = expected orelse return;
+        if (wanted.kind == .invalid or wanted.kind == .nothing) return;
+        self.unify(result, if (wanted.optional and !result.optional) wanted.payload() else wanted);
+    }
+
     fn init(arena: std.mem.Allocator, parameters: []const *const Type.Parameter) Error!Inference {
         const solved = try arena.alloc(?Type, parameters.len);
         @memset(solved, null);
@@ -12241,9 +12404,31 @@ fn checkArguments(
 
     const inference = parameters.inference orelse return;
     inference.bound = true;
+    // A block is told what it receives once the arguments before it have
+    // said, and what it gives back says what is left (5.4): `mapped` learns
+    // its `U` from the block's result.
+    for (inference.pending.items) |*pending| {
+        if (pending.actual != null) continue;
+        const target = try inference.substituted(self.arena, pending.declared);
+        const unknown = try inference.unsolved(self.arena);
+        if (!target.mentionsAnyOf(unknown)) {
+            pending.actual = try self.typeOfExpected(pending.argument, target);
+            continue;
+        }
+        if (pending.argument.data != .lambda or target.kind != .function) continue;
+        const signature = target.signature.?;
+        const receives_known = for (signature.parameters) |parameter| {
+            if (parameter.mentionsAnyOf(unknown)) break false;
+        } else true;
+        if (!receives_known) continue;
+        const open = try Type.functionOf(self.arena, .{ .parameters = signature.parameters, .return_type = .invalid });
+        const actual = try self.typeOfExpected(pending.argument, open);
+        pending.actual = actual;
+        inference.unify(pending.declared, actual);
+    }
     const unknown = try inference.unsolved(self.arena);
     for (inference.pending.items) |pending| {
-        // Reported once, by the construction, as a type it cannot tell.
+        // Reported once, by the call, as a type it cannot tell.
         if (pending.declared.mentionsAnyOf(unknown)) continue;
         const target = try inference.substituted(self.arena, pending.declared);
         const actual = pending.actual orelse try self.typeOfExpected(pending.argument, target);
@@ -12331,6 +12516,10 @@ fn typeOfValueCall(self: *Checker, call: Ast.Expression.Call, callee: Type, name
 
     for (call.arguments, signature.parameters) |argument, expected| {
         const actual = try self.typeOfExpected(argument, expected);
+        // The value may be a generic function taken as a value, whose own
+        // `T` is erased, so a whole number given as a Float is widened here
+        // (11.3). For any other function the interpreter would widen it anyway.
+        if (expected.payload().kind == .float and actual.payload().kind == .int) try self.widenings.put(self.arena, argument, {});
         if (actual.assignableTo(expected)) continue;
         try self.report(
             argument.span,

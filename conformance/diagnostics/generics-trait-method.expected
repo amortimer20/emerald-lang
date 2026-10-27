@@ -1,0 +1,4 @@
+diagnostics/generics-trait-method.em:2:15: a trait's method cannot take type parameters yet
+      func show[Item](item: Item): String
+                ^^^^
+Every type that adopts the trait would have to supply a generic method. Take a block instead, or move the method out of the trait.

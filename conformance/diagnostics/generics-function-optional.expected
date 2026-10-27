@@ -1,0 +1,4 @@
+diagnostics/generics-function-optional.em:5:7: this would make `Item` Int? for this call to `same`, and a type parameter cannot be optional
+  print(same("4".to_int_maybe()))
+        ^^^^
+Pass a value that is there, using `.or(...)` or a check against `nothing` first, or wrap it in a struct.

@@ -1,0 +1,4 @@
+diagnostics/generics-function-cannot-tell.em:5:15: Emerald cannot tell what `Item` is for this call to `empty_list`
+  const items = empty_list()
+                ^^^^^^^^^^
+Nothing passed here says what `Item` is. Pass a value that does, or write the type where the result is kept, as in `const value: Int = ...`.
