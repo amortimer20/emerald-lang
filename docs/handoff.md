@@ -186,7 +186,7 @@ automated sweeps (PR #41: the exact-work test replacing the flaky timing test, a
 editor sweep of 189,662 requests that found and fixed a signature-help crash, and a million fuzz
 cases that found and fixed a formatter idempotence bug; the evidence is in the journal and
 `docs/qa/`). Extension 0.3.0 is published on the Marketplace (2026-10-04; byte-identical to a
-build of emerald-vscode `638d8cd`); it has no `v0.3.0` tag yet (C4 below).
+build of emerald-vscode `638d8cd`, tagged `v0.3.0`).
 
 Next: the work before 1.0 (roadmap items 3 onward; revised 2026-10-11: the implementation stays in
 Zig, networking folds into completing the initial standard library, no web framework, and multicore,
@@ -313,11 +313,9 @@ compiler), or the compiler depends on it.
 2. **A QA iteration, then the 0.7.0 release**: done, 0.7.0 released 2026-10-11. The full
    checklist is in the journal (2026-10-27). Still open from it, both the user's: B4 (read the
    site from Install through the first lessons, in both themes and at phone width) and B5
-   (reproduce the red "not defined" editor errors and send the message and its line), and C4
-   below.
-   - [ ] C4 (the user) Extension 0.3.0 is published (Marketplace, 2026-10-04; byte-identical to
-     emerald-vscode `638d8cd`), but no `v0.3.0` tag exists: the remote has only `v0.2.1`, and on
-     2026-10-27 the local checkout had none either. Recreate it on `638d8cd` and push it.
+   (reproduce the red "not defined" editor errors and send the message and its line). C4, the
+   extension's `v0.3.0` tag, was missing everywhere; with the user's go-ahead it was recreated as
+   an annotated tag on emerald-vscode `638d8cd` and pushed (2026-10-27).
 
 ### Before 1.0 (the user, 2026-10-03; revised 2026-10-11)
 
