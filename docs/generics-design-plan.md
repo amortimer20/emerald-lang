@@ -597,15 +597,18 @@ effort, per `AGENTS.md`. The large files (`Checker.zig`, `Interpreter.zig`, `Par
 
 ## Decisions on the open questions (accepted 2026-10-17)
 
-1. **The deciding question** (first course, or through data structures): undecided. The user
-   leans toward carrying students into elementary data structures. Most of that work needs
-   only concrete types, so the wall log decides rather than the audience alone.
+1. **The deciding question** (first course, or through data structures): decided 2026-10-28.
+   Emerald is a first-course language with a path into elementary data structures. Generics
+   are taught late, after traits and operator overloading; introductory material never needs
+   them; a data-structures unit (linked list, tree, stack, cache) is where they are taught.
 2. **Reserve the syntax now:** yes. Built (PR #43).
 3. **Gate:** about a dozen wall-log entries across at least three shapes, or one data-structures
    program the user wants to ship in `examples/` and cannot write. Claude logs what it hits while
    writing or reviewing programs; the user adds classroom and QA cases. The log is
    [`generics-wall-log.md`](generics-wall-log.md). It is reviewed at the 1.0 review, or sooner if
-   the user asks.
+   the user asks. *Superseded:* the user chose to build without the gate (2026-10-17, confirmed
+   2026-10-26), and on 2026-10-28 retired the log as a gate; it now collects friction with
+   generics as built, for the 1.0 review.
 4. **One trait per parameter,** composing a trait for more (5.2): yes.
 5. **Optional type arguments:** reject, relaxable later.
 6. **Float widening:** the checker records it (5.6); the teaching-error fallback only if that

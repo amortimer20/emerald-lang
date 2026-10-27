@@ -204,10 +204,12 @@ and the roadmap, every example checked against a build of this main. It describe
 its release, so deploy it with 0.8.0 (the user deploys);
 the next release notes are drafted in
 [`release-notes-0.8.0.md`](release-notes-0.8.0.md) (generics, enum data, the new members, and the `Set` fix); the one review item deferred from the branch, passing the expected type as a parameter
-rather than through checker fields, is done (PR #45, `claude/expected-type`). The `claude/generics` worktree is removed. The audience question (first course, or
-through data structures) is undecided; the user leans toward elementary data structures. The parenthesis-free
-header block and a deprecation story
-still need the user's decisions. Still open from the QA pass: B4
+rather than through checker fields, is done (PR #45, `claude/expected-type`). The `claude/generics` worktree is removed. The user decided the remaining item-3 questions on 2026-10-28: Emerald is a first-course
+language with a path into elementary data structures (rewrite-context 1), the generics wall log
+is retired as a gate and now collects friction for the 1.0 review, the parenthesis-free header
+block is not for 1.0 (rewrite-context 7.4), and deprecation follows
+[`deprecation-design-plan.md`](deprecation-design-plan.md), accepted and not yet built (it waits
+for the user's go-ahead). Still open from the QA pass: B4
 (reading the site) and B5 (reproducing the red "not defined" editor errors) were not reported;
 the flaky-test cause is settled (the exact-work test). The Zig 0.17 upgrade waits for 0.17.1.
 
@@ -579,11 +581,9 @@ not yet discussed:
 
 ## Active rough edges
 
-- An idea the user will consider later (2026-10-01; not planned, and nothing changes until they
-  decide): let a trailing block in an `if`, `while`, `for`, or `case` header work without the
-  parentheses 7.4 requires, as in `if items.any? { item => item > 1 } {`. Every lambda has `=>`, even
-  with no parameters, and a body never starts with parameters followed by `=>`, so a short
-  lookahead after the `{` tells a block argument from the body. Parentheses would stay allowed.
+- The parenthesis-free header block (`if items.any? { item => item > 1 } {`) is decided: not for
+  1.0 (the user, 2026-10-28; rewrite-context 7.4 records why). Its diagnostic now offers both the
+  parentheses and a named result.
 - **Language ideas for after 1.0's basics (the user, 2026-10-02; not planned, nothing designed):**
   enums that carry data, user-defined generic types and functions, and user-defined iterables
   (all deferred by the spec; see 11.3). Built-in `List[T]`, `Dict`, `Set`, `Task[T]`, and

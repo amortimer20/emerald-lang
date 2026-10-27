@@ -67,6 +67,10 @@ The governing principles are settled:
 Emerald is experimental. Compatibility is valuable once users depend on a release, but
 the pre-1.0 language may remove ideas that do not survive real programs.
 
+**Audience (the user, 2026-10-28):** a first-course language with a path into elementary data
+structures. Introductory material never needs generics, traits, or tasks; they are taught later,
+and a data-structures unit (linked lists, trees, stacks, caches) is where generics are taught.
+
 ## 2. A first program
 
 The introductory surface is settled:
@@ -1206,6 +1210,14 @@ if (items.any? { item => item.valid?() }) {
     print("Found one")
 }
 ```
+
+A form without the parentheses, `if items.any? { item => item.valid?() } {`, was considered and is
+not part of 1.0 (the user, 2026-10-28). A short lookahead could tell the block from the body, but
+two brace groups on one line are exactly where a beginner cannot see which brace opens the body,
+two spellings would need one canonical formatter output, and a missing `=>` would silently turn the
+block into the body. Adding it later breaks no program, so it waits for evidence (principle 7).
+Meanwhile the diagnostic for the missing parentheses offers both corrections: parentheses, or a
+named result on the line before (`const found = items.any? { ... }`), which usually reads best.
 
 ### 7.5 Method values
 
