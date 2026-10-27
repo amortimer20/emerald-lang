@@ -200,8 +200,8 @@ classes, enums, functions, and methods, `[T with Trait]` constraints, and `compa
 `docs/language/generics.md` and `examples/generics.em` teach it. **Next for this feature:** the
 website needs generics pages and `compare`, `equals`, and `hash` sections on its Int, Float,
 String, and Bool pages (the editor catalog links `builtins/types/<type>/#compare` and so on, which
-the website's parity and link checks will look for); the next release notes should list generics
-and the new members; and one review item is left for its own change, passing the expected type to
+the website's parity and link checks will look for); the next release notes are drafted in
+[`release-notes-0.8.0.md`](release-notes-0.8.0.md) (generics, enum data, the new members, and the `Set` fix); and one review item is left for its own change, passing the expected type to
 `typeOfCall` and member expressions as a parameter rather than through checker fields. The
 `claude/generics` worktree (`~/.cache/emerald-worktrees/generics`) can be removed. The audience question (first course, or
 through data structures) is undecided; the user leans toward elementary data structures. The parenthesis-free
