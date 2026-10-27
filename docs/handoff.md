@@ -198,9 +198,10 @@ classes, enums, functions, and methods, `[T with Trait]` constraints, and `compa
 `hash` on the built-in scalars are in; rewrite-context 11.3 states the rules, the plan's
 "Settled while building" records each slice's decisions and the whole-branch review, and
 `docs/language/generics.md` and `examples/generics.em` teach it. **Next for this feature:** the
-website's generics page and the `compare`, `equals`, and `hash` sections on its Int, Float, String,
-and Bool pages are written on emerald-website's `claude/generics-pages` branch (`6437c41`, every
-example checked against a build of main), to merge and deploy with 0.8.0 rather than before it;
+website is up to date on its `main` (`882a878`): a Generics page, `compare`, `equals`, and `hash` on
+the Int, Float, String, and Bool pages, enum data on the Enums, Case, JSON, CSV, and Console pages,
+and the roadmap, every example checked against a build of this main. It describes 0.8.0 ahead of
+its release, so deploy it with 0.8.0 (the user deploys);
 the next release notes are drafted in
 [`release-notes-0.8.0.md`](release-notes-0.8.0.md) (generics, enum data, the new members, and the `Set` fix); the one review item deferred from the branch, passing the expected type as a parameter
 rather than through checker fields, is done (PR #45, `claude/expected-type`). The `claude/generics` worktree is removed. The audience question (first course, or
@@ -218,10 +219,9 @@ slices shipped: declarations, construction, display, equality, keys across every
 JSON/CSV/table refusals, formatting, `case` matches that name a choice's data, editor support,
 `examples/enum-data.em`, the guide and reference updates, and fuzz templates. The plan's
 settled notes and the ten items the whole-branch review found record the details;
-rewrite-context 6.3 and 12 record the behavior. **Next for this feature:** the website's enum,
-case, JSON, CSV, and table pages change with the release that ships it, and its release notes
-should list the feature and the `Set` fix (a set of a later-declared type holding a list was
-accepted before).
+rewrite-context 6.3 and 12 record the behavior. The website's Enums, Case, JSON, CSV, and Console
+pages now teach it (emerald-website `882a878`), and the 0.8.0 release notes draft lists it and the
+`Set` fix.
 
 **Known editor gap (predates the enum plan):** named labels at call sites are not
 tracked, so renaming a struct field leaves `Point(x: 1)` unchanged and breaks it.
