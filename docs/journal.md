@@ -6009,7 +6009,7 @@ never offered a named result; it now offers both corrections without naming a ke
 Deprecation gets `@deprecated("message")` and a release policy, in an accepted plan that waits for
 a go-ahead to build; warnings keep their exit status of `1`, deprecations included.
 
-## Named labels are references (2026-10-28)
+## 2026-10-28: Named labels are references
 
 Renaming a struct field left `Point(x: 1)` unchanged and broke it, and renaming an enum choice's
 data item was refused for the same reason: the resolver records no target for a named argument's
