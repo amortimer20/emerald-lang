@@ -191,22 +191,19 @@ build of emerald-vscode `638d8cd`, tagged `v0.3.0`).
 Next: the work before 1.0 (roadmap items 3 onward; revised 2026-10-11: the implementation stays in
 Zig, networking folds into completing the initial standard library, no web framework, and multicore,
 Godot bindings, and a debugger come after 1.0). Item 3: the enum plan is built and merged
-(below). **Generics are being built** on `claude/generics` (worktree
-`~/.cache/emerald-worktrees/generics`), following
-[`generics-design-plan.md`](generics-design-plan.md): the user chose on 2026-10-17, and confirmed
-on 2026-10-26, to build without waiting for the wall log, which stays as a record. Slices 1
-(generic structs and classes), 2 (generic functions and methods), 3 (constraints, with
-`compare`, `equals`, and `hash` on the built-in scalars), and 4 (generic enums) are done on the
-branch; slice 5 (editor support, the guide page `docs/language/generics.md`,
-`examples/generics.em`, and fuzz templates) is done too. The whole-branch review (`/code-review` at high effort) is done and its fixes are
-in (the plan's "Whole-branch review" lists them), the branch is synced with main, and it is in
-a pull request awaiting CI and merge. **Website, when this
-ships:** the Int, Float, String, and Bool pages need `compare`, `equals`, and `hash` sections
-with those anchors (the catalog links `builtins/types/<type>/#compare` and so on, which the
-website's parity and link checks will look for), and generics need their own pages. The
-plan's "Settled while building" has each slice's decisions. One review item is left for its own
-change: passing the expected type to `typeOfCall` and member expressions as a parameter rather
-than through checker fields. The audience question (first course, or
+(below). **Generics are merged (PR #44, `60726cf`, 2026-10-27)**, built slice by slice from
+[`generics-design-plan.md`](generics-design-plan.md) after the user chose (2026-10-17, confirmed
+2026-10-26) to build without waiting for the wall log, which stays as a record. Generic structs,
+classes, enums, functions, and methods, `[T with Trait]` constraints, and `compare`, `equals`, and
+`hash` on the built-in scalars are in; rewrite-context 11.3 states the rules, the plan's
+"Settled while building" records each slice's decisions and the whole-branch review, and
+`docs/language/generics.md` and `examples/generics.em` teach it. **Next for this feature:** the
+website needs generics pages and `compare`, `equals`, and `hash` sections on its Int, Float,
+String, and Bool pages (the editor catalog links `builtins/types/<type>/#compare` and so on, which
+the website's parity and link checks will look for); the next release notes should list generics
+and the new members; and one review item is left for its own change, passing the expected type to
+`typeOfCall` and member expressions as a parameter rather than through checker fields. The
+`claude/generics` worktree (`~/.cache/emerald-worktrees/generics`) can be removed. The audience question (first course, or
 through data structures) is undecided; the user leans toward elementary data structures. The parenthesis-free
 header block and a deprecation story
 still need the user's decisions. Still open from the QA pass: B4

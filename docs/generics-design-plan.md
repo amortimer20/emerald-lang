@@ -1,6 +1,6 @@
 # Generics: design plan
 
-Status: accepted, 2026-10-17, with building gated. The user accepted every recommendation in
+Status: built and merged (PR #44, `60726cf`, 2026-10-27). Accepted 2026-10-17, with building gated. The user accepted every recommendation in
 the table below and the answers to its open questions as recommended. Accepting them settles the
 design to build *if* the gate in section 3 is met. On 2026-10-17 the user chose to build now
 instead of waiting for the gate, and on 2026-10-26 confirmed it ("let's begin implementing

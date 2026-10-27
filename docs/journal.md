@@ -5978,3 +5978,9 @@ leave an argument unchecked and crash the interpreter (`Outcome.success([])`), a
 eligibility lost a struct's type arguments one level down (`Set[Pair[Int]]` with a `Box[T]`
 field). Both now have cases. One item, passing the expected type as a parameter instead of
 through checker fields, was left for a change of its own.
+
+## 2026-10-27: Generics merged
+
+PR #44 merged as `60726cf` after its 14 CI checks passed: the five slices, the review fixes, and
+a merge of `main`'s handoff cleanups. The handoff's generics status now points at the remaining
+follow-ups (website pages, release notes, and the expected-type refactor the review deferred).
