@@ -1,0 +1,4 @@
+diagnostics/generics-compare-mismatch.em:1:17: this is Float, but `compare` on Int needs another Int
+  print(3.compare(2.5))
+                  ^^^
+Compare a value with one of its own type, or convert it first.

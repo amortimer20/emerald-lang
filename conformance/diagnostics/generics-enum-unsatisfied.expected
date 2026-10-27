@@ -1,0 +1,4 @@
+diagnostics/generics-enum-unsatisfied.em:10:14: `Tree` needs `Item` values that can be put in order, and Player cannot
+  const tree = Tree.branch(Tree.empty, Player("Ava"), Tree.empty)
+               ^^^^^^^^^^^
+Add `with Ordered` to `Player` and give it what `Ordered` requires.

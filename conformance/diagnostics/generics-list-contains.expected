@@ -1,0 +1,4 @@
+diagnostics/generics-list-contains.em:2:18: `contains?` compares `Item` values with `==`, and `Item` could be any type
+      return items.contains?(wanted)
+                   ^^^^^^^^^
+Write `Item with Equatable` where `Item` is declared to require that its values can be compared.

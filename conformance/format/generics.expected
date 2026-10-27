@@ -1,0 +1,9 @@
+struct Pair[First, Second] {
+    var first: First
+    var second: Second
+    func swapped(): Pair[Second, First] {
+        return Pair(self.second, self.first)
+    }
+}
+const pairs: List[Pair[String, Int]] = [Pair("a", 1)]
+const box: Pair[Int, Int] = Pair(1, 2)

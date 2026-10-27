@@ -1,0 +1,6 @@
+func largest[T  with   Ordered](items:List[T]):T? {
+    return nothing
+}
+class Cache[Key with Hashable,Value] {
+    var _entries:Dict[Key,Value] = []
+}

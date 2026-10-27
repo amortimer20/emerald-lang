@@ -1,0 +1,4 @@
+diagnostics/generics-optional-inferred.em:6:13: this would make `Item` Int? for `Box`, and a type in brackets cannot be optional
+  const box = Box(maybe)
+              ^^^
+Pass a value that is there, using `.or(...)` or a check against `nothing` first, or wrap it in a struct.

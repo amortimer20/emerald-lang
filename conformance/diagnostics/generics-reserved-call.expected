@@ -1,4 +1,0 @@
-diagnostics/generics-reserved-call.em:5:15: `Stack` does not take types in brackets
-  const stack = Stack[Int]()
-                ^^^^^
-Only `List`, `Dict`, `Set`, `Task`, and `Channel` take types in brackets. Emerald does not have generic types yet.

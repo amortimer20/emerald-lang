@@ -1,0 +1,4 @@
+diagnostics/generics-constraint-two-traits.em:1:30: a type parameter can require only one trait
+  func show[Item with Ordered, Textual](item: Item) {
+                               ^^^^^^^
+Write a trait that builds on both, as in `trait Sortable with Ordered, Textual { }`, and require that one: `Item with Sortable`.

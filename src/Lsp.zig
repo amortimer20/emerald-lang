@@ -1167,6 +1167,15 @@ fn onHover(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: P
 
     const source = &loaded.project.files[loaded.index].source;
     const offset = offsetFromPosition(source, position);
+    if (parameterAt(&analysis, loaded.index, offset)) |parameter| {
+        const contents = try renderParameterHover(gpa, parameter);
+        defer gpa.free(contents);
+        const site = for (analysis.checked.parameter_sites) |candidate| {
+            if (candidate.file == loaded.index and offset >= candidate.span.start and offset <= candidate.span.end) break candidate.span;
+        } else parameterTarget(parameter).span;
+        try respond(gpa, out, id, Hover{ .contents = .{ .value = contents }, .range = lspRange(source, site) });
+        return;
+    }
     const found = expressionAt(&analysis, loaded.index, offset) orelse {
         if (try definitionAt(gpa, &analysis, loaded.index, offset)) |target| {
             if (try describeTarget(gpa, &analysis, target)) |item| {
@@ -1457,6 +1466,10 @@ fn onDefinition(server: *Server, gpa: std.mem.Allocator, uri: []const u8, positi
 /// an identifier, a member access, an assignment destination, a type annotation,
 /// or a declaration name itself.
 fn definitionAt(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, file: u32, offset: u32) !?Resolver.Target {
+    // 0. A type parameter (11.3), which the checker found wherever it is
+    // written, since only it knows which declaration's `T` a name is.
+    if (parameterAt(analysis, file, offset)) |parameter| return parameterTarget(parameter);
+
     // 1. Innermost expression at cursor.
     if (expressionAt(analysis, file, offset)) |found| {
         const expr = found.expression;
@@ -1809,6 +1822,10 @@ fn checkTypeExpr(type_expr: Ast.TypeExpression, file: u32, offset: u32, analysis
             if (checkTypeExpr(res.*, file, offset, analysis)) |t| return t;
         }
     }
+    // Section 11.3's `Box[Player]`, past the name itself.
+    for (type_expr.arguments) |argument| {
+        if (checkTypeExpr(argument, file, offset, analysis)) |t| return t;
+    }
 
     if (type_expr.name.len > 0) {
         // The segment under the cursor: `Console` or `Color` in `Console.Color`.
@@ -1953,11 +1970,13 @@ fn findTypeInStatement(statement: Ast.Statement, file: u32, offset: u32, analysi
             if (d.annotation) |ann| if (checkTypeExpr(ann, file, offset, analysis)) |t| return t;
         },
         .function_declaration => |f| {
+            for (f.type_parameters) |parameter| if (parameter.bound) |bound| if (checkTypeExpr(bound, file, offset, analysis)) |t| return t;
             for (f.parameters) |p| if (checkTypeExpr(p.annotation, file, offset, analysis)) |t| return t;
             if (f.return_annotation) |ann| if (checkTypeExpr(ann, file, offset, analysis)) |t| return t;
             if (findTypeInStatements(f.body.statements, file, offset, analysis)) |t| return t;
         },
         .struct_declaration => |s| {
+            for (s.type_parameters) |parameter| if (parameter.bound) |bound| if (checkTypeExpr(bound, file, offset, analysis)) |t| return t;
             if (s.base) |base| if (checkTypeExpr(base, file, offset, analysis)) |t| return t;
             for (s.traits) |tr| if (checkTypeExpr(tr, file, offset, analysis)) |t| return t;
             for (s.fields) |f| if (checkTypeExpr(f.annotation, file, offset, analysis)) |t| return t;
@@ -1967,11 +1986,13 @@ fn findTypeInStatement(statement: Ast.Statement, file: u32, offset: u32, analysi
                 if (findTypeInStatements(c.body.statements, file, offset, analysis)) |t| return t;
             }
             for (s.methods) |m| {
+                for (m.type_parameters) |parameter| if (parameter.bound) |bound| if (checkTypeExpr(bound, file, offset, analysis)) |t| return t;
                 for (m.parameters) |p| if (checkTypeExpr(p.annotation, file, offset, analysis)) |t| return t;
                 if (m.return_annotation) |ann| if (checkTypeExpr(ann, file, offset, analysis)) |t| return t;
                 if (findTypeInStatements(m.body.statements, file, offset, analysis)) |t| return t;
             }
             for (s.type_functions) |tf| {
+                for (tf.declaration.type_parameters) |parameter| if (parameter.bound) |bound| if (checkTypeExpr(bound, file, offset, analysis)) |t| return t;
                 for (tf.declaration.parameters) |p| if (checkTypeExpr(p.annotation, file, offset, analysis)) |t| return t;
                 if (tf.declaration.return_annotation) |ann| if (checkTypeExpr(ann, file, offset, analysis)) |t| return t;
                 if (findTypeInStatements(tf.declaration.body.statements, file, offset, analysis)) |t| return t;
@@ -2334,10 +2355,10 @@ fn onReferences(server: *Server, gpa: std.mem.Allocator, uri: []const u8, positi
     // `analysis.parsed` ends with the embedded prelude. It participates in
     // resolution, but it has no project URI, so references report only the
     // project's real source files.
-    for (analysis.parsed[0..loaded.project.files.len], 0..) |parsed, file_index| {
+    if (!try collectParameterSites(gpa, &analysis, target, &sites)) for (analysis.parsed[0..loaded.project.files.len], 0..) |parsed, file_index| {
         try collectReferencesInUsings(gpa, &analysis, target, @intCast(file_index), parsed.program.using, &sites);
         try collectReferencesInStatements(gpa, &analysis, target, @intCast(file_index), parsed.program.statements, &sites);
-    }
+    };
 
     var locations: std.ArrayList(Location) = .empty;
     defer {
@@ -2354,6 +2375,55 @@ fn onReferences(server: *Server, gpa: std.mem.Allocator, uri: []const u8, positi
     }
 
     try respond(gpa, out, id, locations.items);
+}
+
+/// The type parameter written at `offset`, at a use or in its `[T]` list.
+fn parameterAt(analysis: *const emerald.Analysis, file: u32, offset: u32) ?*const Type.Parameter {
+    for (analysis.checked.parameter_sites) |site| {
+        if (site.file == file and offset >= site.span.start and offset <= site.span.end) return site.parameter;
+    }
+    for (analysis.checked.parameter_sites) |site| {
+        const parameter = site.parameter;
+        if (parameter.file == file and offset >= parameter.start and offset <= parameter.end) return parameter;
+    }
+    return null;
+}
+
+fn parameterTarget(parameter: *const Type.Parameter) Resolver.Target {
+    return .{ .file = parameter.file, .span = .{ .start = parameter.start, .end = parameter.end } };
+}
+
+/// When `target` is a type parameter's name in its `[T]` list, adds every
+/// place it is written as a type, once each, and returns true. A type
+/// parameter is found only through the checker, never by the name walks.
+fn collectParameterSites(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, target: Resolver.Target, sites: *std.ArrayList(Resolver.Target)) !bool {
+    var found: ?*const Type.Parameter = null;
+    for (analysis.checked.parameter_sites) |site| {
+        if (targetEql(parameterTarget(site.parameter), target)) found = site.parameter;
+    }
+    const parameter = found orelse return false;
+    for (analysis.checked.parameter_sites) |site| {
+        if (site.parameter != parameter) continue;
+        const use: Resolver.Target = .{ .file = site.file, .span = site.span };
+        const seen = for (sites.items) |earlier| {
+            if (targetEql(earlier, use)) break true;
+        } else false;
+        if (!seen) try sites.append(gpa, use);
+    }
+    return true;
+}
+
+fn renderParameterHover(gpa: std.mem.Allocator, parameter: *const Type.Parameter) ![]const u8 {
+    if (parameter.bound) |bound| return std.fmt.allocPrint(
+        gpa,
+        "```emerald\n{s} with {s}\n```\n\nA type parameter of `{s}`, which each use says. Every type given for it adopts `{s}`.",
+        .{ parameter.name, bound.display_name, parameter.owner, bound.display_name },
+    );
+    return std.fmt.allocPrint(
+        gpa,
+        "```emerald\n{s}\n```\n\nA type parameter of `{s}`, which each use says.",
+        .{ parameter.name, parameter.owner },
+    );
 }
 
 fn targetEql(a: Resolver.Target, b: Resolver.Target) bool {
@@ -2499,6 +2569,7 @@ fn collectReferencesInFunction(
     f: Ast.FunctionDeclaration,
     out: *std.ArrayList(Resolver.Target),
 ) std.mem.Allocator.Error!void {
+    for (f.type_parameters) |parameter| if (parameter.bound) |bound| try collectReferencesInTypeExpression(gpa, analysis, target, file, bound, out);
     for (f.parameters) |p| {
         try collectReferencesInTypeExpression(gpa, analysis, target, file, p.annotation, out);
         if (p.default) |d| try collectReferencesInExpression(gpa, analysis, target, file, d, out);
@@ -2515,6 +2586,7 @@ fn collectReferencesInStruct(
     s: Ast.StructDeclaration,
     out: *std.ArrayList(Resolver.Target),
 ) std.mem.Allocator.Error!void {
+    for (s.type_parameters) |parameter| if (parameter.bound) |bound| try collectReferencesInTypeExpression(gpa, analysis, target, file, bound, out);
     if (s.base) |base| try collectReferencesInTypeExpression(gpa, analysis, target, file, base, out);
     for (s.traits) |tr| try collectReferencesInTypeExpression(gpa, analysis, target, file, tr, out);
     for (s.fields) |field| {
@@ -2602,6 +2674,8 @@ fn collectReferencesInTypeExpression(
         for (sig.parameters) |param| try collectReferencesInTypeExpression(gpa, analysis, target, file, param, out);
         if (sig.result) |res| try collectReferencesInTypeExpression(gpa, analysis, target, file, res.*, out);
     }
+    // Section 11.3's `Box[Player]`.
+    for (type_expr.arguments) |argument| try collectReferencesInTypeExpression(gpa, analysis, target, file, argument, out);
 
     if (type_expr.name.len > 0) {
         // Each segment names something of its own: `Console.Color` refers to
@@ -2757,10 +2831,10 @@ fn onPrepareRename(server: *Server, gpa: std.mem.Allocator, uri: []const u8, pos
     var sites: std.ArrayList(Resolver.Target) = .empty;
     defer sites.deinit(gpa);
     try sites.append(gpa, target);
-    for (analysis.parsed, 0..) |parsed, file_index| {
+    if (!try collectParameterSites(gpa, &analysis, target, &sites)) for (analysis.parsed, 0..) |parsed, file_index| {
         try collectReferencesInUsings(gpa, &analysis, target, @intCast(file_index), parsed.program.using, &sites);
         try collectReferencesInStatements(gpa, &analysis, target, @intCast(file_index), parsed.program.statements, &sites);
-    }
+    };
 
     for (sites.items) |site| {
         if (site.file == loaded.index and offset >= site.span.start and offset <= site.span.end) {
@@ -2816,10 +2890,10 @@ fn onRename(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: 
     var sites: std.ArrayList(Resolver.Target) = .empty;
     defer sites.deinit(gpa);
     try sites.append(gpa, target);
-    for (analysis.parsed, 0..) |parsed, file_index| {
+    if (!try collectParameterSites(gpa, &analysis, target, &sites)) for (analysis.parsed, 0..) |parsed, file_index| {
         try collectReferencesInUsings(gpa, &analysis, target, @intCast(file_index), parsed.program.using, &sites);
         try collectReferencesInStatements(gpa, &analysis, target, @intCast(file_index), parsed.program.statements, &sites);
-    }
+    };
 
     var by_file: std.AutoArrayHashMapUnmanaged(u32, std.ArrayList(TextEdit)) = .empty;
     defer {
@@ -3393,7 +3467,9 @@ fn sourceSignature(
     errdefer gpa.free(parameters);
     var label: std.Io.Writer.Allocating = .init(gpa);
     defer label.deinit();
-    try label.writer.print("{s}(", .{name});
+    try label.writer.writeAll(name);
+    if (declaration) |function| try Completion.writeTypeParameters(&label.writer, source, function.type_parameters);
+    try label.writer.writeByte('(');
     for (0..count) |index| {
         if (index != 0) try label.writer.writeAll(", ");
         const parameter_name = if (index < signature.parameter_names.len) signature.parameter_names[index] else "value";
@@ -4206,8 +4282,14 @@ fn appendDescribed(gpa: std.mem.Allocator, items: *std.ArrayList(CompletionItem)
     try items.append(gpa, item);
 }
 
-fn collectValueCompletions(server: *Server, gpa: std.mem.Allocator, analysis: *const emerald.Analysis, value: Type, changeable: bool, file: u32, cursor: u32, out: *std.ArrayList(CompletionItem)) !void {
-    if (value.kind == .invalid) return;
+fn collectValueCompletions(server: *Server, gpa: std.mem.Allocator, analysis: *const emerald.Analysis, written: Type, changeable: bool, file: u32, cursor: u32, out: *std.ArrayList(CompletionItem)) !void {
+    if (written.kind == .invalid) return;
+    // Section 11.3: a `T with Ordered` has its trait's members, and a
+    // trait's members never change the value through `T`.
+    const value = if (written.kind == .type_parameter and !written.optional)
+        if (written.parameter.?.bound) |bound| Type.structOf(bound) else written
+    else
+        written;
     const owner = if (value.optional) "Optional" else nativeOwner(value);
     if (!value.optional and value.kind == .tuple) for (value.elements, 0..) |element, index| {
         const label = try std.fmt.allocPrint(gpa, "{d}", .{index});
@@ -4217,6 +4299,8 @@ fn collectValueCompletions(server: *Server, gpa: std.mem.Allocator, analysis: *c
         try out.append(gpa, item);
     };
     if (!value.optional and value.kind == .struct_value) {
+        const first_member = out.items.len;
+        defer if (written.kind == .type_parameter) renameSelf(gpa, out.items[first_member..], written.parameter.?.name);
         try collectInstanceMembers(gpa, analysis, value.user.?.name, out);
         var index: usize = 0;
         while (index < out.items.len) {
@@ -4243,6 +4327,37 @@ fn collectValueCompletions(server: *Server, gpa: std.mem.Allocator, analysis: *c
         if (member.changes and !changeable) continue;
         try appendDescribed(gpa, out, try Completion.native(gpa, member, value));
     };
+}
+
+/// A trait's member offered on a `T with Trait` takes and gives `T` where
+/// the trait wrote `Self` (11.3). Best effort: a detail that cannot be
+/// rewritten keeps the trait's own spelling.
+fn renameSelf(gpa: std.mem.Allocator, items: []CompletionItem, name: []const u8) void {
+    for (items) |*item| {
+        const detail = item.detail orelse continue;
+        var rewritten: std.Io.Writer.Allocating = .init(gpa);
+        defer rewritten.deinit();
+        var index: usize = 0;
+        while (index < detail.len) {
+            const word_start = index == 0 or !isWordByte(detail[index - 1]);
+            if (word_start and std.mem.startsWith(u8, detail[index..], "Self") and
+                (index + 4 == detail.len or !isWordByte(detail[index + 4])))
+            {
+                rewritten.writer.writeAll(name) catch return;
+                index += 4;
+            } else {
+                rewritten.writer.writeByte(detail[index]) catch return;
+                index += 1;
+            }
+        }
+        const replaced = rewritten.toOwnedSlice() catch return;
+        gpa.free(detail);
+        item.detail = replaced;
+    }
+}
+
+fn isWordByte(byte: u8) bool {
+    return std.ascii.isAlphanumeric(byte) or byte == '_';
 }
 
 fn isProjectNamespace(analysis: *const emerald.Analysis, key: []const u8) bool {
@@ -4410,6 +4525,15 @@ fn describeTarget(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, tar
         .struct_declaration => |declaration| {
             if (declaration.name_span.start == target.span.start) {
                 var item: CompletionItem = .{ .label = declaration.name, .kind = if (declaration.enumeration) 13 else if (declaration.class) 7 else if (declaration.trait) 8 else 22 };
+                errdefer item.deinit(gpa);
+                // Section 11.3: a generic type is shown with its `[T]`.
+                if (declaration.type_parameters.len > 0) {
+                    var detail: std.Io.Writer.Allocating = .init(gpa);
+                    defer detail.deinit();
+                    try detail.writer.writeAll(declaration.name);
+                    try Completion.writeTypeParameters(&detail.writer, source, declaration.type_parameters);
+                    item.detail = try detail.toOwnedSlice();
+                }
                 item.documentation = try Completion.documentation(gpa, source, declaration.name_span);
                 return item;
             }

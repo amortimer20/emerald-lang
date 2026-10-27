@@ -1,0 +1,4 @@
+diagnostics/generics-parameter-key.em:1:33: `Item` could be any type, so it cannot be a dictionary key
+  func count_of[Item](table: Dict[Item, Int]): Int {
+                                  ^^^^
+Write `Item with Hashable` where `Item` is declared to require that its values can be keys.

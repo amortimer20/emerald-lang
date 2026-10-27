@@ -1,4 +1,0 @@
-diagnostics/generics-reserved-function.em:1:13: `largest` cannot take type parameters in brackets yet
-  func largest[T](items: List[Int]): Int? {
-              ^
-Emerald does not have generic functions yet. Write one function for each kind of value, or take the values in a `List`.

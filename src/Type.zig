@@ -42,6 +42,9 @@ pub const Kind = enum {
     /// Section 10.1's user-defined value type. `user` carries stable identity
     /// and its checked fields.
     struct_value,
+    /// Section 11.3's `T` inside a generic declaration: some type the
+    /// declaration is not told. `parameter` identifies it.
+    type_parameter,
     /// A type that could not be determined because something was already
     /// reported. It is compatible with everything, so one mistake produces one
     /// diagnostic instead of a cascade through every expression containing it.
@@ -59,6 +62,12 @@ key: ?*const Type = null,
 signature: ?*const Signature = null,
 /// Stable metadata for a user-defined type; null for built-ins.
 user: ?*const User = null,
+/// The types a generic declaration was given, `Pair[String, Int]` (11.3).
+/// Inside the declaration they are its own type parameters. Empty for a type
+/// that is not generic.
+type_arguments: []const Type = &.{},
+/// Which type parameter a `.type_parameter` is.
+parameter: ?*const Parameter = null,
 /// Section 4.2's trailing `?`: this value may be absent.
 ///
 /// A flag rather than a wrapping kind, because section 4.5 settles that
@@ -91,6 +100,26 @@ pub const Signature = struct {
     /// names.
     parameter_names: []const []const u8 = &.{},
     return_type: Type,
+    /// Section 11.3: a generic function's or method's own `[T]`, which each
+    /// call works out from its arguments.
+    type_parameters: []const *const Parameter = &.{},
+};
+
+/// One name in a generic declaration's `[T]` list (11.3). Identity is the
+/// pointer: two declarations that both write `T` have different parameters.
+pub const Parameter = struct {
+    name: []const u8,
+    /// Where it is in the declaration's list, which is also where its
+    /// argument is in a use's `type_arguments`.
+    position: usize,
+    /// The trait a `T with Trait` requires, or null.
+    bound: ?*const User = null,
+    /// The declaration's name, for diagnostics.
+    owner: []const u8 = "",
+    /// Where the name is written in its `[T]` list, for the language server.
+    file: u32 = 0,
+    start: u32 = 0,
+    end: u32 = 0,
 };
 
 /// Shared by every occurrence of one user-defined type. The checker allocates
@@ -98,6 +127,11 @@ pub const Signature = struct {
 pub const User = struct {
     name: []const u8,
     display_name: []const u8,
+    /// Section 11.3: the `[T]` list of a generic declaration, empty otherwise.
+    type_parameters: []const *const Parameter = &.{},
+    /// The parameters as types, `Stack[T]`'s `[T]`: the arguments `self` has
+    /// inside the declaration's own members.
+    own_arguments: []const Type = &.{},
     /// Section 10.1: a class's values are shared references rather than
     /// copied values.
     class: bool = false,
@@ -221,7 +255,13 @@ pub fn selfOf(trait: *const User) Type {
 /// Whether `Self` appears anywhere in the type.
 pub fn mentionsSelf(self: Type) bool {
     return switch (self.kind) {
-        .struct_value => self.opaque_self,
+        .struct_value => blk: {
+            if (self.opaque_self) break :blk true;
+            for (self.type_arguments) |argument| {
+                if (argument.mentionsSelf()) break :blk true;
+            }
+            break :blk false;
+        },
         .list, .set, .task, .channel => self.element.?.mentionsSelf(),
         .dictionary => self.key.?.mentionsSelf() or self.element.?.mentionsSelf(),
         .tuple => for (self.elements) |element| {
@@ -234,8 +274,130 @@ pub fn mentionsSelf(self: Type) bool {
             }
             break :blk signature.return_type.mentionsSelf();
         },
+        .nothing, .bool, .int, .float, .string, .bytes, .range, .type_parameter, .invalid => false,
+    };
+}
+
+/// Whether a type parameter appears anywhere in the type.
+pub fn mentionsParameter(self: Type) bool {
+    return switch (self.kind) {
+        .type_parameter => true,
+        .struct_value => for (self.type_arguments) |argument| {
+            if (argument.mentionsParameter()) break true;
+        } else false,
+        .list, .set, .task, .channel => self.element.?.mentionsParameter(),
+        .dictionary => self.key.?.mentionsParameter() or self.element.?.mentionsParameter(),
+        .tuple => for (self.elements) |element| {
+            if (element.mentionsParameter()) break true;
+        } else false,
+        .function => blk: {
+            const signature = self.signature.?;
+            for (signature.parameters) |parameter| {
+                if (parameter.mentionsParameter()) break :blk true;
+            }
+            break :blk signature.return_type.mentionsParameter();
+        },
         .nothing, .bool, .int, .float, .string, .bytes, .range, .invalid => false,
     };
+}
+
+/// Whether one of `parameters` appears anywhere in the type.
+pub fn mentionsAnyOf(self: Type, parameters: []const *const Parameter) bool {
+    return switch (self.kind) {
+        .type_parameter => for (parameters) |parameter| {
+            if (parameter == self.parameter.?) break true;
+        } else false,
+        .struct_value => for (self.type_arguments) |argument| {
+            if (argument.mentionsAnyOf(parameters)) break true;
+        } else false,
+        .list, .set, .task, .channel => self.element.?.mentionsAnyOf(parameters),
+        .dictionary => self.key.?.mentionsAnyOf(parameters) or self.element.?.mentionsAnyOf(parameters),
+        .tuple => for (self.elements) |element| {
+            if (element.mentionsAnyOf(parameters)) break true;
+        } else false,
+        .function => blk: {
+            const signature = self.signature.?;
+            for (signature.parameters) |parameter| {
+                if (parameter.mentionsAnyOf(parameters)) break :blk true;
+            }
+            break :blk signature.return_type.mentionsAnyOf(parameters);
+        },
+        .nothing, .bool, .int, .float, .string, .bytes, .range, .invalid => false,
+    };
+}
+
+/// The type with each of `parameters` replaced by the argument in the same
+/// position. A parameter that is not in the list stays as it is, so a method
+/// of a generic type that was itself written inside another generic keeps the
+/// outer one.
+pub fn substitute(
+    self: Type,
+    allocator: std.mem.Allocator,
+    parameters: []const *const Parameter,
+    arguments: []const Type,
+) std.mem.Allocator.Error!Type {
+    if (parameters.len == 0 or !self.mentionsParameter()) return self;
+    var result = self;
+    switch (self.kind) {
+        .type_parameter => {
+            for (parameters, 0..) |candidate, position| {
+                if (candidate != self.parameter.?) continue;
+                result = arguments[position];
+                // A type argument is never optional, so `T?` stays one `?`.
+                if (self.optional) result.optional = true;
+                break;
+            }
+        },
+        .struct_value => {
+            const replaced = try allocator.alloc(Type, self.type_arguments.len);
+            for (self.type_arguments, replaced) |argument, *slot| slot.* = try argument.substitute(allocator, parameters, arguments);
+            result.type_arguments = replaced;
+        },
+        .list, .set, .task, .channel => {
+            const element = try allocator.create(Type);
+            element.* = try self.element.?.substitute(allocator, parameters, arguments);
+            result.element = element;
+        },
+        .dictionary => {
+            const key = try allocator.create(Type);
+            key.* = try self.key.?.substitute(allocator, parameters, arguments);
+            const element = try allocator.create(Type);
+            element.* = try self.element.?.substitute(allocator, parameters, arguments);
+            result.key = key;
+            result.element = element;
+        },
+        .tuple => {
+            const replaced = try allocator.alloc(Type, self.elements.len);
+            for (self.elements, replaced) |element, *slot| slot.* = try element.substitute(allocator, parameters, arguments);
+            result.elements = replaced;
+        },
+        .function => {
+            const signature = self.signature.?;
+            const replaced = try allocator.alloc(Type, signature.parameters.len);
+            for (signature.parameters, replaced) |parameter, *slot| slot.* = try parameter.substitute(allocator, parameters, arguments);
+            const stored = try allocator.create(Signature);
+            stored.* = .{
+                .parameters = replaced,
+                .parameter_names = signature.parameter_names,
+                .return_type = try signature.return_type.substitute(allocator, parameters, arguments),
+            };
+            result.signature = stored;
+        },
+        .nothing, .bool, .int, .float, .string, .bytes, .range, .invalid => {},
+    }
+    return result;
+}
+
+/// A generic type given its arguments, `Pair[String, Int]` (11.3).
+pub fn withArguments(self: Type, arguments: []const Type) Type {
+    var result = self;
+    result.type_arguments = arguments;
+    return result;
+}
+
+/// A type parameter as a type.
+pub fn parameterOf(parameter: *const Parameter) Type {
+    return .{ .kind = .type_parameter, .parameter = parameter };
 }
 
 /// `[element]`, with the element allocated from `allocator`, which must outlive
@@ -293,16 +455,28 @@ pub fn channelOf(allocator: std.mem.Allocator, element: Type) std.mem.Allocator.
 /// never happen.
 pub fn eligibleKey(self: Type, equatable: ?*const User, hashable: ?*const User) bool {
     var seen: [256]*const User = undefined;
-    return self.eligibleKeyInner(&seen, 0, equatable, hashable);
+    return self.eligibleKeyInner(&seen, 0, equatable, hashable, &.{});
 }
 
-fn eligibleKeyInner(self: Type, seen: *[256]*const User, depth: usize, equatable: ?*const User, hashable: ?*const User) bool {
+/// `arguments` are the type arguments of the generic struct whose fields are
+/// being walked, so a field written `T` is judged by what `T` is there.
+fn eligibleKeyInner(self: Type, seen: *[256]*const User, depth: usize, equatable: ?*const User, hashable: ?*const User, arguments: []const Type) bool {
     if (self.optional) return false;
     return switch (self.kind) {
         .bool, .int, .float, .string, .bytes => true,
+        // Section 11.3: `T` could be any type, and not every type is a key.
+        // Inside a use such as `Pair[String, Int]`, it is its argument.
+        // Inside a use such as `Pair[String, Int]`, it is its argument;
+        // otherwise only `T with Hashable` promises a key.
+        .type_parameter => blk: {
+            const position = self.parameter.?.position;
+            if (position < arguments.len) break :blk arguments[position].eligibleKeyInner(seen, depth, equatable, hashable, &.{});
+            const bound = self.parameter.?.bound orelse break :blk false;
+            break :blk if (hashable) |trait| bound.conformsTo(trait) else false;
+        },
         .tuple => blk: {
             for (self.elements) |element| {
-                if (!element.eligibleKeyInner(seen, depth, equatable, hashable)) break :blk false;
+                if (!element.eligibleKeyInner(seen, depth, equatable, hashable, arguments)) break :blk false;
             }
             break :blk true;
         },
@@ -323,13 +497,24 @@ fn eligibleKeyInner(self: Type, seen: *[256]*const User, depth: usize, equatable
             }
             if (depth == seen.len) break :blk false;
             seen[depth] = user;
+            // `Box[T]` written inside `Pair[T]` means `Pair`'s argument: its
+            // own arguments are read through the ones around it first.
+            var resolved: [16]Type = undefined;
+            if (self.type_arguments.len > resolved.len) break :blk false;
+            for (self.type_arguments, resolved[0..self.type_arguments.len]) |argument, *slot| {
+                slot.* = argument;
+                if (argument.kind == .type_parameter and !argument.optional and argument.parameter.?.position < arguments.len) {
+                    slot.* = arguments[argument.parameter.?.position];
+                }
+            }
+            const inner = resolved[0..self.type_arguments.len];
             for (user.fields) |field| {
-                if (!field.type.eligibleKeyInner(seen, depth + 1, equatable, hashable)) break :blk false;
+                if (!field.type.eligibleKeyInner(seen, depth + 1, equatable, hashable, inner)) break :blk false;
             }
             // Section 8.3 for an enum carrying data: every choice's data, not
             // only the choice a value happens to hold, decides the type.
             for (user.choice_data) |items| for (items) |item| {
-                if (!item.type.eligibleKeyInner(seen, depth + 1, equatable, hashable)) break :blk false;
+                if (!item.type.eligibleKeyInner(seen, depth + 1, equatable, hashable, inner)) break :blk false;
             };
             break :blk true;
         },
@@ -410,7 +595,18 @@ pub fn format(self: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
                 try writer.print(": {f}", .{signature.return_type});
             }
         },
-        .struct_value => try writer.writeAll(if (self.opaque_self) "Self" else self.user.?.display_name),
+        .struct_value => {
+            try writer.writeAll(if (self.opaque_self) "Self" else self.user.?.display_name);
+            if (self.type_arguments.len > 0) {
+                try writer.writeAll("[");
+                for (self.type_arguments, 0..) |argument, position| {
+                    if (position != 0) try writer.writeAll(", ");
+                    try writer.print("{f}", .{argument});
+                }
+                try writer.writeAll("]");
+            }
+        },
+        .type_parameter => try writer.writeAll(self.parameter.?.name),
         .invalid => try writer.writeAll("an unknown type"),
     }
 }
@@ -431,7 +627,7 @@ pub fn isNumber(self: Type) bool {
     if (self.optional) return false;
     return switch (self.kind) {
         .int, .float => true,
-        .nothing, .bool, .string, .bytes, .range, .list, .tuple, .dictionary, .set, .task, .channel, .function, .struct_value, .invalid => false,
+        .nothing, .bool, .string, .bytes, .range, .list, .tuple, .dictionary, .set, .task, .channel, .function, .struct_value, .type_parameter, .invalid => false,
     };
 }
 
@@ -464,7 +660,15 @@ pub fn same(self: Type, other: Type) bool {
     if (self.kind == .invalid or other.kind == .invalid) return true;
     if (self.optional != other.optional) return false;
     if (self.kind != other.kind) return false;
-    if (self.kind == .struct_value) return self.user.? == other.user.? and self.opaque_self == other.opaque_self;
+    if (self.kind == .struct_value) {
+        if (self.user.? != other.user.? or self.opaque_self != other.opaque_self) return false;
+        if (self.type_arguments.len != other.type_arguments.len) return false;
+        for (self.type_arguments, other.type_arguments) |a, b| {
+            if (!a.same(b)) return false;
+        }
+        return true;
+    }
+    if (self.kind == .type_parameter) return self.parameter.? == other.parameter.?;
     if (self.kind == .list or self.kind == .set or self.kind == .task or self.kind == .channel) return self.element.?.same(other.element.?.*);
     if (self.kind == .dictionary) {
         return self.key.?.same(other.key.?.*) and self.element.?.same(other.element.?.*);
@@ -520,6 +724,9 @@ pub fn assignableTo(self: Type, target: Type) bool {
         // Section 11.4: nothing but `Self` is known to be `Self`, while `Self`
         // is a value of its trait and of everything the trait builds on.
         if (target.opaque_self) return self.opaque_self and self.user.? == target.user.?;
+        // Section 11.3: a generic type is invariant in its arguments, so
+        // `Stack[Int]` is not a `Stack[Float]`.
+        if (self.user.? == target.user.? and self.user.?.type_parameters.len > 0) return self.same(target);
         return self.user.?.conformsTo(target.user.?);
     }
 

@@ -3009,9 +3009,10 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
         },
         .list_literal => |elements| for (elements) |element| try self.walkExpression(element),
         .index => |index| {
-            // Section 11.3 reserves `Stack[Int]` for generics. Indexing a type
-            // can never be meant literally, so say what the brackets cannot do
-            // rather than report the type argument as an undefined name.
+            // Section 11.3: `Stack[Int]` names a type, which is never written
+            // where a value goes. Indexing a type can never be meant
+            // literally, so say what the brackets cannot do rather than
+            // report the type argument as an undefined name.
             if (index.base.data == .name and (index.index.data == .name or index.index.data == .index or index.index.data == .member)) {
                 const written = index.base.data.name;
                 const found = self.lookup(written);
@@ -3028,11 +3029,14 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
                     "A type can only be written where a type goes, as in `{s}`.",
                     .{if (std.mem.eql(u8, written, "Dict")) "const ages: Dict[String, Int] = []" else if (std.mem.eql(u8, written, "Channel")) "const numbers: Channel[Int] = Channel(capacity: 3)" else if (std.mem.eql(u8, written, "Task")) "func finish(job: Task[Int])" else if (std.mem.eql(u8, written, "Set")) "const seen: Set[String] = []" else "const names: List[String] = []"},
                 );
-                if (names_type) return self.report(
+                // Section 11.3: a generic type is given its types where the
+                // value is kept, or by its arguments, never at the call.
+                if (names_type) return self.reportWithHelpFmt(
                     index.base.span,
-                    "`{s}` does not take types in brackets",
+                    "`{s}[...]` is a type, not an expression",
                     .{written},
-                    "Only `List`, `Dict`, `Set`, `Task`, and `Channel` take types in brackets. Emerald does not have generic types yet.",
+                    "Build the value without the brackets, as in `{s}(...)`. Types in brackets are written where a value is kept, never where it is built.",
+                    .{written},
                 );
             }
             try self.walkExpression(index.base);

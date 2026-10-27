@@ -191,14 +191,23 @@ build of emerald-vscode `638d8cd`, tagged `v0.3.0`).
 Next: the work before 1.0 (roadmap items 3 onward; revised 2026-10-11: the implementation stays in
 Zig, networking folds into completing the initial standard library, no web framework, and multicore,
 Godot bindings, and a debugger come after 1.0). Item 3: the enum plan is built and merged
-(below); the clean-generics plan is written and accepted with building gated:
-[`generics-design-plan.md`](generics-design-plan.md) (2026-10-17) settles `[T]`/`[T with Trait]` as
-the design *if* the evidence gate is met, and the syntax reservation is merged (PR #43, `d4342ed`).
-The gate is [`generics-wall-log.md`](generics-wall-log.md): log every real program that needs a
-type-specific copy of a container or helper (Claude logs what it hits; the user adds classroom and
-QA cases) and review at the 1.0 review. Nothing past the reservation is built. The audience question
-(first course, or through data structures) is undecided; the user leans toward elementary data
-structures. The parenthesis-free
+(below). **Generics are being built** on `claude/generics` (worktree
+`~/.cache/emerald-worktrees/generics`), following
+[`generics-design-plan.md`](generics-design-plan.md): the user chose on 2026-10-17, and confirmed
+on 2026-10-26, to build without waiting for the wall log, which stays as a record. Slices 1
+(generic structs and classes), 2 (generic functions and methods), 3 (constraints, with
+`compare`, `equals`, and `hash` on the built-in scalars), and 4 (generic enums) are done on the
+branch; slice 5 (editor support, the guide page `docs/language/generics.md`,
+`examples/generics.em`, and fuzz templates) is done too. The whole-branch review (`/code-review` at high effort) is done and its fixes are
+in (the plan's "Whole-branch review" lists them), the branch is synced with main, and it is in
+a pull request awaiting CI and merge. **Website, when this
+ships:** the Int, Float, String, and Bool pages need `compare`, `equals`, and `hash` sections
+with those anchors (the catalog links `builtins/types/<type>/#compare` and so on, which the
+website's parity and link checks will look for), and generics need their own pages. The
+plan's "Settled while building" has each slice's decisions. One review item is left for its own
+change: passing the expected type to `typeOfCall` and member expressions as a parameter rather
+than through checker fields. The audience question (first course, or
+through data structures) is undecided; the user leans toward elementary data structures. The parenthesis-free
 header block and a deprecation story
 still need the user's decisions. Still open from the QA pass: B4
 (reading the site) and B5 (reproducing the red "not defined" editor errors) were not reported;
@@ -625,7 +634,12 @@ not yet discussed:
 
 ## Validation and repository state
 
-Latest (2026-10-16): `zig build test -j1` passed in Debug and in ReleaseSafe on the final
+Latest (2026-10-27, `claude/generics` slice 5): the same gate, plus a ReleaseSafe fuzz campaign of 20,000 cases (seed 20261027). Slice 4: the same gate again, with an LSP sweep of 13,365 requests. Slice 3: the same gate again, with an LSP sweep of 13,975 requests; `tools/check-doc-examples.sh` was not run (no bash 4 here). Slice 2: the same gate as slice 1 passed again, with an LSP sweep of 14,670 requests over the new cases. Slice 1: `zig build test -j1` passed in Debug and in
+ReleaseSafe (816 conformance cases), with `zig fmt --check`, `git diff --check`, and Windows and
+macOS cross-builds; an LSP sweep (hover, completion, definition, references, signature help at
+every position) over six generic documents sent 16,650 requests with no errors. No `.em` link in
+`docs/` changed, so `tools/check-doc-examples.sh` was not run. Earlier (2026-10-16): `zig build
+test -j1` passed in Debug and in ReleaseSafe on the final
 generics-reservation branch (`9e4567a`, merged as PR #43 `d4342ed`), with `zig fmt --check`,
 `git diff --check`, Windows and macOS cross-builds, and green CI on Ubuntu, macOS, and Windows.
 `tools/check-doc-examples.sh` needs bash 4 (`mapfile`), so it does not run under macOS's

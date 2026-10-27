@@ -1,0 +1,4 @@
+diagnostics/generics-not-generic.em:5:20: `Stack` does not take types in brackets
+  const stack: Stack[Int] = Stack()
+                     ^^^
+Only `List`, `Dict`, `Set`, `Task`, `Channel`, and types declared with brackets, such as `class Stack[Item]`, take types in brackets. Write `Stack` alone.

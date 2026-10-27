@@ -24,6 +24,7 @@ so each is written bare and is always reachable qualified (`Emerald.print`, `Eme
 | --- | --- | --- |
 | [`Int`](int.md) | Arithmetic helpers, predicates, number theory, conversion, counting blocks | `conformance/run/int-methods.em` |
 | [`Float`](float.md) | Rounding, classification, conversion, angles, square root | `conformance/run/float-methods.em` |
+| [`Bool`](bool.md) | Display, equality, and hashing | `conformance/run/generics-constraints.em` |
 | [`Math`](math.md) | Constants, trigonometry, logarithms, powers | `conformance/run/math.em` |
 | [`String`](string.md) | Unicode-aware queries, editing, splitting, conversion | `conformance/run/string-methods.em` |
 | [`Bytes`](bytes.md) | Raw binary construction, conversion, indexing, slicing, hex encoding | `conformance/run/bytes-hex.em` |

@@ -1,0 +1,4 @@
+diagnostics/generics-type-arguments-on-parameter.em:2:18: `Item` does not take types in brackets
+      const value: Item[Int]
+                   ^^^^^^^^^
+`Item` stands for one type, whatever it is given. Write `Item` alone.

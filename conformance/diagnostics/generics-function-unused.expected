@@ -1,0 +1,4 @@
+diagnostics/generics-function-unused.em:1:11: warning: `Item` is never used in `size`
+  func size[Item](count: Int): Int {
+            ^^^^
+Use it as the type of a field, parameter, or result, or remove it from the brackets.

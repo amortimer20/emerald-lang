@@ -1,0 +1,4 @@
+diagnostics/generics-constraint-member.em:2:17: `Item` has no method `count`
+      return item.count()
+                  ^^^^^
+`Item with Ordered` promises only what `Ordered` declares.

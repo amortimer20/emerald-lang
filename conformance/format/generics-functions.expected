@@ -1,0 +1,12 @@
+func pick[Item](first: Item): Item {
+    return first
+}
+struct Box[T] {
+    const value: T
+    func Box.of[U](value: U): Box[U] {
+        return Box(value)
+    }
+    func mapped[U](change: func(T): U): Box[U] {
+        return Box(change(self.value))
+    }
+}

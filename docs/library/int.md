@@ -127,3 +127,26 @@ See [`conformance/run/counting.em`](../../conformance/run/counting.em) and
 and `to_list()` are listed against
 [`conformance/run/range-values.em`](../../conformance/run/range-values.em) in the
 [inventory](inventory.md) and get their own family page in a later slice.
+
+## Comparison methods
+
+`compare`, `equals`, and `hash` are what `<`, `==`, and a dictionary already do, as methods,
+so a generic function that requires `Ordered`, `Equatable`, or `Hashable` (rewrite-context 11.3)
+can call them on Int as it calls them on a type that adopts the trait. Their results
+match the operators exactly.
+
+## compare(other: Int) -> Int
+
+A negative number when the receiver comes before `other`, zero when they are equal, and a
+positive number when it comes after, in the order `<` uses. The number is `-1`, `0`, or `1`.
+
+## equals(other: Int) -> Bool
+
+Whether the receiver and `other` are equal, as `==` decides.
+
+## hash() -> Int
+
+A number for the value, equal for equal values, as a dictionary or set uses it. It is a runtime
+detail (8.4): it can change between runs and releases, so never store or display it.
+
+See [`conformance/run/generics-constraints.em`](../../conformance/run/generics-constraints.em).

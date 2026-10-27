@@ -1,0 +1,4 @@
+diagnostics/generics-type-at-call.em:5:15: `Stack[...]` is a type, not an expression
+  const stack = Stack[Int]()
+                ^^^^^
+Build the value without the brackets, as in `Stack(...)`. Types in brackets are written where a value is kept, never where it is built.

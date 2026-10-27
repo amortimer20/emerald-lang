@@ -1,0 +1,4 @@
+diagnostics/generics-extends.em:5:21: `Box` has type parameters, so it cannot be extended yet
+  class Crate extends Box {
+                      ^^^
+Give `Crate` a field holding the `Box` instead.

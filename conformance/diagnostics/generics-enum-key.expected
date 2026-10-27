@@ -1,0 +1,4 @@
+diagnostics/generics-enum-key.em:6:14: Pick[List[Int]] cannot be held by a set, because `Pick.one.item` is List[Int]
+  const picks: Set[Pick[List[Int]]] = []
+               ^^^^^^^^^^^^^^^^^^^^
+Every data item of every choice must itself be a valid key type: a number, a `Bool`, a `String`, an enum, or a tuple or struct made only from those.

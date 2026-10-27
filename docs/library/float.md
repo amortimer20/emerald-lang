@@ -124,3 +124,29 @@ the square root, and the two angle-unit conversions `Math`'s trigonometry functi
 [`conformance/run/float-receiver-math.em`](../../conformance/run/float-receiver-math.em).
 Broader numeric operations — trigonometry, logarithms, `pi`, `e`, `power` — live on the
 `Math` namespace, its own family page in a later slice.
+
+## Comparison methods
+
+`compare`, `equals`, and `hash` are what `<`, `==`, and a dictionary already do, as methods,
+so a generic function that requires `Ordered`, `Equatable`, or `Hashable` (rewrite-context 11.3)
+can call them on Float as it calls them on a type that adopts the trait. Their results
+match the operators exactly.
+
+## compare(other: Float) -> Int
+
+A negative number when the receiver comes before `other`, zero when they are equal, and a
+positive number when it comes after, in the order `<` uses. The number is `-1`, `0`, or `1`.
+
+**Raises** for `compare` and `hash` on NaN, which has no order and is not equal even to
+itself. An `Int` argument is widened, so `2.5.compare(2)` is `1`.
+
+## equals(other: Float) -> Bool
+
+Whether the receiver and `other` are equal, as `==` decides.
+
+## hash() -> Int
+
+A number for the value, equal for equal values, as a dictionary or set uses it. It is a runtime
+detail (8.4): it can change between runs and releases, so never store or display it.
+
+See [`conformance/run/generics-constraints.em`](../../conformance/run/generics-constraints.em).

@@ -1,0 +1,4 @@
+diagnostics/generics-missing-arguments.em:5:12: `Box` needs the types it holds in brackets
+  const box: Box = Box(1)
+             ^^^
+`Box` is declared as `Box[Item]`. Write the types this one holds, as in `Box[String]`.

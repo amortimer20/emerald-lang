@@ -1,0 +1,10 @@
+2 Chain.link(item: 1, rest: Chain.link(item: 2, rest: Chain.end))
+0 Chain.end
+11 none
+Chain.link(item: 1.0, rest: Chain.end)
+["apple", "fig", "pear"]
+[1, 2, 5, 8]
+half is 2
+failed: odd
+true Outcome.failure(message: "odd")
+2

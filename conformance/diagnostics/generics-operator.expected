@@ -1,0 +1,4 @@
+diagnostics/generics-operator.em:5:16: an `@operator` method cannot take type parameters yet
+      func times[Item](count: Int): Money {
+                 ^^^^
+Write the operand's type in the method's parameter instead.

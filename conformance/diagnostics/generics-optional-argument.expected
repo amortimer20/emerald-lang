@@ -1,0 +1,4 @@
+diagnostics/generics-optional-argument.em:5:16: a type in brackets cannot be optional
+  const box: Box[Int?] = Box(1)
+                 ^^^
+`Box` may already use its types as optionals, and optionals never nest, so an empty one could not be told from a stored `nothing`. Wrap the value in a struct instead.

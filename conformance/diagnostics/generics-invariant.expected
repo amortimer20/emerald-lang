@@ -1,0 +1,4 @@
+diagnostics/generics-invariant.em:6:26: this is Box[Int], but `real` was declared as Box[Float]
+  const real: Box[Float] = whole
+                           ^^^^^
+Give the declaration the type of its value, or convert the value to match.

@@ -1,0 +1,4 @@
+diagnostics/generics-parameter-and-int.em:2:12: Item and Int cannot be compared
+      return first == second
+             ^^^^^^^^^^^^^^^
+`==` and `!=` compare two values of the same type, and a type parameter's values compare only with each other.

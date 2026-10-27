@@ -1,0 +1,58 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "uri": "file:///document.em",
+      "range": {
+        "start": {
+          "line": 0,
+          "character": 32
+        },
+        "end": {
+          "line": 0,
+          "character": 36
+        }
+      }
+    },
+    {
+      "uri": "file:///document.em",
+      "range": {
+        "start": {
+          "line": 0,
+          "character": 49
+        },
+        "end": {
+          "line": 0,
+          "character": 53
+        }
+      }
+    },
+    {
+      "uri": "file:///document.em",
+      "range": {
+        "start": {
+          "line": 0,
+          "character": 56
+        },
+        "end": {
+          "line": 0,
+          "character": 60
+        }
+      }
+    },
+    {
+      "uri": "file:///document.em",
+      "range": {
+        "start": {
+          "line": 1,
+          "character": 14
+        },
+        "end": {
+          "line": 1,
+          "character": 18
+        }
+      }
+    }
+  ]
+}

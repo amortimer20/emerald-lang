@@ -1,0 +1,8 @@
+diagnostics/generics-constraint-annotation.em:5:16: `Box` needs `Item` values that can be dictionary keys, and List[Int] cannot
+  const box: Box[List[Int]] = Box([1])
+                 ^^^^^^^^^
+Pass numbers, Strings, Bools, Bytes, or values of a type declared `with Hashable`.
+diagnostics/generics-constraint-annotation.em:5:29: `Box` needs `Item` values that can be dictionary keys, and List[Int] cannot
+  const box: Box[List[Int]] = Box([1])
+                              ^^^
+Pass numbers, Strings, Bools, Bytes, or values of a type declared `with Hashable`.

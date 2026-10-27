@@ -1,0 +1,4 @@
+diagnostics/generics-function-masked.em:4:39: `Item` cannot be used here
+      func Box.of[Value](value: Value): Item {
+                                        ^^^^
+`Item` stands for the type each `Box` value is given, such as the `Int` in `Box[Int]`. A type-level member or a nested type belongs to `Box` as a whole, so it has no `Item`.

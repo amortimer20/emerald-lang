@@ -203,3 +203,29 @@ suffixes are the same choice 4.4 offers every fallible conversion: raise on fail
 fallback, or answer `nothing`.
 
 **Raises**, for `to_int`/`to_float`, when the text does not parse.
+
+## Comparison methods
+
+`compare`, `equals`, and `hash` are what `<`, `==`, and a dictionary already do, as methods,
+so a generic function that requires `Ordered`, `Equatable`, or `Hashable` (rewrite-context 11.3)
+can call them on String as it calls them on a type that adopts the trait. Their results
+match the operators exactly.
+
+## compare(other: String) -> Int
+
+A negative number when the receiver comes before `other`, zero when they are equal, and a
+positive number when it comes after, in the order `<` uses. The number is `-1`, `0`, or `1`.
+
+Strings compare by their normalized code points, as `<` does (9.2): canonically equal
+spellings are equal, and the order is not a dictionary's alphabetical order.
+
+## equals(other: String) -> Bool
+
+Whether the receiver and `other` are equal, as `==` decides.
+
+## hash() -> Int
+
+A number for the value, equal for equal values, as a dictionary or set uses it. It is a runtime
+detail (8.4): it can change between runs and releases, so never store or display it.
+
+See [`conformance/run/generics-constraints.em`](../../conformance/run/generics-constraints.em).

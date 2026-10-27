@@ -257,6 +257,37 @@
    ]
   },
   {
+   "owner": "Bool",
+   "name": "equals",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "other",
+       "type": "Bool"
+      }
+     ],
+     "result": "Bool",
+     "summary": "Whether this value and `other` are equal, as `==` decides.",
+     "page": "builtins/types/bool/#equals"
+    }
+   ]
+  },
+  {
+   "owner": "Bool",
+   "name": "hash",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Int",
+     "summary": "A number for the value, the same for equal values, as a dictionary uses; it can change between runs.",
+     "page": "builtins/types/bool/#hash"
+    }
+   ]
+  },
+  {
    "owner": "Int",
    "name": "times",
    "kind": "method",
@@ -592,6 +623,55 @@
    ]
   },
   {
+   "owner": "Int",
+   "name": "compare",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "other",
+       "type": "Int"
+      }
+     ],
+     "result": "Int",
+     "summary": "A negative number when this number comes before `other`, zero when they are equal, and a positive number when it comes after, as `<` orders them.",
+     "page": "builtins/types/int/#compare"
+    }
+   ]
+  },
+  {
+   "owner": "Int",
+   "name": "equals",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "other",
+       "type": "Int"
+      }
+     ],
+     "result": "Bool",
+     "summary": "Whether this number and `other` are equal, as `==` decides.",
+     "page": "builtins/types/int/#equals"
+    }
+   ]
+  },
+  {
+   "owner": "Int",
+   "name": "hash",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Int",
+     "summary": "A number for the number, the same for equal values, as a dictionary uses; it can change between runs.",
+     "page": "builtins/types/int/#hash"
+    }
+   ]
+  },
+  {
    "owner": "Float",
    "name": "round",
    "kind": "method",
@@ -914,6 +994,57 @@
      "summary": "The value as an `Int`, with the fraction dropped.",
      "raises": true,
      "page": "builtins/types/float/#to_int"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "compare",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "other",
+       "type": "Float"
+      }
+     ],
+     "result": "Int",
+     "summary": "A negative number when this number comes before `other`, zero when they are equal, and a positive number when it comes after, as `<` orders them.",
+     "raises": true,
+     "page": "builtins/types/float/#compare"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "equals",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "other",
+       "type": "Float"
+      }
+     ],
+     "result": "Bool",
+     "summary": "Whether this number and `other` are equal, as `==` decides.",
+     "page": "builtins/types/float/#equals"
+    }
+   ]
+  },
+  {
+   "owner": "Float",
+   "name": "hash",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Int",
+     "summary": "A number for the number, the same for equal values, as a dictionary uses; it can change between runs.",
+     "raises": true,
+     "page": "builtins/types/float/#hash"
     }
    ]
   },
@@ -1515,6 +1646,55 @@
      "result": "Float?",
      "summary": "The number the text spells, or `nothing` when it is not one.",
      "page": "builtins/types/string/#to_float_maybe"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "compare",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "other",
+       "type": "String"
+      }
+     ],
+     "result": "Int",
+     "summary": "A negative number when this text comes before `other`, zero when they are equal, and a positive number when it comes after, as `<` orders them.",
+     "page": "builtins/types/string/#compare"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "equals",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "other",
+       "type": "String"
+      }
+     ],
+     "result": "Bool",
+     "summary": "Whether this text and `other` are equal, as `==` decides.",
+     "page": "builtins/types/string/#equals"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "hash",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Int",
+     "summary": "A number for the text, the same for equal values, as a dictionary uses; it can change between runs.",
+     "page": "builtins/types/string/#hash"
     }
    ]
   },

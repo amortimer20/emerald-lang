@@ -103,6 +103,17 @@ pub const Checked = struct {
     type_names: LiteralTypes,
     /// Every `Trait.method(value, ...)` (11.2), mapped to the default it runs.
     trait_calls: MethodCalls,
+    /// Every expression giving an `Int` that a generic declaration takes as a
+    /// `Float` (11.3). A type parameter is erased at run time, so nothing else
+    /// would widen it.
+    widenings: Widenings,
+    /// Every method call on a `T with Trait`, mapped to the trait member's
+    /// key. The value's own version runs: a struct's or class's method, or a
+    /// built-in one for a scalar.
+    parameter_calls: MethodCalls,
+    /// Every place a type parameter is written as a type. Its declaration is
+    /// on the parameter itself.
+    parameter_sites: []const ParameterSite,
 
     pub fn ok(self: Checked) bool {
         return !Diagnostic.anyErrors(self.diagnostics);
@@ -123,6 +134,7 @@ pub const Checked = struct {
             if (element.optional) return false;
             if (element.kind == .int or element.kind == .float or element.kind == .string) return true;
             const ordered = self.structs.get(Resolver.preludeKey("Ordered")) orelse return false;
+            if (element.kind == .type_parameter) return if (element.parameter.?.bound) |bound| bound.conformsTo(ordered.user.?) else false;
             return element.kind == .struct_value and element.user.?.conformsTo(ordered.user.?);
         }
         return true;
@@ -178,6 +190,23 @@ pub const JsonEncodes = std.AutoHashMapUnmanaged(*const Ast.Expression, Type);
 pub const JsonDecodes = std.AutoHashMapUnmanaged(*const Ast.Expression, Type);
 pub const TypeTest = struct { value: Type, target: Type };
 pub const TypeTests = std.AutoHashMapUnmanaged(*const Ast.Expression, TypeTest);
+pub const Widenings = std.AutoHashMapUnmanaged(*const Ast.Expression, void);
+/// A type parameter written as a type, for the language server (11.3).
+pub const ParameterSite = struct { file: u32, span: Source.Span, parameter: *const Type.Parameter };
+
+/// A generic declaration's span, inside which its parameters are types. A
+/// masked one is a part of it that cannot use them: a nested type, or a
+/// type-level member, which belongs to the type as a whole rather than to any
+/// one `Box[Int]` (11.3).
+const GenericScope = struct {
+    file: u32,
+    span: Source.Span,
+    parameters: []const *const Type.Parameter,
+    /// The `[T]` list as written, for reporting at a parameter's name.
+    written: []const Ast.TypeParameter,
+    owner: []const u8,
+    masked: bool = false,
+};
 
 const StructSite = struct {
     file: u32,
@@ -335,6 +364,33 @@ trait_list_errored: std.StringHashMapUnmanaged(void) = .empty,
 /// What `Self` means in the types being resolved: the type whose method's
 /// parameters and result they are (11.4), or null where `Self` means nothing.
 written_self: ?Type = null,
+/// Section 11.3: where each generic declaration's type parameters may be
+/// written, and the parts of it where they may not.
+generic_scopes: std.ArrayList(GenericScope) = .empty,
+/// Every type parameter written somewhere, so one never written is reported.
+used_parameters: std.AutoHashMapUnmanaged(*const Type.Parameter, void) = .empty,
+/// The type a construction is expected to give, set by `typeOfExpected` for
+/// the one call it is about to check and taken by `typeOfCall` at once, so a
+/// call among the arguments never sees it.
+construction_expected: ?Type = null,
+/// Every expression holding an `Int` that a generic declaration receives as a
+/// `Float` (11.3, 5.6 of the plan). Its own type is erased at run time, so the
+/// interpreter widens these where it would otherwise widen by declared type.
+widenings: Widenings = .empty,
+/// The type a name or member expression is expected to have, set by
+/// `typeOfExpected` and taken at once by `typeOfUnrecorded`, so a generic
+/// function taken as a value can learn its types from it (7.4, 11.3).
+value_expected: ?Type = null,
+/// The same, passed from `typeOfUnrecorded` to the member expression it
+/// dispatches, which takes it before evaluating anything.
+member_capture: ?Type = null,
+/// Every method call on a `T with Trait`, by callee, mapped to the trait
+/// member's key. The interpreter runs the value's own version (5.7 of the plan).
+parameter_calls: MethodCalls = .empty,
+/// Every place a type parameter is written as a type (`ParameterSite`).
+parameter_sites: std.ArrayList(ParameterSite) = .empty,
+/// Each generic function's and method's own parameters, by key.
+function_parameters: std.StringHashMapUnmanaged([]const *const Type.Parameter) = .empty,
 /// Section 6.3's cases whose arms cover every value their subject can have,
 /// with or without `else`. A statement `case` among them cannot finish without
 /// running an arm, which is what `stmtCompletes` needs to know.
@@ -527,7 +583,13 @@ pub fn checkWithOptions(
         while (fields.next()) |entry| {
             const annotation = entry.value_ptr.field.annotation orelse continue;
             checker.file = checker.facts.owner.get(entry.key_ptr.*).?;
-            const declared = try checker.resolveTypeExpression(annotation);
+            // An enum's value is annotated with the enum by the parser. A
+            // generic enum's is the enum given its own parameters (11.3),
+            // which no written type could say outside its braces.
+            const declared = if (entry.value_ptr.field.enum_value != null)
+                checker.structs.get(entry.value_ptr.type_key).?
+            else
+                try checker.resolveTypeExpression(annotation);
             const binding = checker.module.getPtr(entry.key_ptr.*).?;
             binding.type = declared;
             binding.declared = declared;
@@ -585,6 +647,8 @@ pub fn checkWithOptions(
         }
     }
 
+    try checker.checkUnusedTypeParameters(prelude_file);
+
     // Each reached prelude declaration's bodies, until checking them reaches
     // nothing new.
     while (checker.reach_queue.pop()) |key| {
@@ -629,6 +693,9 @@ pub fn checkWithOptions(
         .type_tests = checker.type_tests,
         .type_names = checker.type_names,
         .trait_calls = checker.trait_calls,
+        .widenings = checker.widenings,
+        .parameter_calls = checker.parameter_calls,
+        .parameter_sites = checker.parameter_sites.items,
     };
 }
 
@@ -910,6 +977,28 @@ fn membersOf(self: *Checker, declaration: Ast.StructDeclaration) Error![]Member 
 fn resolveBase(self: *Checker, key: []const u8, declaration: Ast.StructDeclaration) Error!void {
     const written = declaration.base orelse return;
     const user = @constCast(self.structs.get(key).?.user.?);
+    // Section 11.3 of the generics plan, decision 10: substituting through a
+    // base class and its virtual dispatch is left out of the first milestone.
+    if (user.type_parameters.len > 0) {
+        try self.reportWithHelp(
+            written.span,
+            "a class with type parameters cannot extend another class yet",
+            .{},
+            "Give `{s}` a field holding the `{s}` instead.",
+            .{ declaration.name, written.name },
+        );
+        return;
+    }
+    if (self.structs.get(try self.typeKeyOf(written.name))) |base_type| if (base_type.user.?.type_parameters.len > 0) {
+        try self.reportWithHelp(
+            written.span,
+            "`{s}` has type parameters, so it cannot be extended yet",
+            .{base_type.user.?.display_name},
+            "Give `{s}` a field holding the `{s}` instead.",
+            .{ declaration.name, base_type.user.?.display_name },
+        );
+        return;
+    };
     if (Type.fromName(written.name) == null and !self.structs.contains(try self.typeKeyOf(written.name))) {
         try self.reportWithHelp(
             written.span,
@@ -1178,7 +1267,10 @@ fn registerStruct(
     try struct_sites.append(self.arena, .{ .file = self.file, .declaration = declaration, .key = key });
     const user = try self.arena.create(Type.User);
     user.* = .{ .name = key, .display_name = display_name, .class = declaration.class, .trait = declaration.trait, .enumeration = declaration.enumeration };
-    const struct_type = Type.structOf(user);
+    if (declaration.type_parameters.len > 0) try self.registerTypeParameters(user, declaration);
+    // Inside a generic declaration, the type is itself given its own
+    // parameters, `Box[T]`, which is what `self` and its members see.
+    const struct_type = Type.structOf(user).withArguments(user.own_arguments);
     try self.structs.put(self.arena, key, struct_type);
     try self.struct_declarations.put(self.arena, key, declaration);
     try self.type_spans.put(self.arena, key, span);
@@ -1241,6 +1333,437 @@ fn registerStruct(
     }
 }
 
+/// Section 11.3's `[T]`: each name becomes a parameter, written as a type
+/// anywhere inside the declaration except the parts masked below.
+fn registerTypeParameters(self: *Checker, user: *Type.User, declaration: Ast.StructDeclaration) Error!void {
+    const written = declaration.type_parameters;
+    const parameters = try self.arena.alloc(*const Type.Parameter, written.len);
+    const own = try self.arena.alloc(Type, written.len);
+    for (written, parameters, own, 0..) |parameter, *slot, *as_type, position| {
+        const created = try self.arena.create(Type.Parameter);
+        created.* = .{ .name = parameter.name, .position = position, .owner = user.display_name, .file = self.file, .start = parameter.span.start, .end = parameter.span.end };
+        slot.* = created;
+        as_type.* = Type.parameterOf(created);
+    }
+    user.type_parameters = parameters;
+    user.own_arguments = own;
+    const scope: GenericScope = .{ .file = self.file, .span = declaration.span, .parameters = parameters, .written = written, .owner = user.display_name };
+    try self.generic_scopes.append(self.arena, scope);
+    // A nested type and a type-level member belong to the type as a whole,
+    // not to one `Box[Int]`, so nothing there says what `T` is.
+    var masked = scope;
+    masked.masked = true;
+    for (declaration.types) |nested| {
+        masked.span = nested.span;
+        try self.generic_scopes.append(self.arena, masked);
+    }
+    for (declaration.type_functions) |function| {
+        masked.span = .{ .start = function.declaration.name_span.start, .end = function.declaration.body.span.end };
+        try self.generic_scopes.append(self.arena, masked);
+    }
+    for (declaration.type_fields) |field| {
+        if (field.enum_value != null) continue;
+        masked.span = .{ .start = field.name_span.start, .end = field.initializer.span.end };
+        try self.generic_scopes.append(self.arena, masked);
+    }
+}
+
+/// The type parameter `name` written at `span`, from the innermost generic
+/// declaration around it, or null when none there has one by that name.
+fn typeParameterAt(self: *Checker, name: []const u8, span: Source.Span) Error!?Type {
+    // The innermost declaration around the name that has a parameter of that
+    // name: a method's own `[U]` sits inside its type's `[T]`, so `T` is found
+    // one further out, and a mask over a type-level member has its type's.
+    var innermost: ?GenericScope = null;
+    for (self.generic_scopes.items) |scope| {
+        if (scope.file != self.file or span.start < scope.span.start or span.end > scope.span.end) continue;
+        const declares = for (scope.parameters) |parameter| {
+            if (std.mem.eql(u8, parameter.name, name)) break true;
+        } else false;
+        if (!declares) continue;
+        if (innermost) |found| if (!innerFirst({}, scope, found)) continue;
+        innermost = scope;
+    }
+    return if (innermost) |scope| self.parameterIn(scope, name, span) else null;
+}
+
+/// A nested declaration's own scope and its mask in the one around it can
+/// cover the same text; its own parameters win.
+fn innerFirst(_: void, a: GenericScope, b: GenericScope) bool {
+    if (a.span.len() != b.span.len()) return a.span.len() < b.span.len();
+    return !a.masked and b.masked;
+}
+
+fn parameterIn(self: *Checker, scope: GenericScope, name: []const u8, span: Source.Span) Error!?Type {
+    for (scope.parameters) |parameter| {
+        if (!std.mem.eql(u8, parameter.name, name)) continue;
+        if (scope.masked) {
+            try self.reportWithHelp(
+                span,
+                "`{s}` cannot be used here",
+                .{name},
+                "`{s}` stands for the type each `{s}` value is given, such as the `Int` in `{s}[Int]`. A type-level member or a nested type belongs to `{s}` as a whole, so it has no `{s}`.",
+                .{ name, scope.owner, scope.owner, scope.owner, name },
+            );
+            return .invalid;
+        }
+        try self.used_parameters.put(self.arena, parameter, {});
+        try self.parameter_sites.append(self.arena, .{ .file = self.file, .span = span, .parameter = parameter });
+        return Type.parameterOf(parameter);
+    }
+    return null;
+}
+
+/// Section 11.3's `[T]` on a function or method: its parameters, in scope
+/// from its name through its body. Made once, the first time its signature
+/// is needed, with the file already the one that declares it.
+fn functionTypeParameters(self: *Checker, key: []const u8, declaration: Ast.FunctionDeclaration) Error![]const *const Type.Parameter {
+    const written = declaration.type_parameters;
+    if (written.len == 0) return &.{};
+    if (self.function_parameters.get(key)) |made| return made;
+    const parameters = try self.arena.alloc(*const Type.Parameter, written.len);
+    for (written, parameters, 0..) |parameter, *slot, position| {
+        const created = try self.arena.create(Type.Parameter);
+        created.* = .{ .name = parameter.name, .position = position, .owner = declaration.name, .file = self.file, .start = parameter.span.start, .end = parameter.span.end };
+        slot.* = created;
+    }
+    try self.function_parameters.put(self.arena, key, parameters);
+    try self.generic_scopes.append(self.arena, .{
+        .file = self.file,
+        .span = .{ .start = declaration.name_span.start, .end = @max(declaration.body.span.end, declaration.name_span.end) },
+        .parameters = parameters,
+        .written = written,
+        .owner = declaration.name,
+    });
+    try self.checkTypeParameterList(written, parameters, declaration.name);
+    // Decided in the plan's decision 10 and section 5.1: these would each
+    // need rules of their own.
+    const receiver = self.receivers.get(key);
+    const refusals = self.diagnostics.items.len;
+    if (receiver != null and receiver.?.user.?.trait) {
+        try self.report(written[0].span, "a trait's method cannot take type parameters yet", .{}, "Every type that adopts the trait would have to supply a generic method. Take a block instead, or move the method out of the trait.");
+    } else if (declaration.override_span != null) {
+        try self.report(written[0].span, "a method that overrides another cannot take type parameters yet", .{}, "Give the method another name, without `@override`.");
+    } else if (declaration.test_span != null) {
+        try self.report(written[0].span, "a test function cannot take type parameters", .{}, "A test runs on its own, so nothing could say what its types are. Test a generic function by calling it with real types.");
+    } else if (declaration.operator != null) {
+        try self.report(written[0].span, "an `@operator` method cannot take type parameters yet", .{}, "Write the operand's type in the method's parameter instead.");
+    } else if (receiver != null and self.properties.contains(key)) {
+        try self.report(written[0].span, "a property cannot take type parameters", .{}, "A property is read without a call, so nothing could say what its types are. Make it a method.");
+    }
+    // Refused, so whether each is used is beside the point.
+    if (self.diagnostics.items.len != refusals) for (parameters) |parameter| try self.used_parameters.put(self.arena, parameter, {});
+    return parameters;
+}
+
+/// Section 11.3's declaration rules for a `[T]` list.
+fn checkTypeParameters(self: *Checker, declaration: Ast.StructDeclaration, key: []const u8) Error!void {
+    const user = self.structs.get(key).?;
+    try self.checkTypeParameterList(declaration.type_parameters, user.user.?.type_parameters, declaration.name);
+}
+
+/// Checks a `[T]` list and settles each `with Trait`. `made` is empty when
+/// the parameters were refused as a whole (an enum's, for now).
+fn checkTypeParameterList(self: *Checker, list: []const Ast.TypeParameter, made: []const *const Type.Parameter, owner: []const u8) Error!void {
+    for (list, 0..) |parameter, position| {
+        try self.checkPascalCase(parameter.name, parameter.span);
+        if (parameter.bound) |bound| if (made.len == list.len) {
+            const resolved = try self.resolveTypeExpression(bound);
+            if (resolved.kind == .struct_value and !resolved.optional and !resolved.opaque_self and resolved.user.?.trait) {
+                @constCast(made[position]).bound = resolved.user.?;
+            } else if (resolved.kind != .invalid) {
+                try self.reportWithHelp(
+                    bound.span,
+                    "`with` needs a trait, but {f} is not one",
+                    .{resolved},
+                    "A type parameter can require a trait, as in `{s} with Ordered`, which every type given for it must adopt.",
+                    .{parameter.name},
+                );
+            }
+        };
+        // Section 5.2 of the plan: `[T with Ordered, Textual]` reads as a
+        // second parameter named `Textual`.
+        if (position > 0 and list[position - 1].bound != null) {
+            const key = try self.typeKeyOf(parameter.name);
+            if (self.structs.get(key)) |named| if (named.user.?.trait) {
+                try self.reportWithHelp(
+                    parameter.span,
+                    "a type parameter can require only one trait",
+                    .{},
+                    "Write a trait that builds on both, as in `trait Sortable with {s}, {s} {{ }}`, and require that one: `{s} with Sortable`.",
+                    .{ list[position - 1].bound.?.name, parameter.name, list[position - 1].name },
+                );
+                if (made.len == list.len) try self.used_parameters.put(self.arena, made[position], {});
+                continue;
+            };
+        }
+        const repeated = for (list[0..position]) |earlier| {
+            if (std.mem.eql(u8, earlier.name, parameter.name)) break true;
+        } else false;
+        if (repeated) {
+            try self.reportWithHelp(
+                parameter.span,
+                "`{s}` is already a type parameter of `{s}`",
+                .{ parameter.name, owner },
+                "Give each its own name, as in `Pair[First, Second]`.",
+                .{},
+            );
+            continue;
+        }
+        if (Type.fromName(parameter.name) != null or std.mem.eql(u8, parameter.name, "Self") or
+            self.structs.contains(try self.typeKeyOf(parameter.name)))
+        {
+            try self.reportWithHelp(
+                parameter.span,
+                "`{s}` is already the name of a type",
+                .{parameter.name},
+                "Inside `{s}`, a type parameter named `{s}` would hide the real `{s}`. Give the parameter another name, such as `Item`.",
+                .{ owner, parameter.name, parameter.name },
+            );
+        }
+    }
+}
+
+/// Section 11.3: a type parameter written nowhere in its declaration is almost
+/// always a typo.
+fn checkUnusedTypeParameters(self: *Checker, prelude_file: ?usize) Error!void {
+    for (self.generic_scopes.items) |scope| {
+        if (scope.masked) continue;
+        if (prelude_file) |index| if (scope.file == index) continue;
+        for (scope.parameters, 0..) |parameter, position| {
+            if (self.used_parameters.contains(parameter)) continue;
+            // A repeated name is reported as one; uses reach the first.
+            const repeated = for (scope.parameters[0..position]) |earlier| {
+                if (std.mem.eql(u8, earlier.name, parameter.name)) break true;
+            } else false;
+            if (repeated) continue;
+            const written = scope.written[parameter.position];
+            const outer_file = self.file;
+            defer self.file = outer_file;
+            self.file = scope.file;
+            try self.reportWarning(
+                written.span,
+                "`{s}` is never used in `{s}`",
+                .{ parameter.name, scope.owner },
+                "Use it as the type of a field, parameter, or result, or remove it from the brackets.",
+            );
+        }
+    }
+}
+
+/// `Box[Int]`: a type written with its arguments, which must be exactly the
+/// ones its declaration takes.
+fn applyTypeArguments(self: *Checker, written_type: Type, annotation: Ast.TypeExpression) Error!Type {
+    const user = written_type.user.?;
+    const parameters = user.type_parameters;
+    const written = annotation.arguments;
+    if (parameters.len == 0) {
+        if (written.len == 0) return written_type;
+        try self.reportWithHelp(
+            .{ .start = written[0].span.start, .end = written[written.len - 1].span.end },
+            "`{s}` does not take types in brackets",
+            .{user.display_name},
+            "Only `List`, `Dict`, `Set`, `Task`, `Channel`, and types declared with brackets, such as `class Stack[Item]`, take types in brackets. Write `{s}` alone.",
+            .{user.display_name},
+        );
+        return .invalid;
+    }
+    var declared: std.Io.Writer.Allocating = .init(self.arena);
+    var example: std.Io.Writer.Allocating = .init(self.arena);
+    for (parameters, 0..) |parameter, position| {
+        const separator = if (position == 0) "" else ", ";
+        declared.writer.print("{s}{s}", .{ separator, parameter.name }) catch return error.OutOfMemory;
+        example.writer.print("{s}{s}", .{ separator, if (position % 2 == 0) "String" else "Int" }) catch return error.OutOfMemory;
+    }
+    if (written.len == 0) {
+        try self.reportWithHelp(
+            annotation.span,
+            "`{s}` needs the types it holds in brackets",
+            .{user.display_name},
+            "`{s}` is declared as `{s}[{s}]`. Write the types this one holds, as in `{s}[{s}]`.",
+            .{ user.display_name, user.display_name, declared.written(), user.display_name, example.written() },
+        );
+        return .invalid;
+    }
+    if (written.len != parameters.len) {
+        try self.reportWithHelp(
+            .{ .start = written[0].span.start, .end = written[written.len - 1].span.end },
+            "`{s}` takes {d} type{s} in brackets, but this gives {d}",
+            .{ user.display_name, parameters.len, if (parameters.len == 1) "" else "s", written.len },
+            "`{s}` is declared as `{s}[{s}]`. Write one type for each.",
+            .{ user.display_name, user.display_name, declared.written() },
+        );
+        return .invalid;
+    }
+    const arguments = try self.arena.alloc(Type, written.len);
+    for (written, arguments) |argument, *resolved| {
+        resolved.* = try self.resolveTypeExpression(argument);
+        if (resolved.kind == .invalid) return .invalid;
+        if (resolved.optional) {
+            try self.reportWithHelp(
+                argument.span,
+                "a type in brackets cannot be optional",
+                .{},
+                "`{s}` may already use its types as optionals, and optionals never nest, so an empty one could not be told from a stored `nothing`. Wrap the value in a struct instead.",
+                .{user.display_name},
+            );
+            return .invalid;
+        }
+    }
+    for (parameters, arguments, written) |parameter, argument, argument_written| {
+        if (parameter.bound == null or self.satisfies(argument, parameter.bound.?)) continue;
+        try self.reportUnsatisfied(argument_written.span, user.display_name, parameter, argument);
+        return .invalid;
+    }
+    return written_type.withArguments(arguments);
+}
+
+/// Section 11.3: a value of a generic enum's choice, `Chain.end` or
+/// `Chain.link(1, rest)`. Its types come from where it goes, then from
+/// `solved`, what its data said; a type nothing says, such as `Chain.end`'s
+/// `T`, is left open, since the value holds nothing of that type and so fits
+/// any `Chain`.
+fn choiceType(self: *Checker, enum_type: Type, expected: ?Type, solved: ?[]const ?Type) Error!Type {
+    const user = enum_type.user orelse return enum_type;
+    if (user.type_parameters.len == 0) return enum_type;
+    const arguments = try self.arena.alloc(Type, user.type_parameters.len);
+    for (arguments, 0..) |*argument, position| {
+        argument.* = if (solved) |answers| answers[position] orelse .invalid else .invalid;
+    }
+    if (expected) |wanted| {
+        const present = wanted.payload();
+        if (present.kind == .struct_value and present.user == user and present.type_arguments.len == arguments.len) {
+            for (arguments, present.type_arguments) |*argument, given| {
+                if (argument.kind == .invalid) argument.* = given;
+            }
+        }
+    }
+    return Type.structOf(user).withArguments(arguments);
+}
+
+/// Section 11.3: an answer for a type parameter must be present and adopt
+/// what the parameter requires. Reports at `span` and returns false at the
+/// first that does not; `owner` is the type or function that needs it.
+fn checkAnswer(self: *Checker, span: Source.Span, owner: []const u8, parameter: *const Type.Parameter, answer: Type) Error!bool {
+    if (answer.optional) {
+        try self.reportWithHelp(
+            span,
+            "this would make `{s}` {f} for `{s}`, and a type in brackets cannot be optional",
+            .{ parameter.name, answer, owner },
+            "Pass a value that is there, using `.or(...)` or a check against `nothing` first, or wrap it in a struct.",
+            .{},
+        );
+        return false;
+    }
+    if (parameter.bound != null and !self.satisfies(answer, parameter.bound.?)) {
+        try self.reportUnsatisfied(span, owner, parameter, answer);
+        return false;
+    }
+    return true;
+}
+
+/// Section 5.2 of the generics plan: whether `argument` may be given for a
+/// parameter that requires `bound`. The built-in scalars count as adopting
+/// the prelude's comparison and display traits; a struct, class, or trait
+/// must adopt the trait itself; a type parameter must require it, or one
+/// that builds on it.
+fn satisfies(self: *Checker, argument: Type, bound: *const Type.User) bool {
+    if (argument.kind == .invalid) return true;
+    if (argument.optional) return false;
+    return switch (argument.kind) {
+        .int, .float, .string => self.isPreludeTrait(bound, &.{ "Ordered", "Equatable", "Hashable", "Textual" }),
+        .bool => self.isPreludeTrait(bound, &.{ "Equatable", "Hashable", "Textual" }),
+        .bytes => self.isPreludeTrait(bound, &.{ "Equatable", "Hashable" }),
+        .type_parameter => if (argument.parameter.?.bound) |own| own.conformsTo(bound) else false,
+        .struct_value => argument.user.?.conformsTo(bound),
+        else => false,
+    };
+}
+
+fn isPreludeTrait(self: *Checker, trait: *const Type.User, names: []const []const u8) bool {
+    _ = self;
+    const prefix = Resolver.prelude_namespace ++ ".";
+    if (!std.mem.startsWith(u8, trait.name, prefix)) return false;
+    for (names) |name| {
+        if (std.mem.eql(u8, trait.name[prefix.len..], name)) return true;
+    }
+    return false;
+}
+
+/// Whether `t` is a type parameter that requires `trait_name`, directly or
+/// through a trait built on it.
+fn parameterRequires(self: *Checker, t: Type, comptime trait_name: []const u8) bool {
+    if (t.kind != .type_parameter) return false;
+    const bound = t.parameter.?.bound orelse return false;
+    const trait = self.structs.get(Resolver.preludeKey(trait_name)) orelse return false;
+    return bound.conformsTo(trait.user.?);
+}
+
+/// What a trait lets a type parameter's values do, for a diagnostic.
+fn traitPromise(bound: *const Type.User) []const u8 {
+    const name = bound.display_name;
+    if (std.mem.eql(u8, name, "Ordered")) return "can be put in order";
+    if (std.mem.eql(u8, name, "Equatable")) return "can be compared with `==`";
+    if (std.mem.eql(u8, name, "Hashable")) return "can be dictionary keys";
+    if (std.mem.eql(u8, name, "Textual")) return "have their own text";
+    return "";
+}
+
+/// Reports a type given for `parameter` that does not adopt what it
+/// requires, at `span`. `user` is what needs it: a type or a function.
+fn reportUnsatisfied(self: *Checker, span: Source.Span, user: []const u8, parameter: *const Type.Parameter, argument: Type) Error!void {
+    const bound = parameter.bound.?;
+    const promise = traitPromise(bound);
+    const help: []const u8 = if (argument.kind == .struct_value and !argument.user.?.trait)
+        try std.fmt.allocPrint(self.arena, "Add `with {s}` to `{s}` and give it what `{s}` requires.", .{ bound.display_name, argument.user.?.display_name, bound.display_name })
+    else if (argument.kind == .type_parameter)
+        try std.fmt.allocPrint(self.arena, "Write `{s} with {s}` where `{s}` is declared.", .{ argument.parameter.?.name, bound.display_name, argument.parameter.?.name })
+    else if (self.isPreludeTrait(bound, &.{"Ordered"}))
+        "Pass Ints, Floats, Strings, or values of a type declared `with Ordered`."
+    else if (self.isPreludeTrait(bound, &.{ "Equatable", "Hashable" }))
+        try std.fmt.allocPrint(self.arena, "Pass numbers, Strings, Bools, Bytes, or values of a type declared `with {s}`.", .{bound.display_name})
+    else if (self.isPreludeTrait(bound, &.{"Textual"}))
+        "Pass numbers, Strings, Bools, or values of a type declared `with Textual`."
+    else
+        try std.fmt.allocPrint(self.arena, "Pass values of a type declared `with {s}`.", .{bound.display_name});
+    if (promise.len > 0) {
+        try self.reportWithHelp(span, "`{s}` needs `{s}` values that {s}, and {f} cannot", .{ user, parameter.name, promise, argument }, "{s}", .{help});
+    } else {
+        try self.reportWithHelp(span, "`{s}` needs `{s}` to adopt `{s}`, and {f} does not", .{ user, parameter.name, bound.display_name, argument }, "{s}", .{help});
+    }
+}
+
+/// The correction for a List whose elements have no order.
+fn orderHelp(self: *Checker, element: Type) Error![]const u8 {
+    if (element.kind == .type_parameter) return std.fmt.allocPrint(
+        self.arena,
+        "`{s}` could be any type. Write `{s} with Ordered` where `{s}` is declared to require that its values can be put in order.",
+        .{ element.parameter.?.name, element.parameter.?.name, element.parameter.?.name },
+    );
+    return "Ints, Floats, Strings, and types that adopt `Ordered` have an order. Use another operation for these elements.";
+}
+
+/// Section 5.3 of the generics plan: these List methods compare elements
+/// with `==`, which `T` has only when it requires `Equatable`. Returns whether
+/// it reported.
+fn rejectUnequatableElements(self: *Checker, member: Ast.Expression.Member, element: Type) Error!bool {
+    const comparing = [_][]const u8{ "contains?", "remove", "remove_all", "unique", "unique!" };
+    const found = for (comparing) |name| {
+        if (std.mem.eql(u8, name, member.name)) break true;
+    } else false;
+    const present = element.payload();
+    if (!found or present.kind != .type_parameter or self.parameterRequires(present, "Equatable")) return false;
+    const name = present.parameter.?.name;
+    try self.reportWithHelp(
+        member.name_span,
+        "`{s}` compares `{s}` values with `==`, and `{s}` could be any type",
+        .{ member.name, name, name },
+        "Write `{s} with Equatable` where `{s}` is declared to require that its values can be compared.",
+        .{ name, name },
+    );
+    return true;
+}
+
 /// A choice to show as an example of an enum's values: the first that is a
 /// value on its own, or else the first, as a call (12).
 fn exampleChoice(self: *Checker, declaration: Ast.StructDeclaration) Error![]const u8 {
@@ -1256,6 +1779,7 @@ fn conformsToTextual(self: *Checker, user: *const Type.User) bool {
 }
 
 fn checkStructDeclaration(self: *Checker, key: []const u8, declaration: Ast.StructDeclaration) Error!void {
+    try self.checkTypeParameters(declaration, key);
     const struct_type = self.structs.get(key).?;
     const user = @constCast(struct_type.user.?);
     const inherited: []const Type.User.Field = if (user.base) |base| blk: {
@@ -3454,6 +3978,9 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
     // `const` field freezes what it holds exactly as a `const` binding does,
     // so a struct step fails here the same way `requireMutable` fails above.
     var element = binding.type;
+    // What the last step reaches as its declaration wrote it, before a
+    // generic owner's types replaced its parameters (11.3).
+    var declared_element = element;
     // The struct the final step was reached from, so a mismatch can say
     // whether it was assigning a field or a property.
     var last_owner: ?Type = null;
@@ -3532,7 +4059,8 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
                             break;
                         }
                         const setter_key = try std.fmt.allocPrint(self.arena, "{s}" ++ Resolver.setter_suffix, .{property.getter});
-                        element = (try self.signatureFor(property.getter)).return_type;
+                        declared_element = (try self.signatureFor(property.getter)).return_type;
+                        element = try self.substituteOn(declared_element, element);
                         _ = try self.signatureFor(setter_key);
                         if (!self.in_function) {
                             try self.checkCapturesOf(field.span, setter_key, field.name, "this assignment");
@@ -3559,7 +4087,8 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
                 if (!stored.value.mutable and frozen == null) {
                     frozen = .{ .name = field.name, .span = field.span, .owner = element, .field_type = stored.value.type };
                 }
-                element = stored.value.type;
+                declared_element = stored.value.type;
+                element = try self.substituteOn(stored.value.type, element);
                 index += 1;
             },
             .index => |index_expression| {
@@ -3651,6 +4180,7 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
     }
 
     const value = try self.typeOfExpected(assignment.value, element);
+    try self.markWidening(assignment.value, declared_element, element, value);
     if (!value.assignableTo(element)) {
         if (last_is_property) {
             try self.report(
@@ -4081,6 +4611,7 @@ fn signatureFor(self: *Checker, key: []const u8) Error!Signature {
     const outer_self = self.written_self;
     defer self.written_self = outer_self;
     self.written_self = self.selfInSignatureOf(key);
+    const type_parameters = try self.functionTypeParameters(key, declaration);
 
     const parameter_types = try self.arena.alloc(Type, declaration.parameters.len);
     const parameter_names = try self.arena.alloc([]const u8, declaration.parameters.len);
@@ -4093,6 +4624,7 @@ fn signatureFor(self: *Checker, key: []const u8) Error!Signature {
         .parameters = parameter_types,
         .parameter_names = parameter_names,
         .return_type = .invalid,
+        .type_parameters = type_parameters,
     };
 
     const return_annotation = if (declaration.return_annotation) |annotation|
@@ -4169,7 +4701,19 @@ fn selfInSignatureOf(self: *Checker, key: []const u8) ?Type {
 
 /// The type `self` has inside a member of `user`.
 fn ownSelf(user: *const Type.User) Type {
-    return if (user.trait) Type.selfOf(user) else Type.structOf(user);
+    return if (user.trait) Type.selfOf(user) else Type.structOf(user).withArguments(user.own_arguments);
+}
+
+/// Section 11.3: a member's type, written in terms of its declaration's
+/// parameters, as seen on `receiver`, such as `T` read from a `Box[Int]`.
+fn substituteOn(self: *Checker, t: Type, receiver: Type) Error!Type {
+    const present = receiver.payload();
+    if (present.kind != .struct_value) return t;
+    const user = present.user.?;
+    if (user.type_parameters.len == 0 or present.type_arguments.len != user.type_parameters.len) return t;
+    // Inside the declaration the arguments are its own parameters.
+    if (present.type_arguments.ptr == user.own_arguments.ptr) return t;
+    return t.substitute(self.arena, user.type_parameters, present.type_arguments);
 }
 
 /// Section 11.4: a trait member's signature as seen on a value of `receiver`.
@@ -4180,15 +4724,30 @@ fn ownSelf(user: *const Type.User) Type {
 fn signatureOn(self: *Checker, signature: Signature, receiver: Type) Error!Signature {
     var mentions = signature.return_type.mentionsSelf();
     for (signature.parameters) |parameter| mentions = mentions or parameter.mentionsSelf();
-    if (!mentions) return signature;
-    const parameters = try self.arena.alloc(Type, signature.parameters.len);
-    for (signature.parameters, parameters) |parameter, *replaced| {
-        replaced.* = try self.replaceSelf(parameter, receiver.payload());
+    const replaced_self: Signature = if (!mentions) signature else blk: {
+        const parameters = try self.arena.alloc(Type, signature.parameters.len);
+        for (signature.parameters, parameters) |parameter, *replaced| {
+            replaced.* = try self.replaceSelf(parameter, receiver.payload());
+        }
+        break :blk .{
+            .parameters = parameters,
+            .parameter_names = signature.parameter_names,
+            .return_type = try self.replaceSelf(signature.return_type, receiver.payload()),
+            .type_parameters = signature.type_parameters,
+        };
+    };
+    // Section 11.3: `T` in a member of `Box[T]` is `Int` on a `Box[Int]`.
+    const present = receiver.payload();
+    if (present.kind != .struct_value or present.user.?.type_parameters.len == 0) return replaced_self;
+    const parameters = try self.arena.alloc(Type, replaced_self.parameters.len);
+    for (replaced_self.parameters, parameters) |parameter, *substituted| {
+        substituted.* = try self.substituteOn(parameter, present);
     }
     return .{
         .parameters = parameters,
-        .parameter_names = signature.parameter_names,
-        .return_type = try self.replaceSelf(signature.return_type, receiver.payload()),
+        .parameter_names = replaced_self.parameter_names,
+        .return_type = try self.substituteOn(replaced_self.return_type, present),
+        .type_parameters = replaced_self.type_parameters,
     };
 }
 
@@ -4216,7 +4775,21 @@ fn replaceSelf(self: *Checker, t: Type, receiver: Type) Error!Type {
     if (!t.mentionsSelf()) return t;
     switch (t.kind) {
         .struct_value => {
+            // `Box[Self]` keeps `Box` and replaces what it holds.
+            if (!t.opaque_self) {
+                const arguments = try self.arena.alloc(Type, t.type_arguments.len);
+                for (t.type_arguments, arguments) |argument, *slot| slot.* = try self.replaceSelf(argument, receiver);
+                return t.withArguments(arguments);
+            }
+            // A trait's `Self` on a `T with Trait` is `T`.
+            if (receiver.kind == .type_parameter) {
+                var replaced = receiver;
+                replaced.optional = t.optional;
+                return replaced;
+            }
             var replaced = if (receiver.opaque_self or receiver.user.?.trait)
+                receiver
+            else if (adopterOf(receiver.user.?, t.user.?) == receiver.user.?)
                 receiver
             else
                 Type.structOf(adopterOf(receiver.user.?, t.user.?));
@@ -4254,7 +4827,7 @@ fn replaceSelf(self: *Checker, t: Type, receiver: Type) Error!Type {
             replaced.signature = signature;
             return replaced;
         },
-        .nothing, .bool, .int, .float, .string, .bytes, .range, .invalid => return t,
+        .nothing, .bool, .int, .float, .string, .bytes, .range, .type_parameter, .invalid => return t,
     }
 }
 
@@ -5340,6 +5913,7 @@ fn typeOfStructMethodCall(
     call: Ast.Expression.Call,
     member: Ast.Expression.Member,
     base: Type,
+    expected: ?Type,
 ) Error!Type {
     const key = try self.memberKey(base, member.name) orelse try Resolver.methodKey(self.arena, base.user.?.name, member.name);
     if (try self.memberOwner(base, member.name)) |owner| {
@@ -5395,9 +5969,17 @@ fn typeOfStructMethodCall(
         "Match the number of arguments to the method's parameters.",
     );
     parameters.named_units = takesNamedUnits(key);
+    if (base.payload().type_arguments.len > 0) parameters.declared = declared.parameters;
+    var inference: ?Inference = null;
+    if (signature.type_parameters.len > 0) {
+        inference = try Inference.init(self.arena, signature.type_parameters);
+        inference.?.seed(signature.return_type, expected);
+        parameters.inference = &inference.?;
+    }
     try self.checkArguments(call, member.name, parameters);
     if (!isClass(base) and try self.methodChanges(key)) try self.requireMutableReceiver(member, member.name);
     if (!self.in_function) try self.checkCaptures(expression.span, key, member.name);
+    if (inference) |*working| return self.finishGenericCall(call, member.name, working, signature.return_type);
     return signature.return_type;
 }
 
@@ -5755,7 +6337,30 @@ fn resolveWrittenType(self: *Checker, annotation: Ast.TypeExpression) Error!Type
         return Type.functionOf(self.arena, .{ .parameters = parameters, .return_type = result });
     }
 
-    if (Type.fromName(annotation.name)) |builtin| return builtin;
+    if (std.mem.indexOfScalar(u8, annotation.name, '.') == null) {
+        if (try self.typeParameterAt(annotation.name, annotation.span)) |parameter| {
+            if (annotation.arguments.len == 0) return parameter;
+            try self.reportWithHelp(
+                annotation.span,
+                "`{s}` does not take types in brackets",
+                .{annotation.name},
+                "`{s}` stands for one type, whatever it is given. Write `{s}` alone.",
+                .{ annotation.name, annotation.name },
+            );
+            return .invalid;
+        }
+    }
+    if (Type.fromName(annotation.name)) |builtin| {
+        if (annotation.arguments.len == 0) return builtin;
+        try self.reportWithHelp(
+            annotation.span,
+            "`{s}` does not take types in brackets",
+            .{annotation.name},
+            "Only `List`, `Dict`, `Set`, `Task`, `Channel`, and types declared with brackets, such as `class Stack[Item]`, take types in brackets. Write `{s}` alone.",
+            .{annotation.name},
+        );
+        return .invalid;
+    }
     if (std.mem.eql(u8, annotation.name, "Self")) {
         if (self.written_self) |meaning| return meaning;
         try self.report(
@@ -5769,7 +6374,7 @@ fn resolveWrittenType(self: *Checker, annotation: Ast.TypeExpression) Error!Type
     const key = try self.typeKeyOf(annotation.name);
     if (self.structs.get(key)) |user_type| {
         if (try self.reportPrivateNestedPath(key, annotation.span)) return .invalid;
-        return user_type;
+        return self.applyTypeArguments(user_type, annotation);
     }
     if (std.mem.indexOfScalar(u8, annotation.name, '.') == null) if (try self.nestedTypeAt(annotation.name, annotation.span)) |nested| {
         try self.reportWithHelp(
@@ -5890,6 +6495,18 @@ fn typeOfTypeTest(self: *Checker, expression: *const Ast.Expression) Error!Type 
     const test_ = &expression.data.type_test;
     const value = try self.typeOf(test_.value);
     const target = try self.resolveTypeExpression(test_.target);
+    // Section 11.3: a generic type's types are not kept while the program
+    // runs, so whether a value is a `Box[Int]` has no answer then.
+    if (target.kind != .invalid and (target.mentionsParameter() or genericAnywhere(target))) {
+        try self.reportWithHelp(
+            test_.target.span,
+            "`is` cannot test for {f}",
+            .{target},
+            "Emerald does not keep a value's types in brackets while the program runs, so it cannot check them. Keep the value in a variable of the type you need instead.",
+            .{},
+        );
+        return .bool;
+    }
     try self.type_tests.put(self.arena, expression, .{ .value = value, .target = target });
     // The answer is already known before the program runs when the value's
     // type here (narrowing included) is already exactly the target: `.same`
@@ -6108,6 +6725,8 @@ fn typeOf(self: *Checker, expression: *const Ast.Expression) Error!Type {
 }
 
 fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression) Error!Type {
+    const capture_expected = self.value_expected;
+    self.value_expected = null;
     return switch (expression.data) {
         .int_literal => .int,
         .float_literal => .float,
@@ -6130,7 +6749,7 @@ fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression) Error!Typ
             }
             if (binding.is_function) {
                 try self.checkNestedUse(expression);
-                break :blk try self.typeOfFunctionValue(expression, .{ .key = binding.function_key orelse self.keyOf(name), .display = name });
+                break :blk try self.typeOfFunctionValue(expression, .{ .key = binding.function_key orelse self.keyOf(name), .display = name }, capture_expected);
             }
             if (self.constructing != null and std.mem.eql(u8, name, "self")) {
                 try self.requireSelfReady(expression.span);
@@ -6176,10 +6795,14 @@ fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression) Error!Typ
         .slice => |slice| self.typeOfSlice(slice),
         // A namespace-qualified name is a reference, not a property access:
         // `Shapes.area` names one declaration, as the resolver worked out.
-        .member => |member| if (try self.referenceOf(expression)) |reference|
-            self.typeOfQualified(expression, reference)
-        else
-            self.typeOfMember(expression, member),
+        .member => |member| blk: {
+            self.member_capture = capture_expected;
+            defer self.member_capture = null;
+            break :blk if (try self.referenceOf(expression)) |reference|
+                self.typeOfQualified(expression, reference)
+            else
+                self.typeOfMember(expression, member);
+        },
         .range => self.typeOfCountingValue(expression, null),
         .lambda => self.typeOfLambda(expression, null),
         .tuple_literal => self.typeOfTuple(expression, null),
@@ -6191,7 +6814,7 @@ fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression) Error!Typ
 /// Section 7.5's captured function. Section 15.2's prelude functions are the
 /// exception: `print` and `write` take any number of arguments of any type, and
 /// no type that can be written describes that, so they can only be called.
-fn typeOfFunctionValue(self: *Checker, expression: *const Ast.Expression, reference: Reference) Error!Type {
+fn typeOfFunctionValue(self: *Checker, expression: *const Ast.Expression, reference: Reference, expected: ?Type) Error!Type {
     if (!self.declarations.contains(reference.key)) {
         // An explicitly qualified built-in value needs a qualified call in
         // its fix: bare `print` may be the program's own function (14.2).
@@ -6209,11 +6832,35 @@ fn typeOfFunctionValue(self: *Checker, expression: *const Ast.Expression, refere
         return .invalid;
     }
     const signature = try self.signatureFor(reference.key);
-    return Type.functionOf(self.arena, .{
+    return self.capturedFunction(signature, expected, reference.display, expression.span);
+}
+
+/// A function or method taken as a value. A generic one has no types of its
+/// own to give, so where it goes must say them, as for `numbers.map` (7.4):
+/// `const pick: func(Int): Int = first`.
+fn capturedFunction(self: *Checker, signature: Signature, expected: ?Type, name: []const u8, span: Source.Span) Error!Type {
+    const plain = try Type.functionOf(self.arena, .{
         .parameters = signature.parameters,
         .parameter_names = signature.parameter_names,
         .return_type = signature.return_type,
     });
+    if (signature.type_parameters.len == 0) return plain;
+    var inference = try Inference.init(self.arena, signature.type_parameters);
+    if (expected) |wanted| if (wanted.kind == .function and !wanted.optional) inference.unify(plain, wanted);
+    for (inference.parameters, inference.solved) |parameter, answer| {
+        const found = answer orelse {
+            try self.reportWithHelp(
+                span,
+                "`{s}` has type parameters, so it needs a function type here",
+                .{name},
+                "Emerald works out what `{s}` is where `{s}` is called. Write the function's type where the value is kept, as in `const change: func(Int): Int = ...`, or wrap the call in a block.",
+                .{ parameter.name, name },
+            );
+            return .invalid;
+        };
+        if (!try self.checkAnswer(span, name, parameter, found)) return .invalid;
+    }
+    return inference.substituted(self.arena, plain);
 }
 
 /// `typeOf`, for a place where a value of `expected` is wanted. A list literal
@@ -6223,9 +6870,20 @@ fn typeOfFunctionValue(self: *Checker, expression: *const Ast.Expression, refere
 /// `n` unannotated (7.2).
 fn typeOfExpected(self: *Checker, expression: *const Ast.Expression, expected: ?Type) Error!Type {
     const result: Type = switch (expression.data) {
-        .call => |call| if (try self.isChannelCall(call)) try self.typeOfChannelCall(expression, call, expected) else return self.typeOf(expression),
+        .call => |call| if (try self.isChannelCall(call)) try self.typeOfChannelCall(expression, call, expected) else {
+            // A generic construction learns its types from where it goes (11.3).
+            self.construction_expected = expected;
+            defer self.construction_expected = null;
+            return self.typeOf(expression);
+        },
         .list_literal => try self.typeOfList(expression, expected),
         .lambda => try self.typeOfLambda(expression, expected),
+        // A generic function taken as a value learns its types from here.
+        .name, .member => {
+            self.value_expected = expected;
+            defer self.value_expected = null;
+            return self.typeOf(expression);
+        },
         .tuple_literal => try self.typeOfTuple(expression, expected),
         .dictionary_literal => try self.typeOfDictionary(expression, expected),
         .case_expression => try self.typeOfCase(expression, expected),
@@ -6353,12 +7011,28 @@ fn requireEligibleKey(self: *Checker, key: Type, span: Source.Span) Error!void {
         return;
     }
     if (try self.explainDataEnumKey(key, span, "a dictionary key")) return;
+    if (try self.explainParameterKey(key, span, "be a dictionary key")) return;
     try self.report(
         span,
         "{f} cannot be a dictionary key",
         .{key},
         "A key must be a number, a `Bool`, a `String`, an enum value, or a tuple or struct made only from valid key types. Lists, other mutable collections, and class objects cannot be keys.",
     );
+}
+
+/// Section 11.3: a `T` is a key only when it requires `Hashable`. Returns
+/// whether it reported.
+fn explainParameterKey(self: *Checker, key: Type, span: Source.Span, what: []const u8) Error!bool {
+    if (key.kind != .type_parameter or key.optional) return false;
+    const name = key.parameter.?.name;
+    try self.reportWithHelp(
+        span,
+        "`{s}` could be any type, so it cannot {s}",
+        .{ name, what },
+        "Write `{s} with Hashable` where `{s}` is declared to require that its values can be keys.",
+        .{ name, name },
+    );
+    return true;
 }
 
 /// Section 12: names the data item that keeps an enum from being a dictionary
@@ -6370,9 +7044,12 @@ fn explainDataEnumKey(self: *Checker, key: Type, span: Source.Span, what: []cons
     const user = key.user.?;
     const declaration = self.struct_declarations.get(user.name).?;
     for (user.choice_data, 0..) |items, variant| for (items) |item| {
-        if (item.type.eligibleKey(traits.equatable, traits.hashable)) continue;
+        // A generic enum's data is judged by the key's own types (11.3).
+        const held = try self.substituteOn(item.type, key);
+        const holds_itself = held.kind == .struct_value and held.user == user;
+        if (!holds_itself and held.eligibleKey(traits.equatable, traits.hashable)) continue;
         const choice = declaration.type_fields[variant].name;
-        if (item.type.kind == .struct_value and item.type.user == user) {
+        if (holds_itself) {
             try self.reportWithHelp(
                 span,
                 "{f} cannot be {s}, because `{s}.{s}.{s}` holds another {f}",
@@ -6384,7 +7061,7 @@ fn explainDataEnumKey(self: *Checker, key: Type, span: Source.Span, what: []cons
             try self.reportWithHelp(
                 span,
                 "{f} cannot be {s}, because `{s}.{s}.{s}` is {f}",
-                .{ key, what, user.display_name, choice, item.name, item.type },
+                .{ key, what, user.display_name, choice, item.name, held },
                 "Every data item of every choice must itself be a valid key type: a number, a `Bool`, a `String`, an enum, or a tuple or struct made only from those.",
                 .{},
             );
@@ -6470,6 +7147,7 @@ fn requireEligibleMember(self: *Checker, member: Type, span: Source.Span) Error!
         return;
     }
     if (try self.explainDataEnumKey(member, span, "held by a set")) return;
+    if (try self.explainParameterKey(member, span, "be held by a set")) return;
     try self.report(
         span,
         "a set cannot hold {f}",
@@ -6889,6 +7567,8 @@ fn requireIndex(self: *Checker, index: *const Ast.Expression) Error!void {
 /// Section 14.2's `Shapes.area` used as a value rather than called. It is the
 /// name branch of `typeOf`, reached through a member expression.
 fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference: Reference) Error!Type {
+    const capture = self.member_capture;
+    self.member_capture = null;
     try self.reachKey(reference.key);
     if (std.mem.eql(u8, reference.key, Resolver.float_infinity_key) or
         std.mem.eql(u8, reference.key, Resolver.float_nan_key) or
@@ -6931,7 +7611,7 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
         return .invalid;
     }
     // `Emerald.print` as a value: a built-in function, which can only be called.
-    if (Resolver.builtinFunctionName(reference.key) != null) return self.typeOfFunctionValue(expression, reference);
+    if (Resolver.builtinFunctionName(reference.key) != null) return self.typeOfFunctionValue(expression, reference, null);
     if (try self.reportPrivateTypeMember(reference.key, expression.span)) return .invalid;
     // Section 11.2's `Named.introduction(self)` is a call that runs one trait's
     // default; taking it as a value is not part of that yet.
@@ -6965,7 +7645,9 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
         if (!self.in_function) {
             try self.checkCapturesOf(expression.span, try Resolver.typeSetupKey(self.arena, field.type_key), reference.display, "this");
         }
-        return self.module.get(reference.key).?.declared;
+        const declared = self.module.get(reference.key).?.declared;
+        if (field.field.enum_value != null) return self.choiceType(declared, capture, null);
+        return declared;
     }
     const binding = self.findKey(reference.key) orelse return .invalid;
     try self.checkTaskCapture(expression.span, reference.display, binding);
@@ -6986,7 +7668,7 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
                 );
             }
         }
-        return self.typeOfFunctionValue(expression, reference);
+        return self.typeOfFunctionValue(expression, reference, capture);
     }
     if (!binding.assigned) {
         try self.reportUnassigned(expression.span, reference.display, binding.*);
@@ -6997,6 +7679,8 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
 
 /// A property: `count` is the only one so far (8.5).
 fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.Expression.Member) Error!Type {
+    const capture = self.member_capture;
+    self.member_capture = null;
     if (member.optional) return self.typeOfOptionalObjectMember(member);
     // Section 4.4's `type_name`, which every value has, `nothing` included,
     // so it needs no proof that an optional is there. It reads no field, so
@@ -7063,7 +7747,7 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
                 );
                 return .invalid;
             }
-            return self.typeOfMethodValue(expression, building, member.name);
+            return self.typeOfMethodValue(expression, building, member.name, capture);
         }
         // Not a field. Reported directly, since going through `typeOf(self)`
         // would first complain that `self` is not ready yet.
@@ -7079,6 +7763,10 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
     const base = try self.typeOf(member.base);
     if (base.kind == .invalid) return .invalid;
     if (!try self.requirePresent(base, member.base, member.name)) return .invalid;
+    if (base.kind == .type_parameter) {
+        try self.reportTypeParameterMember(base, member);
+        return .invalid;
+    }
 
     if (base.kind == .struct_value) {
         if (try self.memberOwner(base, member.name)) |owner| {
@@ -7095,16 +7783,16 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
                 );
                 return .invalid;
             }
-            return field.value.type;
+            return self.substituteOn(field.value.type, base);
         }
         if (try self.propertyOf(base, member.name)) |property| {
             if (isSuper(member.base)) try self.super_members.put(self.arena, expression, property.getter);
-            return self.typeOfPropertyRead(member, property);
+            return self.substituteOn(try self.typeOfPropertyRead(member, property), base);
         }
         if (try self.reportTypeMemberThroughValue(base, member.name, member.name_span)) return .invalid;
         if (try self.memberKey(base, member.name)) |key| {
             if (try self.reportAbstractThroughSuper(member, key)) return .invalid;
-            return self.typeOfMethodValue(expression, base, member.name);
+            return self.typeOfMethodValue(expression, base, member.name, capture);
         }
         if (try self.reportTraitPrivate(base, member.name, member.name_span)) return .invalid;
         try self.report(
@@ -7215,6 +7903,120 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
     return .invalid;
 }
 
+/// Whether a generic type, `Box[Int]`, is part of `t`.
+fn genericAnywhere(t: Type) bool {
+    return switch (t.kind) {
+        .struct_value => t.type_arguments.len > 0,
+        .list, .set, .task, .channel => genericAnywhere(t.element.?.*),
+        .dictionary => genericAnywhere(t.key.?.*) or genericAnywhere(t.element.?.*),
+        .tuple => for (t.elements) |element| {
+            if (genericAnywhere(element)) break true;
+        } else false,
+        .function => blk: {
+            for (t.signature.?.parameters) |parameter| if (genericAnywhere(parameter)) break :blk true;
+            break :blk genericAnywhere(t.signature.?.return_type);
+        },
+        else => false,
+    };
+}
+
+/// Section 5.2 of the generics plan: a `T with Trait` has the trait's methods,
+/// with `Self` meaning `T`. Which version runs is the value's own, decided
+/// while the program runs: a struct's or class's method, or the built-in one
+/// for a number, a string, or a `Bool`.
+fn typeOfParameterMethodCall(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member, parameter_type: Type) Error!Type {
+    const parameter = parameter_type.parameter.?;
+    const bound = parameter.bound orelse {
+        try self.reportTypeParameterMember(parameter_type, member);
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    };
+    const key = (try self.memberKey(Type.structOf(bound), member.name)) orelse {
+        try self.reportWithHelp(
+            member.name_span,
+            "`{s}` has no method `{s}`",
+            .{ parameter.name, member.name },
+            "`{s} with {s}` promises only what `{s}` declares.",
+            .{ parameter.name, bound.display_name, bound.display_name },
+        );
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    };
+    if (self.properties.contains(key)) {
+        try self.reportWithHelp(member.name_span, "`{s}` is a property, not a method", .{member.name}, "Read it without parentheses, as in `.{s}`.", .{member.name});
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    }
+    try self.reachKey(key);
+    const signature = try self.signatureOn(try self.signatureFor(key), parameter_type);
+    const parameters = try self.parametersOf(
+        signature,
+        (try self.declarationWithDefaults(key)).parameters,
+        "Match the number of arguments to the method's parameters.",
+    );
+    try self.checkArguments(call, member.name, parameters);
+    if (try self.methodChanges(key)) {
+        try self.reportWithHelp(
+            member.name_span,
+            "`{s}` changes the value it is called on, which cannot be done through `{s}` yet",
+            .{ member.name, parameter.name },
+            "Call it on a value whose type is known.",
+            .{},
+        );
+        return .invalid;
+    }
+    try self.parameter_calls.put(self.arena, call.callee, key);
+    return signature.return_type;
+}
+
+/// The comparison members every built-in scalar has, so that a
+/// `T with Ordered` given an `Int` can call `compare` (5.2 of the plan). A
+/// `Bool` has no order, and so no `compare`.
+/// The comparison members of `Int`, `Float`, and `String` (11.3). A `Bool`
+/// has the last two.
+pub const ordered_scalar_methods = [_][]const u8{ "compare", "equals", "hash" };
+
+fn isComparisonMember(base: Type, name: []const u8) bool {
+    const scalar = base.kind == .int or base.kind == .float or base.kind == .string or base.kind == .bool;
+    if (!scalar) return false;
+    if (std.mem.eql(u8, name, "compare")) return base.kind != .bool;
+    return std.mem.eql(u8, name, "equals") or std.mem.eql(u8, name, "hash");
+}
+
+/// `3.compare(4)`, `"a".equals("b")`, `2.5.hash()`: what `<`, `==`, and a
+/// dictionary already do, as methods.
+fn typeOfComparisonMember(self: *Checker, call: Ast.Expression.Call, member: Ast.Expression.Member, base: Type) Error!Type {
+    const takes_other = !std.mem.eql(u8, member.name, "hash");
+    const count: usize = if (takes_other) 1 else 0;
+    if (!try self.requireArity(member, call.arguments, count, count)) return .invalid;
+    if (takes_other) {
+        const actual = try self.typeOfExpected(call.arguments[0], base);
+        if (!actual.assignableTo(base)) {
+            try self.reportWithHelp(
+                call.arguments[0].span,
+                "this is {f}, but `{s}` on {f} needs another {f}",
+                .{ actual, member.name, base, base },
+                "Compare a value with one of its own type, or convert it first.",
+                .{},
+            );
+            return .invalid;
+        }
+    }
+    return if (std.mem.eql(u8, member.name, "equals")) .bool else .int;
+}
+
+/// Section 11.3: nothing is known about what a `T` holds, so it has no members.
+fn reportTypeParameterMember(self: *Checker, parameter: Type, member: Ast.Expression.Member) Error!void {
+    const written = parameter.parameter.?;
+    try self.reportWithHelp(
+        member.name_span,
+        "`{s}` could be any type, so it has no `{s}`",
+        .{ written.name, member.name },
+        "Inside `{s}`, `{s}` values can be stored, passed, returned, and printed, but nothing is known about what they are.",
+        .{ written.owner, written.name },
+    );
+}
+
 /// Slice 2 of optional chaining: fields and computed properties on an optional
 /// object. Method calls are deliberately handled by the following slice.
 fn typeOfOptionalObjectMember(self: *Checker, member: Ast.Expression.Member) Error!Type {
@@ -7230,8 +8032,8 @@ fn typeOfOptionalObjectMember(self: *Checker, member: Ast.Expression.Member) Err
         return .invalid;
     }
     if (try self.memberOwner(present, member.name)) |owner| if (try self.reportPrivate(owner, member.name, member.name_span)) return .invalid;
-    for (present.user.?.fields) |field| if (std.mem.eql(u8, field.name, member.name)) return field.type.optionalOf();
-    if (try self.propertyOf(present, member.name)) |property| return (try self.typeOfPropertyRead(member, property)).optionalOf();
+    for (present.user.?.fields) |field| if (std.mem.eql(u8, field.name, member.name)) return (try self.substituteOn(field.type, present)).optionalOf();
+    if (try self.propertyOf(present, member.name)) |property| return (try self.substituteOn(try self.typeOfPropertyRead(member, property), present)).optionalOf();
     if (try self.memberKey(present, member.name) != null) {
         try self.reportWithHelp(member.name_span, "`{s}` is a method, so it needs parentheses", .{member.name}, "Method calls through `?.` arrive in the next optional-chaining slice.", .{});
         return .invalid;
@@ -7244,7 +8046,7 @@ fn typeOfOptionalObjectMember(self: *Checker, member: Ast.Expression.Member) Err
 /// calls the method on its own copy of the receiver, which a changing method
 /// keeps changing from one call to the next. Nothing about the receiver's
 /// place is checked, since the copy is the only thing that can change.
-fn typeOfMethodValue(self: *Checker, expression: *const Ast.Expression, owner: Type, name: []const u8) Error!Type {
+fn typeOfMethodValue(self: *Checker, expression: *const Ast.Expression, owner: Type, name: []const u8, expected: ?Type) Error!Type {
     const key = (try self.memberKey(owner, name)).?;
     try self.method_calls.put(self.arena, expression, key);
     const declared = try self.signatureFor(key);
@@ -7253,11 +8055,7 @@ fn typeOfMethodValue(self: *Checker, expression: *const Ast.Expression, owner: T
         return .invalid;
     }
     const signature = try self.signatureOn(declared, owner);
-    return Type.functionOf(self.arena, .{
-        .parameters = signature.parameters,
-        .parameter_names = signature.parameter_names,
-        .return_type = signature.return_type,
-    });
+    return self.capturedFunction(signature, expected, name, expression.data.member.name_span);
 }
 
 /// A method call such as `scores.append(10)`.
@@ -7281,6 +8079,7 @@ fn typeOfMethodCall(
     expression: *const Ast.Expression,
     call: Ast.Expression.Call,
     member: Ast.Expression.Member,
+    expected_result: ?Type,
 ) Error!Type {
     if (member.optional) return self.typeOfOptionalObjectMethodCall(expression, call, member);
     // Section 10.2: "Before all fields are ready ... instance methods may not
@@ -7310,6 +8109,18 @@ fn typeOfMethodCall(
         try self.typeArguments(call.arguments);
         return .invalid;
     }
+    if (base.payload().kind == .type_parameter) {
+        if (!try self.requirePresent(base, member.base, member.name)) {
+            try self.typeArguments(call.arguments);
+            return .invalid;
+        }
+        return self.typeOfParameterMethodCall(call, member, base);
+    }
+    if (base.kind == .list and !base.optional and try self.rejectUnequatableElements(member, base.element.?.*)) {
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    }
+    if (!base.optional and isComparisonMember(base, member.name)) return self.typeOfComparisonMember(call, member, base);
     // Counting spellings are native operations only after resolving the
     // receiver. A declared type owns its members, whatever their names.
     if (base.kind != .struct_value) {
@@ -7436,7 +8247,7 @@ fn typeOfMethodCall(
         try self.typeArguments(call.arguments);
         return .invalid;
     }
-    if (base.kind == .struct_value) return self.typeOfStructMethodCall(expression, call, member, base);
+    if (base.kind == .struct_value) return self.typeOfStructMethodCall(expression, call, member, base, expected_result);
     if (base.kind == .range) return self.typeOfRangeMethod(call, member);
     if (base.kind == .string) return self.typeOfStringMethod(call, member);
     if (base.kind == .bytes) return self.typeOfBytesMethod(call, member);
@@ -7619,7 +8430,7 @@ fn typeOfMethodCall(
             );
             return .invalid;
         }
-        if (element.kind == .int or element.kind == .float or element.kind == .string) return element.optionalOf();
+        if (element.kind == .int or element.kind == .float or element.kind == .string or self.parameterRequires(element, "Ordered")) return element.optionalOf();
         if (element.kind == .struct_value) {
             const ordered = try self.typeOfOperatorCall(member.name_span, member.name, .ordered, null, element, element);
             return if (ordered.kind == .invalid) .invalid else element.optionalOf();
@@ -7628,7 +8439,7 @@ fn typeOfMethodCall(
             member.name_span,
             "`{s}` needs a List of ordered values, but this is {f}",
             .{ member.name, base },
-            "Ints, Floats, Strings, and types that adopt `Ordered` have an order. Use another operation for these elements.",
+            try self.orderHelp(element),
         );
         return .invalid;
     }
@@ -7648,7 +8459,7 @@ fn typeOfMethodCall(
             return .invalid;
         }
         const eligible = eligible: {
-            if (element.kind == .int or element.kind == .float or element.kind == .string) break :eligible true;
+            if (element.kind == .int or element.kind == .float or element.kind == .string or self.parameterRequires(element, "Ordered")) break :eligible true;
             if (element.kind == .struct_value) {
                 const ordered = try self.typeOfOperatorCall(member.name_span, member.name, .ordered, null, element, element);
                 break :eligible ordered.kind != .invalid;
@@ -7660,7 +8471,7 @@ fn typeOfMethodCall(
                 member.name_span,
                 "`{s}` needs a List of ordered values, but this is {f}",
                 .{ member.name, base },
-                "Ints, Floats, Strings, and types that adopt `Ordered` have an order. Use another operation for these elements.",
+                try self.orderHelp(element),
             );
             return .invalid;
         }
@@ -7738,7 +8549,7 @@ fn typeOfOptionalObjectMethodCall(self: *Checker, expression: *const Ast.Express
         return .invalid;
     }
     const present = base.payload();
-    const result = try self.typeOfStructMethodCall(expression, call, member, present);
+    const result = try self.typeOfStructMethodCall(expression, call, member, present, null);
     if (result.kind != .invalid) {
         // A struct's changing method has nowhere to write its change back to
         // through `?.`, which only ever reads the receiver's value (4.5); a
@@ -8052,7 +8863,7 @@ fn typeOfExtremeBy(self: *Checker, call: Ast.Expression.Call, member: Ast.Expres
         );
         return .invalid;
     }
-    if (key.kind == .int or key.kind == .float or key.kind == .string) return element.optionalOf();
+    if (key.kind == .int or key.kind == .float or key.kind == .string or self.parameterRequires(key, "Ordered")) return element.optionalOf();
     if (key.kind == .struct_value) {
         const ordered = try self.typeOfOperatorCall(member.name_span, member.name, .ordered, null, key, key);
         return if (ordered.kind == .invalid) .invalid else element.optionalOf();
@@ -8081,7 +8892,7 @@ fn typeOfMinMax(self: *Checker, call: Ast.Expression.Call, member: Ast.Expressio
         return .invalid;
     }
     const pair = try Type.tupleOf(self.arena, &.{ element.optionalOf(), element.optionalOf() });
-    if (element.kind == .int or element.kind == .float or element.kind == .string) return pair;
+    if (element.kind == .int or element.kind == .float or element.kind == .string or self.parameterRequires(element, "Ordered")) return pair;
     if (element.kind == .struct_value) {
         const ordered = try self.typeOfOperatorCall(member.name_span, member.name, .ordered, null, element, element);
         return if (ordered.kind == .invalid) .invalid else pair;
@@ -8090,7 +8901,7 @@ fn typeOfMinMax(self: *Checker, call: Ast.Expression.Call, member: Ast.Expressio
         member.name_span,
         "`min_max` needs a List of ordered values, but this is {f}",
         .{base},
-        "Ints, Floats, Strings, and types that adopt `Ordered` have an order. Use another operation for these elements.",
+        try self.orderHelp(element),
     );
     return .invalid;
 }
@@ -8114,7 +8925,7 @@ fn typeOfSortBy(self: *Checker, call: Ast.Expression.Call, member: Ast.Expressio
         );
         return .invalid;
     }
-    if (key.kind == .int or key.kind == .float or key.kind == .string) return Type.listOf(self.arena, element);
+    if (key.kind == .int or key.kind == .float or key.kind == .string or self.parameterRequires(key, "Ordered")) return Type.listOf(self.arena, element);
     if (key.kind == .struct_value) {
         const ordered = try self.typeOfOperatorCall(member.name_span, member.name, .ordered, null, key, key);
         return if (ordered.kind == .invalid) .invalid else Type.listOf(self.arena, element);
@@ -8577,7 +9388,7 @@ fn resolvePlace(self: *Checker, expression: *const Ast.Expression) Error!Place {
                 if (!field.mutable and base.frozen == null) {
                     base.frozen = .{ .name = inner.name, .span = inner.name_span, .owner = base.type, .field_type = field.type };
                 }
-                base.type = field.type;
+                base.type = try self.substituteOn(field.type, base.type);
                 return .{ .typed = base };
             }
             return .{ .root = base.root };
@@ -9213,6 +10024,10 @@ fn familiarIntName(name: []const u8) ?[]const u8 {
         .{ "is_odd", "odd?" },
         .{ "is_multiple_of", "multiple_of?" },
         .{ "to_f", "to_float" },
+        .{ "compare_to", "compare" },
+        .{ "compareTo", "compare" },
+        .{ "hash_code", "hash" },
+        .{ "hashCode", "hash" },
     });
     return familiar.get(name);
 }
@@ -9229,6 +10044,10 @@ fn familiarFloatName(name: []const u8) ?[]const u8 {
         .{ "isNaN", "nan?" },
         .{ "trunc", "truncate" },
         .{ "to_i", "to_int" },
+        .{ "compare_to", "compare" },
+        .{ "compareTo", "compare" },
+        .{ "hash_code", "hash" },
+        .{ "hashCode", "hash" },
     });
     return familiar.get(name);
 }
@@ -9303,6 +10122,10 @@ fn familiarStringName(name: []const u8) ?[]const u8 {
         .{ "substr", "substring" },
         .{ "reversed", "reverse" },
         .{ "parse", "to_int" },
+        .{ "compare_to", "compare" },
+        .{ "compareTo", "compare" },
+        .{ "hash_code", "hash" },
+        .{ "hashCode", "hash" },
     });
     return familiar.get(name);
 }
@@ -9798,14 +10621,16 @@ fn checkCase(self: *Checker, case: *const Ast.Case, expected: ?Type) Error!Type 
             const count = @min(found.names.len, items.len);
             for (found.names[0..count], items[0..count]) |maybe, item| {
                 const name = maybe orelse continue;
+                // A generic enum's data holds the subject's types (11.3).
+                const held = if (subject) |subject_type| try self.substituteOn(item.type, subject_type) else item.type;
                 try scope.put(self.arena, name.text, .{
-                    .type = item.type,
-                    .declared = item.type,
+                    .type = held,
+                    .declared = held,
                     .assigned = true,
                     .mutability = .match_binding,
                 });
                 // So hover on the name in the match shows the data's type.
-                try self.expression_types.put(self.arena, name.expression, .{ .file = self.file, .type = item.type });
+                try self.expression_types.put(self.arena, name.expression, .{ .file = self.file, .type = held });
             }
         }
         const completes = try self.checkCaseBody(arm.body, expected, &results, &result_spans);
@@ -10165,8 +10990,46 @@ fn typeOfComparison(self: *Checker, comparison: Ast.Expression.Comparison) Error
         const pair: Source.Span = .{ .start = left_node.span.start, .end = operand_node.span.end };
         const numeric = left.isNumber() and right.isNumber();
         const unknown = left.kind == .invalid or right.kind == .invalid;
+        const parameter: ?Type = if (left.payload().kind == .type_parameter) left.payload() else if (right.payload().kind == .type_parameter) right.payload() else null;
+        const against_nothing = left.kind == .nothing or right.kind == .nothing;
 
-        if (!unknown and !operator.isEquality() and left.kind == .struct_value and !left.optional) {
+        const requires = if (parameter) |found| (if (operator.isEquality()) self.parameterRequires(found, "Equatable") else self.parameterRequires(found, "Ordered")) else false;
+        // An optional compares with `==` against a present value of its own
+        // type, as `maybe == 5` does; an order needs both present.
+        const allowed = parameter != null and left.payload().same(right.payload()) and requires and
+            (operator.isEquality() or (!left.optional and !right.optional));
+        if (!unknown and parameter != null and !(operator.isEquality() and against_nothing) and !allowed) {
+            // Section 11.3: `T` could be any type, and not every type has an
+            // order or an equality, unless it requires one.
+            const written = parameter.?.parameter.?;
+            if (requires) {
+                try self.report(
+                    pair,
+                    "{f} and {f} cannot be compared",
+                    .{ left, right },
+                    "`==` and `!=` compare two values of the same type, and a type parameter's values compare only with each other.",
+                );
+            } else if (operator.isEquality()) {
+                try self.reportWithHelp(
+                    pair,
+                    "`{s}` values cannot be compared with `{s}`",
+                    .{ written.name, operator.lexeme() },
+                    "`{s}` could be any type, and not every type can be compared with `{s}`. Write `{s} with Equatable` where `{s}` is declared to require that it can.",
+                    .{ written.name, operator.lexeme(), written.name, written.name },
+                );
+            } else {
+                try self.reportWithHelp(
+                    pair,
+                    "`{s}` has no order",
+                    .{written.name},
+                    "`{s}` could be any type, and not every type can be put in order with `{s}`. Write `{s} with Ordered` where `{s}` is declared to require that it can.",
+                    .{ written.name, operator.lexeme(), written.name, written.name },
+                );
+            }
+        } else if (allowed) {
+            // A runtime value decides how: a native order, or its `compare`
+            // or `equals` (5.7 of the plan).
+        } else if (!unknown and !operator.isEquality() and left.kind == .struct_value and !left.optional) {
             // Section 11.5: ordering a user type runs its `compare`.
             _ = try self.typeOfOperatorCall(pair, operator.lexeme(), .ordered, left_node, left, right);
         } else if (!unknown and (isTrait(left) or isTrait(right)) and !(left.opaque_self and left.same(right))) {
@@ -10231,6 +11094,8 @@ fn typeOfCall(
     expression: *const Ast.Expression,
     call: Ast.Expression.Call,
 ) Error!Type {
+    const expected_construction = self.construction_expected;
+    self.construction_expected = null;
     if (try self.isChannelCall(call)) return self.typeOfChannelCall(expression, call, null);
     if (isSuper(call.callee)) return self.typeOfSuperCall(expression, call);
 
@@ -10240,7 +11105,7 @@ fn typeOfCall(
         // A tuple position holding a block is called through its value, not as
         // a method of the tuple.
         if (call.callee.data == .member and call.callee.data.member.position == null) {
-            return self.typeOfMethodCall(expression, call, call.callee.data.member);
+            return self.typeOfMethodCall(expression, call, call.callee.data.member, expected_construction);
         }
         // Anything that is not a plain name — a lambda called where it is
         // written, an element of a list of functions — is called through its
@@ -10336,6 +11201,14 @@ fn typeOfCall(
             n.* = item.name;
             d.* = false;
         }
+        // Section 11.3: a generic enum's data says what its types are, as
+        // a construction's arguments do.
+        const user = enum_type.user.?;
+        var inference: ?Inference = null;
+        if (user.type_parameters.len > 0) {
+            inference = try Inference.init(self.arena, user.type_parameters);
+            inference.?.seed(Type.structOf(user).withArguments(user.own_arguments), expected_construction);
+        }
         try self.checkArguments(call, name, .{
             .types = types,
             .names = names,
@@ -10343,8 +11216,25 @@ fn typeOfCall(
             .noun = "data item",
             .mismatch_help = "Pass a value of the data item's declared type, or convert it first.",
             .arity_help = "Pass one value for each data item, in declaration order, or name them.",
+            .inference = if (inference) |*working| working else null,
         });
-        return enum_type;
+        const working = if (inference) |*made| made else return enum_type;
+        if (!working.bound) return .invalid;
+        if (working.untold) |argument| {
+            try self.reportWithHelp(
+                argument.span,
+                "Emerald cannot tell what this `{s}` holds",
+                .{name},
+                "Nothing passed here says what its type is. Write the type where the value is kept, as in `const value: {s}[Int] = {s}(...)`.",
+                .{ user.display_name, name },
+            );
+            return .invalid;
+        }
+        for (user.type_parameters, working.solved) |parameter, answer| {
+            const said = answer orelse continue;
+            if (!try self.checkAnswer(call.callee.span, user.display_name, parameter, said)) return .invalid;
+        }
+        return self.choiceType(enum_type, expected_construction, working.solved);
     };
 
     if (binding.is_type) {
@@ -10383,7 +11273,10 @@ fn typeOfCall(
             try self.typeArguments(call.arguments);
             return binding.type;
         }
-        try self.checkConstruction(call, reference.key, name);
+        if (binding.type.user.?.type_parameters.len > 0) {
+            return self.typeOfGenericConstruction(call, reference.key, name, binding.type.user.?, expected_construction);
+        }
+        try self.checkConstruction(call, reference.key, name, null);
         return binding.type;
     }
 
@@ -10464,13 +11357,21 @@ fn typeOfCall(
     }
 
     const signature = try self.signatureFor(key);
-    try self.checkArguments(call, name, try self.parametersOf(
+    var parameters = try self.parametersOf(
         signature,
         self.declarations.get(key).?.parameters,
         "Match the number of arguments to the function's parameters.",
-    ));
+    );
+    var inference: ?Inference = null;
+    if (signature.type_parameters.len > 0) {
+        inference = try Inference.init(self.arena, signature.type_parameters);
+        inference.?.seed(signature.return_type, expected_construction);
+        parameters.inference = &inference.?;
+    }
+    try self.checkArguments(call, name, parameters);
 
     if (!self.in_function) try self.checkCaptures(expression.span, key, name);
+    if (inference) |*working| return self.finishGenericCall(call, name, working, signature.return_type);
     return signature.return_type;
 }
 
@@ -10779,6 +11680,9 @@ fn jsonEncodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?J
         .struct_value => {
             const user = value.user.?;
             if (user.enumeration) return dataEnumIssue(value, field_path);
+            // A generic type's fields are erased at run time, so the encoder
+            // would have no type to follow (11.3).
+            if (user.type_parameters.len > 0) return .{ .type = value, .field_path = field_path };
             if (user.class or user.trait) return .{ .type = value, .field_path = field_path };
             if (jsonTextualType(user.name)) return null;
             if (self.jsonVisiting(user.name)) return null;
@@ -10796,7 +11700,7 @@ fn jsonEncodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?J
             }
             return null;
         },
-        .nothing, .bytes, .range, .tuple, .set, .task, .channel, .function, .invalid => return .{ .type = value, .field_path = field_path },
+        .nothing, .bytes, .range, .tuple, .set, .task, .channel, .function, .type_parameter, .invalid => return .{ .type = value, .field_path = field_path },
     }
 }
 
@@ -10812,6 +11716,9 @@ fn jsonDecodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?J
         .struct_value => {
             const user = value.user.?;
             if (user.enumeration) return dataEnumIssue(value, field_path);
+            // A generic type's fields are erased at run time, so the encoder
+            // would have no type to follow (11.3).
+            if (user.type_parameters.len > 0) return .{ .type = value, .field_path = field_path };
             if (jsonTextualType(user.name)) return null;
             if (user.class or user.trait) return .{ .type = value, .field_path = field_path };
             if (self.constructors.contains(user.name)) return .{ .type = value, .field_path = field_path, .own_constructor = true };
@@ -10834,7 +11741,7 @@ fn jsonDecodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?J
             }
             return null;
         },
-        .nothing, .bytes, .range, .tuple, .set, .task, .channel, .function, .invalid => return .{ .type = value, .field_path = field_path },
+        .nothing, .bytes, .range, .tuple, .set, .task, .channel, .function, .type_parameter, .invalid => return .{ .type = value, .field_path = field_path },
     }
 }
 
@@ -10966,6 +11873,9 @@ fn csvCellFieldIssue(self: *Checker, value: Type, field_path: []const u8) Error!
         .struct_value => {
             const user = value.user.?;
             if (user.enumeration) return dataEnumIssue(value, field_path);
+            // A generic type's fields are erased at run time, so the encoder
+            // would have no type to follow (11.3).
+            if (user.type_parameters.len > 0) return .{ .type = value, .field_path = field_path };
             if (csvTextualType(user.name)) return null;
             return .{ .type = value, .field_path = field_path };
         },
@@ -11051,7 +11961,7 @@ fn typeOfSleep(self: *Checker, call: Ast.Expression.Call, name: []const u8) Erro
 
 /// The arguments of a call that builds a value of the type `key`: calling the
 /// type, or a subclass's `super(...)`. `name` is the type as written there.
-fn checkConstruction(self: *Checker, call: Ast.Expression.Call, key: []const u8, name: []const u8) Error!void {
+fn checkConstruction(self: *Checker, call: Ast.Expression.Call, key: []const u8, name: []const u8, inference: ?*Inference) Error!void {
     const built = self.structs.get(key).?;
     // Section 10.2: a custom constructor replaces the generated one, so its
     // parameters are what a call must match.
@@ -11063,6 +11973,7 @@ fn checkConstruction(self: *Checker, call: Ast.Expression.Call, key: []const u8,
             "Match the number of arguments to the constructor's parameters.",
         );
         parameters.named_units = takesNamedUnits(key);
+        parameters.inference = inference;
         try self.checkArguments(call, name, parameters);
         if (std.mem.eql(u8, key, Resolver.preludeKey("Regex"))) try self.checkLiteralPattern(call);
         return;
@@ -11165,12 +12076,74 @@ fn checkConstruction(self: *Checker, call: Ast.Expression.Call, key: []const u8,
         .has_default = defaults,
         .noun = "field",
         .private_to = if (outside) built.user.?.display_name else null,
+        .inference = inference,
         .mismatch_help = "Pass a value of the field's declared type, or convert it first.",
         .arity_help = if (any_default)
             "Pass a value for each field without a default, in declaration order, or name the fields you pass."
         else
             "Pass one value for each required field, in declaration order.",
     });
+}
+
+/// Section 11.3: a call to a generic function or method, whose own types
+/// come from its arguments and, for what they leave open, from where its
+/// result goes. Returns the result with them in place.
+fn finishGenericCall(self: *Checker, call: Ast.Expression.Call, name: []const u8, inference: *Inference, result: Type) Error!Type {
+    if (!inference.bound) return .invalid;
+    for (inference.parameters, inference.solved) |parameter, answer| {
+        const found = answer orelse {
+            try self.reportWithHelp(
+                call.callee.span,
+                "Emerald cannot tell what `{s}` is for this call to `{s}`",
+                .{ parameter.name, name },
+                "Nothing passed here says what `{s}` is. Pass a value that does, or write the type where the result is kept, as in `const value: Int = ...`.",
+                .{parameter.name},
+            );
+            return .invalid;
+        };
+        if (!try self.checkAnswer(call.callee.span, name, parameter, found)) return .invalid;
+    }
+    return inference.substituted(self.arena, result);
+}
+
+/// Section 11.3's `Grid(3, 3, ".")`: a generic type is built without its
+/// types, which come from where the value goes, then from its arguments.
+fn typeOfGenericConstruction(
+    self: *Checker,
+    call: Ast.Expression.Call,
+    key: []const u8,
+    name: []const u8,
+    user: *const Type.User,
+    expected: ?Type,
+) Error!Type {
+    var inference = try Inference.init(self.arena, user.type_parameters);
+    if (expected) |wanted| {
+        const present = wanted.payload();
+        if (present.kind == .struct_value and present.user.? == user and present.type_arguments.len == user.type_parameters.len) {
+            for (present.type_arguments, inference.solved) |argument, *answer| answer.* = argument;
+        }
+    }
+    try self.checkConstruction(call, key, name, &inference);
+    if (!inference.bound) return .invalid;
+    const arguments = try self.arena.alloc(Type, user.type_parameters.len);
+    for (user.type_parameters, inference.solved, arguments) |parameter, answer, *argument| {
+        argument.* = answer orelse {
+            var example: std.Io.Writer.Allocating = .init(self.arena);
+            for (user.type_parameters, 0..) |_, position| {
+                example.writer.print("{s}{s}", .{ if (position == 0) "" else ", ", if (position % 2 == 0) "String" else "Int" }) catch return error.OutOfMemory;
+            }
+            try self.reportWithHelp(
+                call.callee.span,
+                "Emerald cannot tell what `{s}` is for this `{s}`",
+                .{ parameter.name, user.display_name },
+                "Nothing passed here says what `{s}` is. Write the type where the value is kept, as in `const value: {s}[{s}] = {s}(...)`.",
+                .{ parameter.name, user.display_name, example.written(), name },
+            );
+            return .invalid;
+        };
+        if (!try self.checkAnswer(call.callee.span, user.display_name, parameter, argument.*)) return .invalid;
+    }
+    return Type.structOf(user).withArguments(arguments);
 }
 
 fn isSelf(expression: *const Ast.Expression) bool {
@@ -11389,7 +12362,7 @@ fn typeOfSuperCall(self: *Checker, expression: *const Ast.Expression, call: Ast.
         try self.typeArguments(call.arguments);
         return .nothing;
     };
-    try self.checkConstruction(call, base.name, base.display_name);
+    try self.checkConstruction(call, base.name, base.display_name, null);
     // The base class's part is built: every inherited field is set.
     for (user.fields[0..user.inherited]) |field| {
         (try self.fieldSetBinding(field.name)).?.assigned = true;
@@ -11421,7 +12394,139 @@ const Parameters = struct {
     /// Every parameter is a unit of time, so each argument must be named
     /// (15.8): `Duration(5)` would silently mean five days.
     named_units: bool = false,
+    /// The parameters' types as declared, before a generic receiver's type
+    /// arguments replaced its parameters (11.3), so an `Int` passed where a
+    /// `T` is a `Float` is widened. Null when nothing was replaced.
+    declared: ?[]const Type = null,
+    /// Section 11.3: the types a generic construction is working out from its
+    /// arguments, when `types` are written in terms of its parameters.
+    inference: ?*Inference = null,
 };
+
+/// Section 11.3: what a construction's arguments say about each of its type's
+/// parameters, left to right.
+const Inference = struct {
+    parameters: []const *const Type.Parameter,
+    /// What each parameter is, once something says.
+    solved: []?Type,
+    /// Arguments checked once every parameter is known: a block, an empty
+    /// literal, or `nothing`, which cannot say what a parameter is but can be
+    /// told, and every argument that said something, to check against the
+    /// final answer.
+    pending: std.ArrayList(Pending) = .empty,
+    /// Whether the arguments matched the parameters at all. When they did
+    /// not, that was reported, and nothing more is said about the types.
+    bound: bool = false,
+    /// The first argument left unchecked because it could not say what a
+    /// parameter is and nothing else did: a block or an empty literal. A
+    /// call or construction reports such a parameter anyway; an enum choice,
+    /// which may leave one open, must report it here (11.3).
+    untold: ?*const Ast.Expression = null,
+
+    const Pending = struct {
+        argument: *const Ast.Expression,
+        declared: Type,
+        actual: ?Type,
+        name: []const u8,
+    };
+
+    /// What the type a call is expected to give says, first, as an
+    /// annotation does for a construction: `const rates: List[Float] =
+    /// repeated([1, 2], 3)` makes the whole numbers Floats. A result that is
+    /// always there may go where an optional is expected.
+    fn seed(self: *Inference, result: Type, expected: ?Type) void {
+        const wanted = expected orelse return;
+        if (wanted.kind == .invalid or wanted.kind == .nothing) return;
+        self.unify(result, if (wanted.optional and !result.optional) wanted.payload() else wanted);
+    }
+
+    fn init(arena: std.mem.Allocator, parameters: []const *const Type.Parameter) Error!Inference {
+        const solved = try arena.alloc(?Type, parameters.len);
+        @memset(solved, null);
+        return .{ .parameters = parameters, .solved = solved };
+    }
+
+    /// The parameters nothing has said anything about yet.
+    fn unsolved(self: *const Inference, arena: std.mem.Allocator) Error![]const *const Type.Parameter {
+        var found: std.ArrayList(*const Type.Parameter) = .empty;
+        for (self.parameters, self.solved) |parameter, answer| {
+            if (answer == null) try found.append(arena, parameter);
+        }
+        return found.items;
+    }
+
+    /// `t` with every parameter known so far replaced by its answer.
+    fn substituted(self: *const Inference, arena: std.mem.Allocator, t: Type) Error!Type {
+        const arguments = try arena.alloc(Type, self.parameters.len);
+        for (self.parameters, self.solved, arguments) |parameter, answer, *argument| {
+            argument.* = answer orelse Type.parameterOf(parameter);
+        }
+        return t.substitute(arena, self.parameters, arguments);
+    }
+
+    /// Learns what `actual`, given where `pattern` is declared, says about
+    /// the parameters. A whole number seen first and a `Float` later make the
+    /// parameter a `Float`, as `[1, 2.5]` makes a `List[Float]`.
+    fn unify(self: *Inference, pattern: Type, given: Type) void {
+        if (given.kind == .invalid or given.kind == .nothing) return;
+        const actual = if (pattern.optional) given.payload() else given;
+        switch (pattern.kind) {
+            .type_parameter => {
+                const position = for (self.parameters, 0..) |parameter, index| {
+                    if (parameter == pattern.parameter.?) break index;
+                } else return;
+                if (self.solved[position]) |current| {
+                    if (current.kind == .int and !current.optional and actual.kind == .float and !actual.optional) {
+                        self.solved[position] = actual;
+                    }
+                    return;
+                }
+                self.solved[position] = actual;
+            },
+            .list, .set, .task, .channel => if (actual.kind == pattern.kind and !actual.optional) {
+                self.unify(pattern.element.?.*, actual.element.?.*);
+            },
+            .dictionary => if (actual.kind == .dictionary and !actual.optional) {
+                self.unify(pattern.key.?.*, actual.key.?.*);
+                self.unify(pattern.element.?.*, actual.element.?.*);
+            },
+            .tuple => if (actual.kind == .tuple and !actual.optional and actual.elements.len == pattern.elements.len) {
+                for (pattern.elements, actual.elements) |mine, theirs| self.unify(mine, theirs);
+            },
+            .function => if (actual.kind == .function and !actual.optional and
+                actual.signature.?.parameters.len == pattern.signature.?.parameters.len)
+            {
+                for (pattern.signature.?.parameters, actual.signature.?.parameters) |mine, theirs| self.unify(mine, theirs);
+                self.unify(pattern.signature.?.return_type, actual.signature.?.return_type);
+            },
+            .struct_value => if (actual.kind == .struct_value and !actual.optional and actual.user == pattern.user and
+                actual.type_arguments.len == pattern.type_arguments.len)
+            {
+                for (pattern.type_arguments, actual.type_arguments) |mine, theirs| self.unify(mine, theirs);
+            },
+            .nothing, .bool, .int, .float, .string, .bytes, .range, .invalid => {},
+        }
+    }
+};
+
+/// An argument that cannot say what a type parameter is, only be told: its
+/// type comes from where it is going.
+fn needsContext(argument: *const Ast.Expression) bool {
+    return switch (argument.data) {
+        .lambda, .nothing_literal => true,
+        .list_literal => |elements| elements.len == 0,
+        .dictionary_literal => |entries| entries.len == 0,
+        else => false,
+    };
+}
+
+/// Section 11.3: an `Int` passed where an erased `T` is a `Float` must be
+/// widened by the interpreter, which no longer knows `T`.
+fn markWidening(self: *Checker, argument: *const Ast.Expression, declared: Type, target: Type, actual: Type) Error!void {
+    if (declared.kind != .type_parameter) return;
+    if (target.payload().kind != .float or actual.payload().kind != .int) return;
+    try self.widenings.put(self.arena, argument, {});
+}
 
 /// Section 15.4: a pattern written as a string literal is compiled while
 /// checking, with the same code that compiles it at run time, so a mistake in
@@ -11598,8 +12703,21 @@ fn checkArguments(
         return self.typeArguments(call.arguments);
     };
 
-    for (bound, parameters.types, parameters.names) |argument_index, expected, parameter_name| {
+    for (bound, parameters.types, parameters.names, 0..) |argument_index, expected, parameter_name, position| {
         const argument = call.arguments[argument_index orelse continue];
+        if (parameters.inference) |inference| if (expected.mentionsAnyOf(inference.parameters)) {
+            const unknown = try inference.unsolved(self.arena);
+            // Whatever can say what a parameter is, does, now; the rest
+            // waits to be told.
+            const actual: ?Type = if (needsContext(argument) or
+                (argument.data == .list_literal and !expected.mentionsAnyOf(unknown)))
+                null
+            else
+                try self.typeOfExpected(argument, null);
+            if (actual) |said| inference.unify(expected, said);
+            try inference.pending.append(self.arena, .{ .argument = argument, .declared = expected, .actual = actual, .name = parameter_name });
+            continue;
+        };
         // `Json.decode` supplies its `as:` argument as a source type. The
         // special checker case resolves it after ordinary argument binding;
         // no runtime expression should be type-checked here.
@@ -11626,6 +12744,51 @@ fn checkArguments(
                 mismatchHelp(actual, expected, parameters.mismatch_help),
             );
         }
+        if (parameters.declared) |declared| try self.markWidening(argument, declared[position], expected, actual);
+    }
+
+    const inference = parameters.inference orelse return;
+    inference.bound = true;
+    // A block is told what it receives once the arguments before it have
+    // said, and what it gives back says what is left (5.4): `mapped` learns
+    // its `U` from the block's result.
+    for (inference.pending.items) |*pending| {
+        if (pending.actual != null) continue;
+        const target = try inference.substituted(self.arena, pending.declared);
+        const unknown = try inference.unsolved(self.arena);
+        if (!target.mentionsAnyOf(unknown)) {
+            pending.actual = try self.typeOfExpected(pending.argument, target);
+            continue;
+        }
+        if (pending.argument.data != .lambda or target.kind != .function) continue;
+        const signature = target.signature.?;
+        const receives_known = for (signature.parameters) |parameter| {
+            if (parameter.mentionsAnyOf(unknown)) break false;
+        } else true;
+        if (!receives_known) continue;
+        const open = try Type.functionOf(self.arena, .{ .parameters = signature.parameters, .return_type = .invalid });
+        const actual = try self.typeOfExpected(pending.argument, open);
+        pending.actual = actual;
+        inference.unify(pending.declared, actual);
+    }
+    const unknown = try inference.unsolved(self.arena);
+    for (inference.pending.items) |pending| {
+        // Reported once, by the call, as a type it cannot tell.
+        if (pending.declared.mentionsAnyOf(unknown)) {
+            if (pending.actual == null and inference.untold == null) inference.untold = pending.argument;
+            continue;
+        }
+        const target = try inference.substituted(self.arena, pending.declared);
+        const actual = pending.actual orelse try self.typeOfExpected(pending.argument, target);
+        if (!actual.assignableTo(target)) {
+            try self.report(
+                pending.argument.span,
+                "this is {f}, but {s} `{s}` of `{s}` needs {f}",
+                .{ actual, parameters.noun, pending.name, name, target },
+                mismatchHelp(actual, target, parameters.mismatch_help),
+            );
+        }
+        try self.markWidening(pending.argument, pending.declared, target, actual);
     }
 }
 
@@ -11701,6 +12864,10 @@ fn typeOfValueCall(self: *Checker, call: Ast.Expression.Call, callee: Type, name
 
     for (call.arguments, signature.parameters) |argument, expected| {
         const actual = try self.typeOfExpected(argument, expected);
+        // The value may be a generic function taken as a value, whose own
+        // `T` is erased, so a whole number given as a Float is widened here
+        // (11.3). For any other function the interpreter would widen it anyway.
+        if (expected.payload().kind == .float and actual.payload().kind == .int) try self.widenings.put(self.arena, argument, {});
         if (actual.assignableTo(expected)) continue;
         try self.report(
             argument.span,

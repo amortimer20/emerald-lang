@@ -1,0 +1,12 @@
+Pair(first: "Ava", second: 12) Ava 13
+Pair(first: 12, second: "Ava") 24
+Pair(first: "Noah", second: 12)
+1 5 9
+2
+first
+2
+Ava
+3.0
+3
+Pair(first: 4, second: 16)
+1

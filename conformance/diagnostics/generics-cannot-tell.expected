@@ -1,0 +1,4 @@
+diagnostics/generics-cannot-tell.em:5:15: Emerald cannot tell what `Item` is for this `Stack`
+  const stack = Stack()
+                ^^^^^
+Nothing passed here says what `Item` is. Write the type where the value is kept, as in `const value: Stack[String] = Stack(...)`.

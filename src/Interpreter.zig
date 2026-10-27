@@ -350,6 +350,12 @@ type_tests: *const Checker.TypeTests,
 type_names: *const Checker.LiteralTypes,
 /// Section 11.2's `Trait.method(value)` calls, by expression.
 trait_calls: *const Checker.MethodCalls,
+/// Section 11.3: the expressions giving an `Int` that a generic declaration
+/// takes as a `Float`, which nothing else widens once its `T` is erased.
+widenings: *const Checker.Widenings,
+/// Section 11.3: method calls on a `T with Trait`, mapped to the trait
+/// member's key, which run the value's own version.
+parameter_calls: *const Checker.MethodCalls,
 /// Every trait, by key, with the keys of the traits it builds on.
 trait_infos: std.StringHashMapUnmanaged(TraitInfo) = .empty,
 /// Every method that overrides another, mapped to the declaration it
@@ -388,6 +394,8 @@ pub const SessionAnalysis = struct {
     type_tests: *const Checker.TypeTests,
     type_names: *const Checker.LiteralTypes,
     trait_calls: *const Checker.MethodCalls,
+    widenings: *const Checker.Widenings,
+    parameter_calls: *const Checker.MethodCalls,
     facts: Resolver.Facts,
 };
 
@@ -551,6 +559,8 @@ pub const Session = struct {
             .type_tests = analysis.type_tests,
             .type_names = analysis.type_names,
             .trait_calls = analysis.trait_calls,
+            .widenings = analysis.widenings,
+            .parameter_calls = analysis.parameter_calls,
             .literal_types = analysis.literal_types,
             .heap = .init(gpa),
             .session_keys = .empty,
@@ -615,6 +625,8 @@ pub const Session = struct {
         self.interpreter.type_tests = analysis.type_tests;
         self.interpreter.type_names = analysis.type_names;
         self.interpreter.trait_calls = analysis.trait_calls;
+        self.interpreter.widenings = analysis.widenings;
+        self.interpreter.parameter_calls = analysis.parameter_calls;
         self.interpreter.facts = analysis.facts;
     }
 
@@ -842,6 +854,8 @@ pub fn run(
     type_tests: *const Checker.TypeTests,
     type_names: *const Checker.LiteralTypes,
     trait_calls: *const Checker.MethodCalls,
+    widenings: *const Checker.Widenings,
+    parameter_calls: *const Checker.MethodCalls,
     facts: Resolver.Facts,
     out: *std.Io.Writer,
     in: *std.Io.Reader,
@@ -923,6 +937,8 @@ pub fn run(
         .type_tests = type_tests,
         .type_names = type_names,
         .trait_calls = trait_calls,
+        .widenings = widenings,
+        .parameter_calls = parameter_calls,
         .literal_types = literal_types,
         .heap = .init(gpa),
         .test_mode = test_mode,
@@ -2613,6 +2629,10 @@ fn kindOf(checked: Type) Value.Kind {
         .task, .channel => .struct_value,
         .function => .closure,
         .struct_value => .struct_value,
+        // Section 11.3: a type parameter is erased, so its value keeps its
+        // own kind. Only `.float` makes a difference at run time (widening),
+        // and the checker marks the widenings a parameter needs instead.
+        .type_parameter => .struct_value,
     };
 }
 
@@ -2895,6 +2915,14 @@ fn initializeModule(self: *Interpreter, file: u32) Error!void {
 // Expressions.
 
 fn evaluate(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
+    const value = try self.evaluateExpression(expression);
+    // Section 11.3: a whole number given where an erased `T` is a `Float`.
+    // A program with no generics has none, and pays only for the count.
+    if (self.widenings.count() != 0 and self.widenings.contains(expression)) return widen(value, .float);
+    return value;
+}
+
+fn evaluateExpression(self: *Interpreter, expression: *const Ast.Expression) Error!Value {
     try self.guardStack(expression.span);
     try self.guardStep(expression.span);
 
@@ -6420,7 +6448,7 @@ fn jsonDecodeValue(self: *Interpreter, span: Source.Span, json: Json.Value, targ
         .list => self.jsonDecodeList(span, json, target, path),
         .dictionary => self.jsonDecodeDictionary(span, json, target, path),
         .struct_value => self.jsonDecodeStruct(span, json, target, path),
-        .nothing, .bytes, .range, .tuple, .set, .task, .channel, .function, .invalid => unreachable,
+        .nothing, .bytes, .range, .tuple, .set, .task, .channel, .function, .type_parameter, .invalid => unreachable,
     };
 }
 
@@ -6629,7 +6657,7 @@ fn jsonFromTypedValue(self: *Interpreter, arena: std.mem.Allocator, span: Source
             break :blk .initObject(entries);
         },
         .struct_value => self.jsonFromStructValue(arena, span, value, value_type),
-        .nothing, .bytes, .range, .tuple, .set, .task, .channel, .function, .invalid => unreachable,
+        .nothing, .bytes, .range, .tuple, .set, .task, .channel, .function, .type_parameter, .invalid => unreachable,
     };
 }
 
@@ -8855,6 +8883,7 @@ fn callMethod(
     call: Ast.Expression.Call,
     member: Ast.Expression.Member,
 ) Error!Value {
+    if (self.parameter_calls.get(call.callee)) |key| return self.callParameterMember(expression, call, member, key);
     if (self.method_calls.get(call.callee)) |key| {
         if (isFileHandleKey(key)) return self.callFileHandle(expression.span, key, member, call);
         if (isFileWriterKey(key)) return self.callFileWriter(expression.span, key, member, call);
@@ -8872,6 +8901,13 @@ fn callMethod(
             return self.callStructMethod(expression, call, member, key, receiver);
         }
         return self.callStructMethod(expression, call, member, key, null);
+    }
+    // Section 11.3's comparison members of the built-in scalars. A declared
+    // method of the same name took the resolved path above.
+    if (isComparisonMember(member.name)) {
+        const receiver = try self.evaluate(member.base);
+        defer self.heap.release(receiver);
+        return self.scalarMember(expression.span, call, member.name, receiver);
     }
     // These generic native operations have no declared method key. The
     // checker accepts them only on the prelude Random type; user methods
@@ -9854,6 +9890,64 @@ fn callValueMethod(self: *Interpreter, span: Source.Span, call: Ast.Expression.C
     }
 
     // `to_string` on an `Int`, a `Float`, or a `Bool`: its display.
+    var built: std.Io.Writer.Allocating = .init(self.gpa);
+    defer built.deinit();
+    try receiver.display(&built.writer);
+    return .{ .data = .{ .string = try self.heap.createText(try built.toOwnedSlice()) } };
+}
+
+fn isComparisonMember(name: []const u8) bool {
+    return std.mem.eql(u8, name, "compare") or std.mem.eql(u8, name, "equals") or std.mem.eql(u8, name, "hash");
+}
+
+/// A method of a `T with Trait` (11.3): the value's own version, a struct's or
+/// class's declared one, or a scalar's built-in one.
+fn callParameterMember(
+    self: *Interpreter,
+    expression: *const Ast.Expression,
+    call: Ast.Expression.Call,
+    member: Ast.Expression.Member,
+    key: []const u8,
+) Error!Value {
+    const receiver = try self.evaluate(member.base);
+    if (receiver.data == .struct_value) return self.callStructMethod(expression, call, member, key, receiver);
+    defer self.heap.release(receiver);
+    return self.scalarMember(expression.span, call, member.name, receiver);
+}
+
+/// `compare`, `equals`, `hash`, and `to_string` on a number, a string, or a
+/// `Bool`: what `<`, `==`, a dictionary, and display already do.
+fn scalarMember(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call, name: []const u8, receiver: Value) Error!Value {
+    const arguments = try self.evaluateArguments(call.arguments);
+    defer {
+        for (arguments) |argument| self.heap.release(argument);
+        self.gpa.free(arguments);
+    }
+    if (std.mem.eql(u8, name, "equals")) return .initBool(try Value.equals(self.gpa, receiver, arguments[0], self.equatable(span)));
+    if (std.mem.eql(u8, name, "hash")) {
+        if (receiver.data == .float and std.math.isNan(receiver.data.float)) return self.raise(
+            span,
+            "`hash` cannot hash NaN",
+            "NaN is not equal even to itself, so it cannot be found again by its hash. Check `nan?()` first.",
+        );
+        return .initInt(@bitCast(try Value.hash(self.gpa, receiver, self.equatable(span))));
+    }
+    if (std.mem.eql(u8, name, "compare")) {
+        const ordering = if (receiver.data == .string)
+            try unicode.order(self.gpa, receiver.data.string.bytes, arguments[0].data.string.bytes)
+        else
+            Value.order(receiver, arguments[0]) orelse return self.raise(
+                span,
+                "`compare` cannot order NaN",
+                "NaN has no place in an order. Check `nan?()` first.",
+            );
+        return .initInt(switch (ordering) {
+            .lt => -1,
+            .eq => 0,
+            .gt => 1,
+        });
+    }
+    // `to_string`, for a `T with Textual`: the value's display.
     var built: std.Io.Writer.Allocating = .init(self.gpa);
     defer built.deinit();
     try receiver.display(&built.writer);

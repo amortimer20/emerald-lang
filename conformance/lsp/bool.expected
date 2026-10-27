@@ -3,6 +3,22 @@
   "id": 1,
   "result": [
     {
+      "label": "equals",
+      "kind": 2,
+      "detail": "equals(other: Bool): Bool",
+      "documentation": "Whether this value and `other` are equal, as `==` decides.",
+      "insertText": "equals($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "hash",
+      "kind": 2,
+      "detail": "hash(): Int",
+      "documentation": "A number for the value, the same for equal values, as a dictionary uses; it can change between runs.",
+      "insertText": "hash()",
+      "insertTextFormat": 1
+    },
+    {
       "label": "to_string",
       "kind": 2,
       "detail": "to_string(): String",

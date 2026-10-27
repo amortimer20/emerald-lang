@@ -1,0 +1,4 @@
+diagnostics/generics-constructor.em:4:16: `constructor` cannot take type parameters in brackets
+      constructor[Other](value: Item) {
+                 ^
+A constructor uses its type's parameters. Write them on the type, as in `class Box[Item]`, and the constructor can use `Item`.

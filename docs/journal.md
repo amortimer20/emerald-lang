@@ -5849,3 +5849,132 @@ was removed too; the full investigation stays under the handoff's open work.
   established. The subsequent group A run passed every job, including Windows
   Debug, but that does not establish a fix. Investigate separately; no failed
   job was rerun or timeout widened to make it pass.
+
+## 2026-10-26: Generics slice 1, generic structs and classes
+
+The user asked to build generics ("the last core feature of Emerald's syntax"), confirming the
+2026-10-17 decision to build without waiting for the wall log. That earlier session had written
+slice 0's findings and a first draft of the parser, `Ast`, formatter, and `Type` changes in
+`~/.cache/emerald-worktrees/generics`, but committed nothing; when the repository moved into
+`~/Workspace/emerald/`, the worktree's Git link pointed at a directory that no longer existed,
+so `git worktree list` no longer knew it and a new `git worktree add` refused the path. The
+directory was moved aside to `generics-orphan-2026-10-17` (kept, not deleted), a fresh worktree
+was made on `claude/generics`, and the five changed files were copied in. Lesson: commit a
+draft on its branch before a session ends, even unfinished, because an uncommitted worktree is
+one directory move away from being lost.
+
+Slice 1 makes `class Grid[T]` and `struct Pair[First, Second]` work: type parameters scoped by
+the declaration's span, types written with their arguments, substitution at every member use,
+construction inferred from the arguments or the expected type, and the plan's widening of an
+`Int` into an erased `Float` position, marked by the checker and applied in
+`Interpreter.evaluate`. The plan's "Settled while building" records each decision. Programs
+2, 3, and 9 run as written; 21 diagnostics cases cover the errors, and the reservation's class,
+struct, annotation, and call cases became the real messages (two deleted, three renamed). The
+formatter writes `[T]` and `Pair[String, Int]`.
+
+Found while building: a duplicate parameter was also reported as unused (the second name is
+never reached); an enum's type parameters, refused for now, also produced a "needs its types"
+cascade from the enum's own values, so an enum's are no longer registered; and
+`emerald format` on a `format/` case rewrites the input file, so a case's input has to be
+written again after generating its expected output.
+
+Validation: `zig build test -j1` in Debug and ReleaseSafe, `zig fmt --check`, `git diff --check`,
+Windows and macOS cross-builds, and an LSP sweep of 16,650 requests over six generic documents
+with no errors. The first full run failed one case whose expectation had been captured from the
+CLI with its `[E2001]` code, which the conformance runner does not print.
+
+## 2026-10-26: Generics slice 2, generic functions and methods
+
+Functions, methods, type-level functions, and nested functions take `[T]`; program 7 runs. The
+lookup that found a type parameter now walks outward from the innermost declaration, since a
+method's own `[U]` scope sits inside its type's `[T]` and the first draft stopped at the
+innermost. Inference reuses slice 1's `Inference` with two additions: the expected result is
+unified first, and a block whose parameters are known is checked with an open result so its
+result can decide a parameter. The plan's "Settled while building" records the rules.
+
+Found while building: arguments-first inference made `const rates: List[Float] =
+repeated([1, 2], 1)` an error (the literal had already become a `List[Int]`), which is why the
+expected result now comes first, matching construction. A generic function taken as a value was
+silently accepted with its parameters still in its type; it now needs an expected function type.
+And `const real: func(Float): Float = same` then `real(3)` printed `3`: a call through a function
+value widened by the held function's declared kinds, which an erased `T` lacks, so value calls
+now mark the argument for widening as well. Refusals (a trait's, an overriding, an `@operator`
+method's, or a test's type parameters) no longer also warn that the parameters are unused.
+
+Validation: `zig build test -j1` in Debug and ReleaseSafe, `zig fmt --check`, `git diff --check`,
+Windows and macOS cross-builds, and an LSP sweep of 14,670 requests over the two new run cases
+with no errors.
+
+## 2026-10-26: Generics slice 3, constraints
+
+`[T with Trait]` works; programs 4 and 5 run. The built-in scalars got real `compare`,
+`equals`, and `hash` members so a constrained body can call them on an `Int` as on a struct, and
+the plan's open conformance questions were settled by the existing key and ordering rules (a
+`Float` is `Hashable`, a `Bool` is not `Ordered`, tuples and collections adopt nothing). A call
+on a bounded `T` is recorded separately from ordinary method calls, because the interpreter's
+method-call path assumes a struct receiver; it dispatches on the runtime value instead. Slice 0
+had already found that operators dispatch on the value, which held: `<` and `==` in a generic
+body needed no runtime change.
+
+Found while building: slice 1 had let `contains?`, `remove`, and `unique` run on a `List[T]`
+with no `Equatable` (the checker never guards them for concrete elements, which all have `==`);
+they are now refused unless `T` requires it. A first attempt to silence a cascade, by skipping a
+generic call's checks when the expected type was already invalid, also silenced every call
+passed to `print`, whose arguments are checked against an invalid expected type meaning "no
+opinion"; it was reverted, and the one cascade it was for is recorded in the plan.
+
+The new members reached two existing checks: the catalog-and-checker name parity test, which
+now lists them (`Checker.ordered_scalar_methods`), and six LSP completion goldens for scalar
+receivers, whose only change is the new entries. Validation: `zig build test -j1` in Debug and
+ReleaseSafe, `zig fmt --check`, `git diff --check`, Windows and macOS cross-builds, and an LSP
+sweep of 13,975 requests over the constraints case with no errors. `tools/check-doc-examples.sh`
+needs bash 4, which this machine lacks; the one new link from the library pages names a file that
+exists and runs.
+
+## 2026-10-27: Generics slice 4, generic enums
+
+Enums take `[T]`; programs 1, 6, and 8 run. The one new idea is a choice that says nothing of a
+type, `Chain.end` or `Outcome.failure("odd")`: it fits the enum at any type, so it takes its
+types from where it goes and otherwise leaves them as the checker's unknown type, which matches
+anything without a cascade. Everything else reused slices 1 to 3: a data choice is a generic
+construction over its data items, and a match binds data through the same substitution as a
+field read.
+
+Found while building: the parser annotates each enum value with the bare enum name, which slice
+1's "needs its types" rule rejected for a generic enum at its own declaration; and the key
+explanation for a data enum judged its items by their declared `T`, so a recursive `Chain[Int]`
+was refused for the wrong reason. Program 6 in the plan joined lists with `+`; Emerald has
+`chain`, and the case uses it.
+
+Validation: `zig build test -j1` in Debug and ReleaseSafe, `zig fmt --check`, `git diff --check`,
+Windows and macOS cross-builds, and an LSP sweep of 13,365 requests over the enums case with no
+errors.
+
+## 2026-10-27: Generics slice 5, editor support, teaching, and fuzzing
+
+The language server gained type parameters: hover, definition, references, and rename, all from
+sites the checker records as it resolves each `T`, since only the checker knows which
+declaration's `T` a name is. Hover and signature help show a generic declaration with its
+brackets, and completion on a `T with Trait` offers the trait's members with `Self` written as
+`T`. A guide page, `examples/generics.em`, and three fuzz templates complete the plan's slice 5;
+the plan records the `type_name` decision.
+
+Found while building: slice 1 left the types inside brackets (`Box[Player]`) and every `with`
+bound out of the server's type walks, so go to definition did nothing there and renaming
+`Player` would have left `Box[Player]` behind. Both walks now descend into them, and a case
+covers it.
+
+Validation: `zig build test -j1` in Debug and ReleaseSafe (861 conformance cases), a ReleaseSafe
+fuzz campaign (seed 20261027, 20,000 cases, 2,470 executed), `zig fmt --check`,
+`git diff --check`, and Windows and macOS cross-builds. Every `.em` link in `docs/` resolves and
+`examples/generics.em` runs; `tools/check-doc-examples.sh` itself needs bash 4, which this
+machine lacks.
+
+## 2026-10-27: Generics, whole-branch review
+
+`/code-review` at high effort over all five slices reported nine items; the plan lists each and
+what was done. Two were real bugs that the slices' own cases missed: a generic enum choice could
+leave an argument unchecked and crash the interpreter (`Outcome.success([])`), and key
+eligibility lost a struct's type arguments one level down (`Set[Pair[Int]]` with a `Box[T]`
+field). Both now have cases. One item, passing the expected type as a parameter instead of
+through checker fields, was left for a change of its own.

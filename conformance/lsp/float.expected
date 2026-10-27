@@ -35,6 +35,22 @@
       "insertTextFormat": 2
     },
     {
+      "label": "compare",
+      "kind": 2,
+      "detail": "compare(other: Float): Int",
+      "documentation": "A negative number when this number comes before `other`, zero when they are equal, and a positive number when it comes after, as `<` orders them.",
+      "insertText": "compare($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "equals",
+      "kind": 2,
+      "detail": "equals(other: Float): Bool",
+      "documentation": "Whether this number and `other` are equal, as `==` decides.",
+      "insertText": "equals($0)",
+      "insertTextFormat": 2
+    },
+    {
       "label": "finite?",
       "kind": 2,
       "detail": "finite?(): Bool",
@@ -57,6 +73,14 @@
       "documentation": "The value as text, with a set number of `decimal_places` and, optionally, commas between groups of digits.",
       "insertText": "format($0)",
       "insertTextFormat": 2
+    },
+    {
+      "label": "hash",
+      "kind": 2,
+      "detail": "hash(): Int",
+      "documentation": "A number for the number, the same for equal values, as a dictionary uses; it can change between runs.",
+      "insertText": "hash()",
+      "insertTextFormat": 1
     },
     {
       "label": "infinite?",

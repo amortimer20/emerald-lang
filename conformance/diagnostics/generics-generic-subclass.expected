@@ -1,0 +1,4 @@
+diagnostics/generics-generic-subclass.em:4:28: a class with type parameters cannot extend another class yet
+  class Kennel[Item] extends Animal {
+                             ^^^^^^
+Give `Kennel` a field holding the `Animal` instead.

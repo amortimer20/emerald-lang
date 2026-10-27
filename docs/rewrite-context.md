@@ -2309,18 +2309,51 @@ and narrows to it.
 
 ### 11.3 Associated types and generics boundary
 
-Associated types and general user generics are deferred. Built-in collections may carry
-element types and users may consume concrete collection types without exposing a general
-generic declaration system. Any future extension must begin with real Emerald programs
-that the simple trait model cannot express.
+Associated types are deferred. User generics follow
+[generics-design-plan.md](generics-design-plan.md), accepted 2026-10-17 and being built slice by
+slice; this section records what is built.
 
-The bracketed syntax is reserved so that adding generics later breaks no program. A
-bracketed list after the name of a type, function, method, or constructor
-(`class Stack[T]`, `func largest[T](...)`), and brackets after the name of a user type in a
-type or an expression (`Stack[Int]`, `Stack[Int]()`), are errors that say Emerald does not
-have generics yet rather than a misleading parse or name error. Only `List`, `Dict`, `Set`,
-`Task`, and `Channel` take types in brackets (8.2). [generics-design-plan.md](generics-design-plan.md)
-holds the proposal and the evidence it waits for.
+A struct or class may take type parameters in brackets after its name, `class Grid[T]`,
+`struct Pair[First, Second]`. Inside its braces each parameter is a type. A use of the type
+writes its types the same way, `Grid[String]`, wherever a type is written, and never at a
+call: `Grid(3, 3, ".")` is a `Grid[String]` because of its argument, and
+`const counts: Grid[Int] = Grid(2, 2, 0)` because of where it goes. When neither says what a
+parameter is, that is an error asking for the type to be written where the value is kept.
+`Grid[Int]()` is an error that says so (5.4 of the plan).
+
+- A generic type is invariant in its types: a `Grid[Int]` is not a `Grid[Float]`. A type in
+  brackets cannot be optional, since `Grid`'s own `T?` would then nest (4.5).
+- An `Int` passed where a `T` is a `Float` is widened to a `Float`, as it is for a
+  `List[Float]` (4.4).
+- `T` could be any type, so a `T` value can be stored, passed, returned, put in collections,
+  and printed, and nothing more: no `==`, ordering, arithmetic, or members, and it is not a
+  dictionary key or set member. A struct holding a `T` still compares by its fields.
+- A generic struct is a key when every field is one for its types, so `Pair[String, Int]` is.
+- Type-level members and nested types belong to the type as a whole and cannot use its
+  parameters. `is` cannot test for a type with arguments, since the program does not keep them
+  while it runs, and `Json` and `Csv` do not encode or decode a generic type.
+- A function, method, or type-level function may take its own type parameters,
+  `func first_or[Item](items: List[Item], fallback: Item): Item`. Each call works them out from
+  where its result goes, then its arguments, then the result of a block passed to it, so
+  `name.mapped { text => text.count }` is a `Box[Int]`. Taken as a value, such a function needs a
+  function type where it is kept (7.4). A constructor uses its type's parameters and takes none of
+  its own.
+- A type parameter may require one trait, `[T with Ordered]`. Every type given for it must
+  adopt the trait, and inside the declaration its values have the trait's methods, with `Self`
+  meaning `T`, and what the trait allows: `==` and `!=` with `Equatable`, ordering and the List
+  methods that sort or choose with `Ordered`, keys and set members with `Hashable`. `Int`,
+  `Float`, and `String` count as adopting `Ordered`, `Equatable`, `Hashable`, and `Textual`;
+  `Bool` all but `Ordered`; `Bytes` `Equatable` and `Hashable`. For that, each has `compare`
+  (not `Bool`), `equals`, and `hash`, which give what `<`, `==`, and a dictionary give. More than
+  one trait is written as a trait that builds on them.
+- An enum may take type parameters, `enum Chain[Item] { end, link(item: Item, rest:
+  Chain[Item]) }`. A choice with data works its types out as a construction does; a choice
+  without data, or data that says nothing of a type, fits the enum at any type, so `Chain.end` is
+  every `Chain`'s end. A `case` match names data at the subject's types.
+- A generic class cannot extend a class or be extended, a trait takes no type parameters, and a
+  trait's method, an overriding method, an `@operator` method, and a test take none either.
+- A generic value's `type_name` is its declaration's name, `Pair`, without its types, which
+  the running program does not keep.
 
 ### 11.4 `Self`
 
@@ -2504,6 +2537,8 @@ choice for exhaustiveness, and makes a second match of the same choice an error.
 carrying data written without names (`when Download.finished`) is an error that shows the
 match. Every other alternative, including `when wanted` for a value built beforehand, still
 compares by `==`, and an optional subject still needs `when nothing` or `else`.
+
+An enum may take type parameters, `enum Chain[Item]`, as 11.3 describes.
 
 Raw integer backing controls, flags enums, implicit integer conversions, and general
 pattern matching are deferred. This keeps `enum` understandable as a closed set with one
@@ -4033,7 +4068,6 @@ future subsystem before the first expression runs.
 
 The following are deliberately outside the initial implementation:
 
-- broad user-declared generics (the bracketed syntax is reserved: see 11.3);
 - a source-visible `Any` top type;
 - immutable collection views and collection covariance;
 - function and method overloading, and with it overloaded constructors and constructor
