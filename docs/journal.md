@@ -5727,3 +5727,22 @@ ReleaseSafe, `zig fmt --check`, `git diff --check`, Windows and macOS cross-buil
 sweep of 13,975 requests over the constraints case with no errors. `tools/check-doc-examples.sh`
 needs bash 4, which this machine lacks; the one new link from the library pages names a file that
 exists and runs.
+
+## 2026-10-27: Generics slice 4, generic enums
+
+Enums take `[T]`; programs 1, 6, and 8 run. The one new idea is a choice that says nothing of a
+type, `Chain.end` or `Outcome.failure("odd")`: it fits the enum at any type, so it takes its
+types from where it goes and otherwise leaves them as the checker's unknown type, which matches
+anything without a cascade. Everything else reused slices 1 to 3: a data choice is a generic
+construction over its data items, and a match binds data through the same substitution as a
+field read.
+
+Found while building: the parser annotates each enum value with the bare enum name, which slice
+1's "needs its types" rule rejected for a generic enum at its own declaration; and the key
+explanation for a data enum judged its items by their declared `T`, so a recursive `Chain[Int]`
+was refused for the wrong reason. Program 6 in the plan joined lists with `+`; Emerald has
+`chain`, and the case uses it.
+
+Validation: `zig build test -j1` in Debug and ReleaseSafe, `zig fmt --check`, `git diff --check`,
+Windows and macOS cross-builds, and an LSP sweep of 13,365 requests over the enums case with no
+errors.

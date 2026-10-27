@@ -2346,9 +2346,12 @@ parameter is, that is an error asking for the type to be written where the value
   `Bool` all but `Ordered`; `Bytes` `Equatable` and `Hashable`. For that, each has `compare`
   (not `Bool`), `equals`, and `hash`, which give what `<`, `==`, and a dictionary give. More than
   one trait is written as a trait that builds on them.
-- Not yet built: generic enums, which are an error that says so. A generic class cannot extend a
-  class or be extended, a trait takes no type parameters, and a trait's method, an overriding
-  method, an `@operator` method, and a test take none either.
+- An enum may take type parameters, `enum Chain[Item] { end, link(item: Item, rest:
+  Chain[Item]) }`. A choice with data works its types out as a construction does; a choice
+  without data, or data that says nothing of a type, fits the enum at any type, so `Chain.end` is
+  every `Chain`'s end. A `case` match names data at the subject's types.
+- A generic class cannot extend a class or be extended, a trait takes no type parameters, and a
+  trait's method, an overriding method, an `@operator` method, and a test take none either.
 
 ### 11.4 `Self`
 
@@ -2532,6 +2535,8 @@ choice for exhaustiveness, and makes a second match of the same choice an error.
 carrying data written without names (`when Download.finished`) is an error that shows the
 match. Every other alternative, including `when wanted` for a value built beforehand, still
 compares by `==`, and an optional subject still needs `when nothing` or `else`.
+
+An enum may take type parameters, `enum Chain[Item]`, as 11.3 describes.
 
 Raw integer backing controls, flags enums, implicit integer conversions, and general
 pattern matching are deferred. This keeps `enum` understandable as a closed set with one
@@ -4061,7 +4066,6 @@ future subsystem before the first expression runs.
 
 The following are deliberately outside the initial implementation:
 
-- generic enums, which are being built (11.3);
 - a source-visible `Any` top type;
 - immutable collection views and collection covariance;
 - function and method overloading, and with it overloaded constructors and constructor

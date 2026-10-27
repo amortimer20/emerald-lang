@@ -1,0 +1,4 @@
+diagnostics/generics-enum-assign.em:7:16: this is String, but data item `item` of `Box.full` needs Int
+  box = Box.full("one")
+                 ^^^^^
+Pass a value of the data item's declared type, or convert it first.

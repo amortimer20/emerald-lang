@@ -1,0 +1,4 @@
+diagnostics/generics-enum-recursive-key.em:6:15: Chain[Int] cannot be held by a set, because `Chain.link.rest` holds another Chain[Int]
+  const chains: Set[Chain[Int]] = []
+                ^^^^^^^^^^^^^^^
+An enum that holds itself through its data cannot be a key, as a struct that holds itself cannot.

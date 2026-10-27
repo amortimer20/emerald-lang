@@ -576,7 +576,13 @@ pub fn checkWithOptions(
         while (fields.next()) |entry| {
             const annotation = entry.value_ptr.field.annotation orelse continue;
             checker.file = checker.facts.owner.get(entry.key_ptr.*).?;
-            const declared = try checker.resolveTypeExpression(annotation);
+            // An enum's value is annotated with the enum by the parser. A
+            // generic enum's is the enum given its own parameters (11.3),
+            // which no written type could say outside its braces.
+            const declared = if (entry.value_ptr.field.enum_value != null)
+                checker.structs.get(entry.value_ptr.type_key).?
+            else
+                try checker.resolveTypeExpression(annotation);
             const binding = checker.module.getPtr(entry.key_ptr.*).?;
             binding.type = declared;
             binding.declared = declared;
@@ -1253,8 +1259,7 @@ fn registerStruct(
     try struct_sites.append(self.arena, .{ .file = self.file, .declaration = declaration, .key = key });
     const user = try self.arena.create(Type.User);
     user.* = .{ .name = key, .display_name = display_name, .class = declaration.class, .trait = declaration.trait, .enumeration = declaration.enumeration };
-    // An enum's are refused by `checkTypeParameters` for now.
-    if (declaration.type_parameters.len > 0 and !declaration.enumeration) try self.registerTypeParameters(user, declaration);
+    if (declaration.type_parameters.len > 0) try self.registerTypeParameters(user, declaration);
     // Inside a generic declaration, the type is itself given its own
     // parameters, `Box[T]`, which is what `self` and its members see.
     const struct_type = Type.structOf(user).withArguments(user.own_arguments);
@@ -1444,15 +1449,6 @@ fn functionTypeParameters(self: *Checker, key: []const u8, declaration: Ast.Func
 fn checkTypeParameters(self: *Checker, declaration: Ast.StructDeclaration, key: []const u8) Error!void {
     const user = self.structs.get(key).?;
     try self.checkTypeParameterList(declaration.type_parameters, user.user.?.type_parameters, declaration.name);
-    if (declaration.enumeration and declaration.type_parameters.len > 0) {
-        try self.reportWithHelp(
-            declaration.type_parameters[0].span,
-            "an enum cannot take type parameters yet",
-            .{},
-            "Emerald's generics cover structs and classes so far. Write one enum for each kind of item for now.",
-            .{},
-        );
-    }
 }
 
 /// Checks a `[T]` list and settles each `with Trait`. `made` is empty when
@@ -1609,6 +1605,29 @@ fn applyTypeArguments(self: *Checker, written_type: Type, annotation: Ast.TypeEx
         return .invalid;
     }
     return written_type.withArguments(arguments);
+}
+
+/// Section 11.3: a value of a generic enum's choice, `Chain.end` or
+/// `Chain.link(1, rest)`. Its types come from where it goes, then from
+/// `solved`, what its data said; a type nothing says, such as `Chain.end`'s
+/// `T`, is left open, since the value holds nothing of that type and so fits
+/// any `Chain`.
+fn choiceType(self: *Checker, enum_type: Type, expected: ?Type, solved: ?[]const ?Type) Error!Type {
+    const user = enum_type.user orelse return enum_type;
+    if (user.type_parameters.len == 0) return enum_type;
+    const arguments = try self.arena.alloc(Type, user.type_parameters.len);
+    for (arguments, 0..) |*argument, position| {
+        argument.* = if (solved) |answers| answers[position] orelse .invalid else .invalid;
+    }
+    if (expected) |wanted| {
+        const present = wanted.payload();
+        if (present.kind == .struct_value and present.user == user and present.type_arguments.len == arguments.len) {
+            for (arguments, present.type_arguments) |*argument, given| {
+                if (argument.kind == .invalid) argument.* = given;
+            }
+        }
+    }
+    return Type.structOf(user).withArguments(arguments);
 }
 
 /// Section 5.2 of the generics plan: whether `argument` may be given for a
@@ -6990,9 +7009,12 @@ fn explainDataEnumKey(self: *Checker, key: Type, span: Source.Span, what: []cons
     const user = key.user.?;
     const declaration = self.struct_declarations.get(user.name).?;
     for (user.choice_data, 0..) |items, variant| for (items) |item| {
-        if (item.type.eligibleKey(traits.equatable, traits.hashable)) continue;
+        // A generic enum's data is judged by the key's own types (11.3).
+        const held = try self.substituteOn(item.type, key);
+        const holds_itself = held.kind == .struct_value and held.user == user;
+        if (!holds_itself and held.eligibleKey(traits.equatable, traits.hashable)) continue;
         const choice = declaration.type_fields[variant].name;
-        if (item.type.kind == .struct_value and item.type.user == user) {
+        if (holds_itself) {
             try self.reportWithHelp(
                 span,
                 "{f} cannot be {s}, because `{s}.{s}.{s}` holds another {f}",
@@ -7004,7 +7026,7 @@ fn explainDataEnumKey(self: *Checker, key: Type, span: Source.Span, what: []cons
             try self.reportWithHelp(
                 span,
                 "{f} cannot be {s}, because `{s}.{s}.{s}` is {f}",
-                .{ key, what, user.display_name, choice, item.name, item.type },
+                .{ key, what, user.display_name, choice, item.name, held },
                 "Every data item of every choice must itself be a valid key type: a number, a `Bool`, a `String`, an enum, or a tuple or struct made only from those.",
                 .{},
             );
@@ -7587,7 +7609,9 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
         if (!self.in_function) {
             try self.checkCapturesOf(expression.span, try Resolver.typeSetupKey(self.arena, field.type_key), reference.display, "this");
         }
-        return self.module.get(reference.key).?.declared;
+        const declared = self.module.get(reference.key).?.declared;
+        if (field.field.enum_value != null) return self.choiceType(declared, capture, null);
+        return declared;
     }
     const binding = self.findKey(reference.key) orelse return .invalid;
     try self.checkTaskCapture(expression.span, reference.display, binding);
@@ -10549,14 +10573,16 @@ fn checkCase(self: *Checker, case: *const Ast.Case, expected: ?Type) Error!Type 
             const count = @min(found.names.len, items.len);
             for (found.names[0..count], items[0..count]) |maybe, item| {
                 const name = maybe orelse continue;
+                // A generic enum's data holds the subject's types (11.3).
+                const held = if (subject) |subject_type| try self.substituteOn(item.type, subject_type) else item.type;
                 try scope.put(self.arena, name.text, .{
-                    .type = item.type,
-                    .declared = item.type,
+                    .type = held,
+                    .declared = held,
                     .assigned = true,
                     .mutability = .match_binding,
                 });
                 // So hover on the name in the match shows the data's type.
-                try self.expression_types.put(self.arena, name.expression, .{ .file = self.file, .type = item.type });
+                try self.expression_types.put(self.arena, name.expression, .{ .file = self.file, .type = held });
             }
         }
         const completes = try self.checkCaseBody(arm.body, expected, &results, &result_spans);
@@ -11125,6 +11151,14 @@ fn typeOfCall(
             n.* = item.name;
             d.* = false;
         }
+        // Section 11.3: a generic enum's data says what its types are, as
+        // a construction's arguments do.
+        const user = enum_type.user.?;
+        var inference: ?Inference = null;
+        if (user.type_parameters.len > 0) {
+            inference = try Inference.init(self.arena, user.type_parameters);
+            inference.?.seed(Type.structOf(user).withArguments(user.own_arguments), expected_construction);
+        }
         try self.checkArguments(call, name, .{
             .types = types,
             .names = names,
@@ -11132,8 +11166,28 @@ fn typeOfCall(
             .noun = "data item",
             .mismatch_help = "Pass a value of the data item's declared type, or convert it first.",
             .arity_help = "Pass one value for each data item, in declaration order, or name them.",
+            .inference = if (inference) |*working| working else null,
         });
-        return enum_type;
+        const working = if (inference) |*made| made else return enum_type;
+        if (!working.bound) return .invalid;
+        for (user.type_parameters, working.solved) |parameter, answer| {
+            const said = answer orelse continue;
+            if (said.optional) {
+                try self.reportWithHelp(
+                    call.callee.span,
+                    "this would be a `{s}` whose `{s}` is {f}, and a type in brackets cannot be optional",
+                    .{ user.display_name, parameter.name, said },
+                    "Pass a value that is there, using `.or(...)` or a check against `nothing` first, or wrap it in a struct.",
+                    .{},
+                );
+                return .invalid;
+            }
+            if (parameter.bound != null and !self.satisfies(said, parameter.bound.?)) {
+                try self.reportUnsatisfied(call.callee.span, user.display_name, parameter, said);
+                return .invalid;
+            }
+        }
+        return self.choiceType(enum_type, expected_construction, working.solved);
     };
 
     if (binding.is_type) {

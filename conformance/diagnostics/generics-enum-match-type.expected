@@ -1,0 +1,4 @@
+diagnostics/generics-enum-match-type.em:9:34: `+` joins two Strings, but this is String and Int
+          when Box.full(item) then item + 1
+                                   ^^^^^^^^
+Convert the value with `to_string()`, or use interpolation, as in `"#{name}: #{score}"`.

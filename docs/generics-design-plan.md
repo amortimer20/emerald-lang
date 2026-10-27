@@ -807,6 +807,29 @@ Programs 4 and 5 run (`conformance/run/generics-constraints.em`), with a struct'
   Box([1])`, is reported at the annotation and again at the construction, which works the same
   type out from its argument.
 
+### Slice 4: generic enums (2026-10-27)
+
+Programs 1, 6, and 8 run (`conformance/run/generics-enums.em`). Program 6 as written in section 7
+joined lists with `+`, which Emerald does not have (`chain` joins them); the case uses `chain`.
+
+- **A choice without data** (`Chain.end`) holds no value of the enum's types, so it fits any
+  `Chain`: its type takes its arguments from where it goes, and otherwise leaves them open (an
+  unknown type, which matches anything), so `Chain.link(1, Chain.end)` and
+  `const empty: Chain[String] = Chain.end` both work and say nothing about `Item`.
+- **A choice with data** is built like a generic construction: its data items are its
+  parameters, the expected type seeds the answer, and its arguments say the rest. A parameter
+  nothing says is left open in the same way, so `Outcome.failure("odd")` fits an `Outcome[Int]`
+  without a "cannot tell" error. Bounds and optional answers are checked as for a construction.
+- **A `case` match** binds each data name at the subject's types, so `when Chain.link(item,
+  rest)` on a `Chain[Int]` gives an `Int` and a `Chain[Int]`.
+- The parser annotates each enum value with the enum's own name, which for a generic enum would
+  be the "needs its types" error; the checker gives an enum value the enum with its own
+  parameters instead.
+- **Keys:** an enum is a key when every choice's data is one at its types, so `Pick[Int]` is and
+  `Pick[List[Int]]` is not; a recursive enum such as `Chain` never is. The explanation now names
+  the data at the key's own types.
+- An enum's type parameters were refused in slices 1 to 3; that refusal is gone.
+
 ### Reserved syntax
 **Reserved syntax (merged as PR #43, 2026-10-16).** The only built part; section 5's design is
 accepted for use only if the gate in section 3 is met.

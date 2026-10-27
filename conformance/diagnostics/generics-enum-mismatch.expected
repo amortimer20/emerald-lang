@@ -1,0 +1,4 @@
+diagnostics/generics-enum-mismatch.em:5:27: this is String, but data item `second` of `Pair.both` needs Int
+  const pair = Pair.both(1, "one")
+                            ^^^^^
+Pass a value of the data item's declared type, or convert it first.
