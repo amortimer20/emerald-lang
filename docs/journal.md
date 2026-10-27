@@ -6019,3 +6019,10 @@ noted (assignment to a deprecated field, a named constructor argument, an operat
 annotation's `(...)` used to cascade into an unused-result error and is now skipped.
 
 Validation: `zig build test -j1` in Debug and ReleaseSafe, `zig fmt --check`, `git diff --check`.
+
+## 2026-10-28: Deprecation slice 2, the editor
+
+Deprecated uses are struck through, their correction rides in the message (editors never show a
+diagnostic's help), hover leads with it, and completion tags deprecated members and lists them
+last. The first attempt serialized the tags as a byte string, because `std.json` treats `[]u8` as
+text; a probe against a real server caught it before any case was written.

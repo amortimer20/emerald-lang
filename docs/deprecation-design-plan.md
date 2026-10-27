@@ -147,3 +147,17 @@ warnings (section 3) rather than exempting deprecations.
   `(...)` is now skipped.
 - **Formatter:** the annotation is written on its own line above what it marks, copied as
   written; a run of enum values written on one line goes one per line when any is deprecated.
+
+### Slice 2: the editor (2026-10-28)
+
+- A deprecated use is published with LSP's `Deprecated` tag (2), and its message carries the
+  correction (`` `older` is deprecated. Use `newer` instead. ``), since an editor shows only the
+  message inline and never the help. `Diagnostic.deprecated` marks it.
+- Hover on a deprecated declaration, or a use of one, puts **Deprecated.** and the message after
+  the signature and before its `##` documentation.
+- Completion items for deprecated members carry `CompletionItemTag.Deprecated` (1) and sort after
+  the rest (`Completion.Item.lessThan`).
+- **Found while building:** `std.json` writes a `[]const u8` as a string, so the first tags went out
+  as `"\u0002"`; they are `u32` arrays.
+- Covered by an LSP unit test (the published diagnostic's message, severity, and tag) and two
+  conformance cases (completion order and tag, hover).

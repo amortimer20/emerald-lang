@@ -1385,6 +1385,7 @@ fn noteUse(self: *Checker, key: []const u8, span: Source.Span) Error!void {
     const gop = try self.deprecation_warned.getOrPut(self.arena, .{ .file = self.file, .start = span.start });
     if (gop.found_existing) return;
     try self.reportWarning(span, "`{s}` is deprecated", .{deprecation.name}, deprecation.message);
+    self.diagnostics.items[self.diagnostics.items.len - 1].deprecated = true;
 }
 
 /// Section 11.3's `[T]`: each name becomes a parameter, written as a type

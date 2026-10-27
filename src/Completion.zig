@@ -19,8 +19,15 @@ pub const Item = struct {
     /// A name a `case` match introduces (12), as written in the match.
     match_name: ?*const emerald.Ast.Expression = null,
     owned_label: bool = false,
+    /// Section 16.1's `@deprecated` message, borrowed from the declaration.
+    deprecated: ?[]const u8 = null,
 
     pub fn jsonStringify(self: Item, out: *std.json.Stringify) !void {
+        if (self.deprecated != null) {
+            // LSP's `CompletionItemTag.Deprecated` is 1.
+            try out.write(.{ .label = self.label, .kind = self.kind, .tags = &[_]u32{1}, .detail = self.detail, .documentation = self.documentation, .insertText = self.insertText, .insertTextFormat = self.insertTextFormat });
+            return;
+        }
         try out.write(.{ .label = self.label, .kind = self.kind, .detail = self.detail, .documentation = self.documentation, .insertText = self.insertText, .insertTextFormat = self.insertTextFormat });
     }
 
@@ -31,8 +38,17 @@ pub const Item = struct {
         if (self.insertText) |text| gpa.free(text);
     }
 
+    /// By label, with deprecated members after the rest (16.1).
     pub fn lessThan(_: void, left: Item, right: Item) bool {
+        if ((left.deprecated != null) != (right.deprecated != null)) return right.deprecated != null;
         return std.mem.lessThan(u8, left.label, right.label);
+    }
+
+    /// The item for a declaration marked `@deprecated`.
+    pub fn deprecate(self: Item, deprecated: ?emerald.Ast.Deprecated) Item {
+        var item = self;
+        if (deprecated) |found| item.deprecated = found.message;
+        return item;
     }
 };
 
@@ -142,6 +158,7 @@ pub fn function(gpa: std.mem.Allocator, source: *const emerald.Source, declarati
     }
     item.detail = try detail.toOwnedSlice();
     item.documentation = try documentation(gpa, source, declaration.name_span);
+    if (declaration.deprecated) |found| item.deprecated = found.message;
     try insertion(gpa, &item, declaration.parameters.len != 0);
     try humanizePrelude(gpa, &item, source);
     return item;
@@ -171,6 +188,7 @@ pub fn field(gpa: std.mem.Allocator, source: *const emerald.Source, label: []con
 pub fn choice(gpa: std.mem.Allocator, source: *const emerald.Source, enum_name: []const u8, value: emerald.Ast.StructDeclaration.TypeField) !Item {
     var item: Item = .{ .label = value.name, .kind = 20 };
     errdefer item.deinit(gpa);
+    if (value.deprecated) |found| item.deprecated = found.message;
     const data = value.data orelse {
         item.detail = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ value.name, enum_name });
         item.documentation = try documentation(gpa, source, value.name_span);
