@@ -5646,3 +5646,206 @@ now say Emerald does not have generics yet. The review found that `Channel[Int](
 undefined-name cascade; they now say a type is not an expression. Ten diagnostics cases cover
 it. Lesson: a `bash` call and an `edit` in one parallel batch ran before the edit landed, so
 the build used the old source; build in a separate step after edits.
+
+## 2026-10-27: Retired from the handoff, 0.7.0's release list and QA checklist
+
+0.7.0 shipped on 2026-10-11, so the handoff's running list of changes since 0.6.0 and the QA
+iteration's checklist stopped being current. They are kept here as they stood. Two website
+follow-ups the handoff still listed as open (a `RecursionError` page, and the list-callback rule
+and CRLF handling on the List and File pages) were already done in emerald-website `f9b1d02`, so
+that item was removed rather than moved. A duplicate rough-edge note about the Windows Debug stall
+was removed too; the full investigation stays under the handoff's open work.
+
+**Since 0.6.0, for the 0.7.0 release notes:**
+- Invalid optional Channel item annotations report their original error only, rather than
+  adding a misleading missing-message-type error at `Channel()`.
+- Console table diagnostics name the header separately, number data rows from 1, and
+  use singular `cell` for one cell.
+- LSP hover shows built-in signatures and descriptions with reference links, and shows
+  attached `##` comments on program declarations.
+- Editor completion offers native and declared members with signatures, summaries, and
+  method parentheses; bare names include the native types, `Math`, and `Program`.
+- LSP signature help shows active parameters, named/default arguments, overloads, and
+  generated or custom constructors while a call is being written.
+- LSP quick fixes apply exact name corrections, such as `push` → `append`, `this` → `self`, and
+  `@overide` → `@override`, using compiler-supplied diagnostic data.
+- `chunks`, `windows`, and `pairs` results are now typed as nested lists and pairs;
+  code that relied on the old wrong type now needs fixing.
+- Calling `Range.step()` without its required argument reports the normal missing-argument
+  diagnostic instead of crashing the checker and the language server.
+- Calling `Math.pi` or `Math.e` with parentheses reports that it is a constant,
+  instead of passing checking and crashing the interpreter.
+- Foreign logical operators `&&` and `||` receive one focused hint suggesting
+  Emerald's `and` and `or`, rather than two character errors.
+- `++` and dangling `--` explain the corresponding `+= 1`/`-= 1` update;
+  subtraction of a negative value and double negation retain their meaning.
+- C-style `condition ? value : other` explains Emerald's
+  `if condition then value else other_value` spelling.
+- Conditions written with `=` suggest `==`, including grouped conditions,
+  guards, inline `if`, `assert`, and subjectless `case` arms. Assignments inside
+  predicate bodies remain valid; mistaken conditions do not cascade into brace errors.
+- `??` suggests an optional fallback with `.or(...)`, with the same correction
+  whether or not spaces surround the mistaken operator.
+- Foreign-operator corrections use short source operands in place for `++`, `--`,
+  `? :`, and `??`; compound operands keep the generic correction.
+- Casing warnings call a `const` binding a constant and a `var` binding a variable.
+- One-line lambda `break`/`continue`, including guarded exits, explain that a
+  function cannot exit the caller's loop instead of producing parser/brace cascades.
+- An unqualified reference to a private module name in another file identifies
+  that file and explains the privacy boundary, rather than calling the name undefined.
+- A struct that supplies every required trait member but omits `with Trait` is
+  told that it does not adopt the trait and shown the declaration-level fix.
+  The follow-up lists each public trait method the struct defines, in trait order;
+  default methods are included only when the struct replaces them.
+- A bare nested type name inside its enclosing type is corrected to its required
+  qualified spelling, such as `Pizza.Size`.
+- Orphaned `##` documentation comments now warn when a blank line or a
+  non-declaration separates them from what they would document.
+- Program declarations now receive non-fatal casing warnings with corrected
+  `snake_case` or `PascalCase` spellings; generated-prelude and `@override`
+  names remain exempt.
+- A callable whose name ends in `?` must return exactly `Bool`, including
+  overridden methods and computed properties; action-style `Bool` results
+  remain valid without the suffix.
+- Console tables, panels, and six prompts (`ask`, `ask_int`, `ask_float`, `confirm`, `choose`,
+  `choose_many`).
+- `InputError`, a `RuntimeError` subclass that `input` now raises at the end of input and for
+  invalid UTF-8. Code that catches `RuntimeError` is unaffected.
+- A fix to HTTP connection reuse: a request after a timed-out one could receive the timed-out
+  request's reply.
+- Structured tasks, FIFO channels, timers and timed waits, cooperative cancellation,
+  and deadlock diagnostics.
+- `List.remove_if` preserves other list/struct copies; calling it from a struct method
+  correctly requires a mutable struct receiver.
+- Formatting preserves required parentheses around trailing-block calls in `when`
+  headers; every conformance `run/` file is also formatted and reparsed as a guard.
+- Inline `##` comments preserve statement boundaries; formatting keeps comments
+  following a `case` outside the block and closing-brace comments on that brace.
+- A project's `math/` declarations win over native Math members, with a shadowing
+  warning; `Emerald.Math` remains available for the native functions and constants.
+- User methods named `times`, `up_to`, or `down_to` take precedence over native
+  counting forms, including trailing blocks and methods returning iterables.
+- Excessive recursion raises catchable `RecursionError` in the main program and
+  tasks. It extends `RuntimeError`, so existing broader catches keep working;
+  recursion limits, cleanup, and summarized stack traces are unchanged.
+- Argument errors are reported once in JSON/CSV encoding, Base64, Digest,
+  Console.table, and changing trait-default calls, rather than being repeated.
+- Prelude call diagnostics use readable names such as `Json.parse`, not internal
+  `Emerald.Json.parse` keys; project namespace qualification is preserved.
+- `Json.decode` explains when a struct cannot be built because it declares its
+  own constructor, including structs nested in fields or collections.
+- Parser recovery preserves closing braces after a missing expression instead
+  of reporting misleading unclosed blocks; real missing and stray braces still
+  receive their own diagnostics.
+- Native Math functions cannot be stored as values; diagnostics suggest calling
+  them or wrapping their calls in blocks. Math constants and project functions
+  remain usable as values.
+- List equality, hashing, and ordering callbacks may read their original list,
+  but attempting to change it raises a catchable `RuntimeError` rather than
+  accessing freed storage. Changing operations publish only a finished result;
+  failed callbacks leave the list unchanged. Independent value copies remain
+  changeable; ordinary `each`/`reduce` snapshot semantics are unchanged.
+- `File.read_lines` and `FileHandle.read_line` now remove CRLF's carriage return,
+  matching `String.lines`; empty files and blank final lines split correctly.
+- `File.append` creates a missing file, as C#, Python, and Ruby do (it raised `FileError` before).
+- HTTP now sends Emerald's own `User-Agent`, or the program's, instead of Zig's (the second
+  header was ignored before).
+- The REPL keeps one interpreter and executes each entry once, so files, requests, randomness,
+  clocks, and tasks are no longer replayed. Calls now echo results and strings echo quoted;
+  `print` and other `Nothing`-typed statements have no extra result.
+- REPL diagnostics point within their originating entry. Parse/check errors run nothing;
+  runtime errors remove the entry's declarations but keep completed assignments and outside
+  effects. `:help` explains this, and redeclaration errors suggest a different name or `:reset`.
+  Prompt input and program input share one reader, including across reset.
+
+2. **A QA iteration, then the 0.7.0 release** (added 2026-10-01; **done, 0.7.0 released 2026-10-11**; B4 and B5 below were not reported): a deliberate pass over how Emerald looks and behaves in real
+   use, before more is built on top. The user's first finding, Console tables rendering poorly on
+   the website's Console page (borders short, vertical lines broken between rows; the terminal was
+   always fine), is fixed: it self-hosts the full JetBrains Mono (Google's copy omits the
+   box-drawing characters U+2500 to U+257F), sets the font's own line height (1.32) on blocks with
+   box characters (`src/plugins/box-art.mjs`, `reference.css`), and gives the "At a glance" tables
+   one width. The user verified it in Edge and Firefox on 2026-10-04.
+   Also carry in the rough edges recorded under
+   "Active rough edges" and the diagnostics that still need hints. The
+   website's pages are checked against a real build by `scripts/check-outputs.py` in
+   `emerald-website`; rerun it against the build under test. Finish it before the 0.7.0 release.
+   **The pass is scoped (the user, 2026-10-04): one chunk at a time, no rush.** Website prose is
+   Claude's alone (Codex, then working on the project, did not edit it).
+
+   QA checklist for 0.7.0 (tick each as it lands; built from what changed since 0.6.0):
+
+   *Automated sweeps.*
+   - [x] A1 (Claude, 2026-10-04) Run every website example against a 0.7.0 build: `check-outputs.py`
+     and `check-examples.py` over all pages, and `tools/check-doc-examples.sh`. Result: 429
+     examples with output on 70 pages, 13 pages of `# →` results, and 159 linked files all match.
+     Two interactive examples (`loops`, `optionals`) had no typed answers on their fences, so the
+     checker could not confirm them; they now carry `input="…"` (website `d4247d2`).
+   - [x] A2 (Codex, 2026-10-04) ReleaseSafe sweep of 31 examples: 41,938 complete positions,
+     31,923 unfinished prefixes (stride 8 above 2 KiB), and code actions on both diagnostics.
+     189,662 requests passed; no reply over 100 ms. One signature-help crash fixed with two
+     50-run regression cases and the full gate. Latencies and replay command are in the journal.
+   - [x] A3 (Codex, 2026-10-04) Eight new seeds × 125,000 cases passed: one million inputs,
+     136,641 executed programs. Found and fixed leading-comment formatter non-idempotence;
+     exact-seed reproduction and full replay recorded alongside all seeds in the journal.
+   - [x] A4 (Claude, 2026-10-04) Compare speed with 0.6.0: startup (`print(1)` was 3.5 ms), the REPL
+     and task benchmarks. Result: startup is about 3% slower (3.58 to 3.71 ms; +0.13 ms and about
+     40 page faults on every program, probably the prelude's growth); task scaling is linear
+     (10.49x time for 10x tasks, flat memory); REPL analysis is about 0.3 ms slower at early
+     entries and within 1.5% at 500 and 1000. Tasks and the REPL have no 0.6.0 baseline, so they
+     are compared with the journal's recorded numbers. Nothing needs action; details in the
+     journal.
+   - [x] A5 (Codex, 2026-10-04) 200 Debug and 200 ReleaseSafe measurements and work counters
+     distinguish jitter, logarithmic lookup, and larger retained-heap collection. The approved
+     guard asserts equal interpreter steps and comparisons bounded by lookups × bit length.
+     No production optimization, retries, collector assertion, or widened margin; full gate passed.
+   - [x] A6 (Claude, 2026-10-04) Link check across the site, the docs, and the READMEs. Result: 13,951
+     internal links and anchors on 110 built pages and 329 relative links in the three repos'
+     markdown files are all intact, and the 32 external URLs are reachable (the only non-200s are
+     bare Google Fonts preconnect hosts). The site check is kept as `scripts/check-links.py` in
+     `emerald-website`; run it after `npm run build`. Observation for the user: `public/mockups/`
+     (four landing-page theme mockups, kept on purpose) is live at `/mockups/` and loads Google
+     Fonts, unlike the self-hosted site.
+
+   *Hands-on (the user).*
+   - [x] B1 Install the release candidate as a student would on Windows (and a Mac if possible):
+     follow the install page, then `emerald --version`.
+   - [x] B2 Write a 30-line program in VS Code with extension 0.3.0 and the new build: do
+     completion, hover, signature help, and quick fixes help or add noise, and do the one-line
+     descriptions read clearly cold?
+   - [x] B3 Use the REPL for ten minutes: multi-line input, mistakes, recovering from errors.
+   - [ ] B4 (not reported at release) Read the site from Install through the first lessons, in both themes and at phone
+     width: colours (the new library-class colour especially), layout, wording.
+   - [ ] B5 (not reported at release) Try to reproduce the red "not defined" editor errors on the new build, and send the
+     message and its line.
+
+   *Release mechanics.*
+   - [x] C1 (Claude, 2026-10-04) Write the Emerald 0.7.0 release notes: drafted in
+     `docs/release-notes-0.7.0.md`, in the style of the 0.6.0 notes. Each claim not already
+     covered by the conformance suite was run against a `v0.7.0-rc1`-versioned build of main (the
+     REPL transcript, the foreign-operator hints, `RecursionError`, `File.append`, `Tasks.run`,
+     `InputError` for `input` and the prompts, and Math values). After tagging, publish with
+     `gh release edit v0.7.0 --notes-file docs/release-notes-0.7.0.md`. Revise the file if
+     candidate testing changes any behavior it describes.
+   - [x] C2 (Claude) Move the install page from 0.6.0 to 0.7.0: sample outputs and the two pinned
+     version commands. The user deploys.
+   - [x] C3 (the user) Tag `v0.7.0-rc1` first, then `v0.7.0`; the release workflow builds and
+     smoke-tests three platforms. A tag containing a hyphen publishes as a prerelease (so
+     `releases/latest`, which the install scripts and install page use, still points at 0.6.0); install a
+     candidate with `install.sh --version v0.7.0-rc1` or `install.ps1 -Version v0.7.0-rc1`. Check the
+     assets and the install scripts against the tag.
+   - [ ] C4 (the user) Extension 0.3.0 is published (Marketplace, 2026-10-04; verified byte-identical to
+     emerald-vscode `638d8cd`). Remaining: push the `v0.3.0` tag, which exists only locally, with
+     `git push origin v0.3.0`.
+   - [x] C5 Install from the real release assets on each OS. (Claude, 2026-10-11) Linux: the documented
+     install command run against the live release installed `Emerald 0.7.0`; `--version`, `run`, and
+     `repl` worked. Windows (both PowerShell flavors) and macOS: the release workflow's install-script
+     checks passed against the `v0.7.0` tag.
+
+   Not in this pass: the error-message review against real student mistakes and the
+   whole-codebase review (both later, in the pre-compiler phase), new features, and speed work.
+
+- A Windows Debug REPL test runner stopped responding for about a minute in the
+  policy-only CI run at `3f7d694`, before the parser changes. Its cause is not
+  established. The subsequent group A run passed every job, including Windows
+  Debug, but that does not establish a fix. Investigate separately; no failed
+  job was rerun or timeout widened to make it pass.
