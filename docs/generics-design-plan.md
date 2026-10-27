@@ -830,6 +830,31 @@ joined lists with `+`, which Emerald does not have (`chain` joins them); the cas
   the data at the key's own types.
 - An enum's type parameters were refused in slices 1 to 3; that refusal is gone.
 
+### Slice 5: editor support, teaching, fuzzing (2026-10-27)
+
+- **Type parameters in the editor.** The checker records every place it resolves a type
+  parameter (`Checked.parameter_sites`), and each `Type.Parameter` knows where its name is written,
+  so the language server never re-derives which declaration's `T` a name is. Hover shows
+  `Item with Ordered` and whose parameter it is; go to definition reaches the `[T]` list; find
+  references and rename cover every use and touch nothing else of the same spelling.
+- **Generic declarations** show their brackets in hover and signature help
+  (`largest[Item with Ordered](items: List[Item]): Item?`, `Grid[Item]`).
+- **Types inside brackets and bounds** are now walked for definition, references, and rename:
+  slice 1 left `Player` in `Box[Player]` and `Sortable` in `T with Sortable` invisible, so
+  renaming `Player` would have missed them.
+- **Completion** on a `T with Trait` offers the trait's members, with `Self` shown as `T`.
+- **Teaching:** [`docs/language/generics.md`](language/generics.md), after objects and traits,
+  starts from `List[Int]` and covers types, functions, `with`, enums, and what is left out;
+  [`examples/generics.em`](../examples/generics.em) is the runnable tour.
+- **Fuzzing:** three templates in `tools/fuzz.zig`: a generic class with a generic method and a
+  constrained function, a recursive constrained enum, and a program of the common mistakes
+  (a repeated parameter, ordering an unconstrained `T`, two traits, an optional argument,
+  "cannot tell", a type at a call, and `is` against a generic type). `with` joins the atoms.
+- **`type_name` decided:** a generic value's `type_name` is its declaration's name, `Pair`, not
+  `Pair[String, Int]`. Inside a generic body the static type is `Pair[T]`, which says nothing,
+  and the runtime keeps no arguments (5.7), so printing them only sometimes would be the less
+  predictable rule. `List[Int]`'s `type_name` keeps its element type, as it always has.
+
 ### Reserved syntax
 **Reserved syntax (merged as PR #43, 2026-10-16).** The only built part; section 5's design is
 accepted for use only if the gate in section 3 is met.

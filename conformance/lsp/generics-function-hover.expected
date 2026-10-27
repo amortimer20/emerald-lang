@@ -1,0 +1,20 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "contents": {
+      "kind": "markdown",
+      "value": "```emerald\nfirst_or[Item](items: List[Item], fallback: Item): Item\n```"
+    },
+    "range": {
+      "start": {
+        "line": 4,
+        "character": 6
+      },
+      "end": {
+        "line": 4,
+        "character": 22
+      }
+    }
+  }
+}

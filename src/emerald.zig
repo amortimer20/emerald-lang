@@ -276,6 +276,7 @@ fn analyzeOnce(gpa: std.mem.Allocator, project: *const Project, keep_unresolved:
         .trait_calls = .empty,
         .widenings = .empty,
         .parameter_calls = .empty,
+        .parameter_sites = &.{},
     };
     return .{
         .prelude_source = prelude_source,

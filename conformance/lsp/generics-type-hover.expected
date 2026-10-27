@@ -1,0 +1,20 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "contents": {
+      "kind": "markdown",
+      "value": "```emerald\nGrid[Item]\n```\n\nA grid of anything."
+    },
+    "range": {
+      "start": {
+        "line": 1,
+        "character": 6
+      },
+      "end": {
+        "line": 1,
+        "character": 10
+      }
+    }
+  }
+}

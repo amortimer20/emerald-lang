@@ -5746,3 +5746,23 @@ was refused for the wrong reason. Program 6 in the plan joined lists with `+`; E
 Validation: `zig build test -j1` in Debug and ReleaseSafe, `zig fmt --check`, `git diff --check`,
 Windows and macOS cross-builds, and an LSP sweep of 13,365 requests over the enums case with no
 errors.
+
+## 2026-10-27: Generics slice 5, editor support, teaching, and fuzzing
+
+The language server gained type parameters: hover, definition, references, and rename, all from
+sites the checker records as it resolves each `T`, since only the checker knows which
+declaration's `T` a name is. Hover and signature help show a generic declaration with its
+brackets, and completion on a `T with Trait` offers the trait's members with `Self` written as
+`T`. A guide page, `examples/generics.em`, and three fuzz templates complete the plan's slice 5;
+the plan records the `type_name` decision.
+
+Found while building: slice 1 left the types inside brackets (`Box[Player]`) and every `with`
+bound out of the server's type walks, so go to definition did nothing there and renaming
+`Player` would have left `Box[Player]` behind. Both walks now descend into them, and a case
+covers it.
+
+Validation: `zig build test -j1` in Debug and ReleaseSafe (861 conformance cases), a ReleaseSafe
+fuzz campaign (seed 20261027, 20,000 cases, 2,470 executed), `zig fmt --check`,
+`git diff --check`, and Windows and macOS cross-builds. Every `.em` link in `docs/` resolves and
+`examples/generics.em` runs; `tools/check-doc-examples.sh` itself needs bash 4, which this
+machine lacks.

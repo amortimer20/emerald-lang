@@ -1,0 +1,20 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "contents": {
+      "kind": "markdown",
+      "value": "```emerald\nItem with Ordered\n```\n\nA type parameter of `largest`, which each use says. Every type given for it adopts `Ordered`."
+    },
+    "range": {
+      "start": {
+        "line": 0,
+        "character": 44
+      },
+      "end": {
+        "line": 0,
+        "character": 48
+      }
+    }
+  }
+}

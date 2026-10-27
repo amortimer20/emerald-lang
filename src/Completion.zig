@@ -122,7 +122,9 @@ pub fn function(gpa: std.mem.Allocator, source: *const emerald.Source, declarati
     errdefer item.deinit(gpa);
     var detail: std.Io.Writer.Allocating = .init(gpa);
     defer detail.deinit();
-    try detail.writer.print("{s}(", .{label});
+    try detail.writer.writeAll(label);
+    try writeTypeParameters(&detail.writer, source, declaration.type_parameters);
+    try detail.writer.writeByte('(');
     for (declaration.parameters, 0..) |parameter, index| {
         if (index != 0) try detail.writer.writeAll(", ");
         try detail.writer.print("{s}: {s}", .{ parameter.name, annotationText(source, parameter.annotation) });
@@ -186,6 +188,18 @@ pub fn choice(gpa: std.mem.Allocator, source: *const emerald.Source, enum_name: 
     item.documentation = try documentation(gpa, source, value.name_span);
     try insertion(gpa, &item, true);
     return item;
+}
+
+/// Section 11.3's `[T]` or `[T with Ordered]` as written, after a name.
+pub fn writeTypeParameters(writer: *std.Io.Writer, source: *const emerald.Source, list: []const emerald.Ast.TypeParameter) std.Io.Writer.Error!void {
+    if (list.len == 0) return;
+    try writer.writeByte('[');
+    for (list, 0..) |parameter, index| {
+        if (index != 0) try writer.writeAll(", ");
+        try writer.writeAll(parameter.name);
+        if (parameter.bound) |bound| try writer.print(" with {s}", .{annotationText(source, bound)});
+    }
+    try writer.writeByte(']');
 }
 
 fn annotationText(source: *const emerald.Source, annotation: emerald.Ast.TypeExpression) []const u8 {

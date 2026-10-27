@@ -65,7 +65,7 @@ fn generate(gpa: std.mem.Allocator, random: std.Random) ![]const u8 {
     // campaign rather than only by its unit test.
     if (random.uintLessThan(u8, 8) == 0) {
         const count = random.uintLessThan(u8, 16);
-        return switch (random.uintLessThan(u8, 16)) {
+        return switch (random.uintLessThan(u8, 19)) {
             0 => std.fmt.allocPrint(gpa,
                 \\var i = 0
                 \\while i < {d} {{
@@ -249,6 +249,63 @@ fn generate(gpa: std.mem.Allocator, random: std.Random) ![]const u8 {
                 \\}}
                 \\print(Json.encode([shape]))
             , .{ count, count }),
+            // Section 11.3's generics: a type, a function, a constraint, and an
+            // enum, valid, then each of their common mistakes.
+            15 => std.fmt.allocPrint(gpa,
+                \\class Grid[Item] {{
+                \\    var _cells: List[Item] = []
+                \\    constructor(count: Int, fill: Item) {{
+                \\        for _ in 0..<count {{
+                \\            self._cells.append(fill)
+                \\        }}
+                \\    }}
+                \\    func get(index: Int): Item {{
+                \\        return self._cells[index]
+                \\    }}
+                \\    func mapped[Result](change: func(Item): Result): Grid[Result] {{
+                \\        return Grid(self._cells.count, change(self.get(0)))
+                \\    }}
+                \\}}
+                \\
+                \\func largest[Item with Ordered](items: List[Item]): Item? {{
+                \\    return items.max()
+                \\}}
+                \\
+                \\const grid: Grid[Float] = Grid({d}, 1)
+                \\print(grid.mapped {{ value => value * 2 }}.get(0), largest([3, {d}, 1]))
+            , .{ count % 4 + 1, count }),
+            16 => std.fmt.allocPrint(gpa,
+                \\enum Tree[Item with Ordered] {{
+                \\    empty
+                \\    branch(left: Tree[Item], item: Item, right: Tree[Item])
+                \\    func inserted(value: Item): Tree[Item] {{
+                \\        return case self {{
+                \\            when Tree.empty then Tree.branch(Tree.empty, value, Tree.empty)
+                \\            when Tree.branch(left, item, right) then if value < item then Tree.branch(left.inserted(value), item, right) else Tree.branch(left, item, right.inserted(value))
+                \\        }}
+                \\    }}
+                \\}}
+                \\
+                \\var tree: Tree[Int] = Tree.empty
+                \\for number in 0..{d} {{
+                \\    tree = tree.inserted(number * 7 % 5)
+                \\}}
+                \\print(tree)
+            , .{count % 6}),
+            17 => std.fmt.allocPrint(gpa,
+                \\struct Box[Item, Item] {{
+                \\    const value: Item
+                \\    func bigger?(other: Item): Bool {{
+                \\        return self.value > other
+                \\    }}
+                \\}}
+                \\func pick[Item with Ordered, Textual](first: Item): Item {{
+                \\    return first
+                \\}}
+                \\const box: Box[Int?] = Box({d})
+                \\const empty = Box()
+                \\print(pick([1]), Box[Int](2), box is Box[Int])
+            , .{count}),
             else => std.fmt.allocPrint(gpa,
                 \\const score = {d}
                 \\const result = if score > 5 then score * 2 else if score == 0 then 1 else score
@@ -269,7 +326,7 @@ fn generate(gpa: std.mem.Allocator, random: std.Random) ![]const u8 {
         "中",
         "😀",
         "\u{0301}",   "var",      "const",    "func", "if",   "else", "return", "true", "false", "nothing", "print", "## note\n",
-        "#[ note ]#", "\"text\"", "\"#{x}\"", "then", "enum", "case", "when",
+        "#[ note ]#", "\"text\"", "\"#{x}\"", "then", "enum", "case", "when",   "with",
     };
 
     var text: std.ArrayList(u8) = .empty;

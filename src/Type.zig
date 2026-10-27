@@ -116,6 +116,10 @@ pub const Parameter = struct {
     bound: ?*const User = null,
     /// The declaration's name, for diagnostics.
     owner: []const u8 = "",
+    /// Where the name is written in its `[T]` list, for the language server.
+    file: u32 = 0,
+    start: u32 = 0,
+    end: u32 = 0,
 };
 
 /// Shared by every occurrence of one user-defined type. The checker allocates

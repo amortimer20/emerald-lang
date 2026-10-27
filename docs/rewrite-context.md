@@ -2352,6 +2352,8 @@ parameter is, that is an error asking for the type to be written where the value
   every `Chain`'s end. A `case` match names data at the subject's types.
 - A generic class cannot extend a class or be extended, a trait takes no type parameters, and a
   trait's method, an overriding method, an `@operator` method, and a test take none either.
+- A generic value's `type_name` is its declaration's name, `Pair`, without its types, which
+  the running program does not keep.
 
 ### 11.4 `Self`
 

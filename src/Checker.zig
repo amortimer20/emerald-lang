@@ -111,6 +111,9 @@ pub const Checked = struct {
     /// key. The value's own version runs: a struct's or class's method, or a
     /// built-in one for a scalar.
     parameter_calls: MethodCalls,
+    /// Every place a type parameter is written as a type. Its declaration is
+    /// on the parameter itself.
+    parameter_sites: []const ParameterSite,
 
     pub fn ok(self: Checked) bool {
         return !Diagnostic.anyErrors(self.diagnostics);
@@ -188,6 +191,8 @@ pub const JsonDecodes = std.AutoHashMapUnmanaged(*const Ast.Expression, Type);
 pub const TypeTest = struct { value: Type, target: Type };
 pub const TypeTests = std.AutoHashMapUnmanaged(*const Ast.Expression, TypeTest);
 pub const Widenings = std.AutoHashMapUnmanaged(*const Ast.Expression, void);
+/// A type parameter written as a type, for the language server (11.3).
+pub const ParameterSite = struct { file: u32, span: Source.Span, parameter: *const Type.Parameter };
 
 /// A generic declaration's span, inside which its parameters are types. A
 /// masked one is a part of it that cannot use them: a nested type, or a
@@ -382,6 +387,8 @@ member_capture: ?Type = null,
 /// Every method call on a `T with Trait`, by callee, mapped to the trait
 /// member's key. The interpreter runs the value's own version (5.7 of the plan).
 parameter_calls: MethodCalls = .empty,
+/// Every place a type parameter is written as a type (`ParameterSite`).
+parameter_sites: std.ArrayList(ParameterSite) = .empty,
 /// Each generic function's and method's own parameters, by key.
 function_parameters: std.StringHashMapUnmanaged([]const *const Type.Parameter) = .empty,
 /// Section 6.3's cases whose arms cover every value their subject can have,
@@ -688,6 +695,7 @@ pub fn checkWithOptions(
         .trait_calls = checker.trait_calls,
         .widenings = checker.widenings,
         .parameter_calls = checker.parameter_calls,
+        .parameter_sites = checker.parameter_sites.items,
     };
 }
 
@@ -1333,7 +1341,7 @@ fn registerTypeParameters(self: *Checker, user: *Type.User, declaration: Ast.Str
     const own = try self.arena.alloc(Type, written.len);
     for (written, parameters, own, 0..) |parameter, *slot, *as_type, position| {
         const created = try self.arena.create(Type.Parameter);
-        created.* = .{ .name = parameter.name, .position = position, .owner = user.display_name };
+        created.* = .{ .name = parameter.name, .position = position, .owner = user.display_name, .file = self.file, .start = parameter.span.start, .end = parameter.span.end };
         slot.* = created;
         as_type.* = Type.parameterOf(created);
     }
@@ -1398,6 +1406,7 @@ fn parameterIn(self: *Checker, scope: GenericScope, name: []const u8, span: Sour
             return .invalid;
         }
         try self.used_parameters.put(self.arena, parameter, {});
+        try self.parameter_sites.append(self.arena, .{ .file = self.file, .span = span, .parameter = parameter });
         return Type.parameterOf(parameter);
     }
     return null;
@@ -1413,7 +1422,7 @@ fn functionTypeParameters(self: *Checker, key: []const u8, declaration: Ast.Func
     const parameters = try self.arena.alloc(*const Type.Parameter, written.len);
     for (written, parameters, 0..) |parameter, *slot, position| {
         const created = try self.arena.create(Type.Parameter);
-        created.* = .{ .name = parameter.name, .position = position, .owner = declaration.name };
+        created.* = .{ .name = parameter.name, .position = position, .owner = declaration.name, .file = self.file, .start = parameter.span.start, .end = parameter.span.end };
         slot.* = created;
     }
     try self.function_parameters.put(self.arena, key, parameters);
