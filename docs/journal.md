@@ -5984,3 +5984,13 @@ through checker fields, was left for a change of its own.
 PR #44 merged as `60726cf` after its 14 CI checks passed: the five slices, the review fixes, and
 a merge of `main`'s handoff cleanups. The handoff's generics status now points at the remaining
 follow-ups (website pages, release notes, and the expected-type refactor the review deferred).
+
+## 2026-10-28: The expected type as a parameter
+
+The generics review's deferred item: `construction_expected`, `value_expected`, and
+`member_capture`, fields that carried an expected type from `typeOfExpected` to the call, name, or
+member expression it was checking, are gone. `typeOf` became `typeOfWith(expression, null)`, and
+`typeOfUnrecorded`, `typeOfCall`, `typeOfQualified`, and `typeOfMember` take the expected type as a
+parameter. The checker is 20 lines shorter and no callee has to remember to take and clear a field
+before evaluating anything. Validation: `zig build test -j1` in Debug and ReleaseSafe, Windows and
+macOS cross-builds, and a ReleaseSafe fuzz run (seed 20261028, 5,000 cases, 607 executed).
