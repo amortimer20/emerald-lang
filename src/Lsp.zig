@@ -1354,6 +1354,7 @@ fn renderNativeHover(gpa: std.mem.Allocator, detail: []const u8, member: emerald
     if (owner) |namespace| if (!std.mem.eql(u8, namespace, "*")) try text.writer.print("{s}.", .{namespace});
     try text.writer.writeAll(detail);
     try text.writer.writeAll("\n```\n\n");
+    if (member.deprecated) |message| try text.writer.print("**Deprecated.** {s}\n\n", .{message});
     try text.writer.writeAll(member.signatures[0].summary);
     if (member.signatures[0].raises) try text.writer.writeAll("\n\nMay raise an error.");
     try text.writer.print("\n\n[Read more](https://emerald-lang.web.app/docs/{s})", .{member.signatures[0].page});

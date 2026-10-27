@@ -161,3 +161,17 @@ warnings (section 3) rather than exempting deprecations.
   as `"\u0002"`; they are `u32` arrays.
 - Covered by an LSP unit test (the published diagnostic's message, severity, and tag) and two
   conformance cases (completion order and tag, hover).
+
+### Slice 3: built-ins (2026-10-28)
+
+- A built-in written in the prelude already takes `@deprecated` (slice 1 treats the prelude like
+  any file).
+- A native member is listed in `Checker.deprecated_natives` (owner, name, message, with the
+  editor catalog's owner names) and given the same message as a `deprecated` field in
+  `src/builtins.json`. The checker warns at a native method call or property read on a value
+  (`noteNativeUse`); the editor's native hover and completion read the catalog's field.
+- `BuiltinParity.checkNames` fails when the two disagree, in either direction.
+- Nothing native is deprecated yet, so the table is empty. The path was checked by deprecating
+  `Int.factorial` temporarily (the warning, its message, and exit status `1`), then reverting.
+- AGENTS.md's "Before changing these areas" gains the procedure, and the website's parity script
+  checks that a deprecated member's page says so.

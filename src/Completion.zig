@@ -90,6 +90,12 @@ fn writeType(out: *std.Io.Writer, text: []const u8, receiver: ?Type) !void {
 }
 
 pub fn native(gpa: std.mem.Allocator, member: Builtins.Member, receiver: ?Type) !Item {
+    var item = try nativeItem(gpa, member, receiver);
+    item.deprecated = member.deprecated;
+    return item;
+}
+
+fn nativeItem(gpa: std.mem.Allocator, member: Builtins.Member, receiver: ?Type) !Item {
     const signature_receiver = if (receiver) |base| if (base.kind == .list and std.mem.eql(u8, member.name, "to_dictionary") and base.element.?.kind == .tuple and base.element.?.elements.len == 2)
         Type{ .kind = .dictionary, .key = &base.element.?.elements[0], .element = &base.element.?.elements[1] }
     else

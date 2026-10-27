@@ -6026,3 +6026,10 @@ Deprecated uses are struck through, their correction rides in the message (edito
 diagnostic's help), hover leads with it, and completion tags deprecated members and lists them
 last. The first attempt serialized the tags as a byte string, because `std.json` treats `[]u8` as
 text; a probe against a real server caught it before any case was written.
+
+## 2026-10-28: Deprecation slice 3, built-ins
+
+Prelude built-ins needed nothing new. Native members get a checker table and a catalog field that
+the parity test keeps in agreement, with the warning, hover, and completion following them. No
+native is deprecated, so the path was exercised once with a temporary entry and reverted; the
+procedure for a real deprecation is in AGENTS.md.

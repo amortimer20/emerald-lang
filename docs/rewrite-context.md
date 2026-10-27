@@ -3559,7 +3559,9 @@ The clean initial set is intentionally small:
   empty one is an error. Every use is a warning carrying it (17.1); the declaration still
   works. A use inside the deprecated declaration, or inside another deprecated declaration,
   does not warn, and overriding a deprecated method does. A constructor is not deprecated on
-  its own (calling `Spot(...)` uses the type), nor is a local. The policy is
+  its own (calling `Spot(...)` uses the type), nor is a local. A built-in in the prelude takes
+  the annotation; a native one is listed in the checker and the editor catalog with the same
+  message. The editor strikes deprecated uses through and puts the message in hover. The policy is
   [deprecation-design-plan.md](deprecation-design-plan.md)'s: before 1.0, one release warns
   before the release that removes; after 1.0, a minor release may deprecate and only a major
   one removes.

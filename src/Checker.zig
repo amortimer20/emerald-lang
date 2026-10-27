@@ -1373,6 +1373,28 @@ fn registerMemberDeprecations(self: *Checker, declaration: Ast.StructDeclaration
     };
 }
 
+/// Section 16.1's deprecated native members, as `{ owner, name, message }`,
+/// with the owners the editor catalog uses. Empty until something is
+/// deprecated; `src/builtins.json`'s `deprecated` field must agree, which
+/// the parity test checks. A built-in written in the prelude takes
+/// `@deprecated` there instead.
+pub const DeprecatedNative = struct { owner: []const u8, name: []const u8, message: []const u8 };
+pub const deprecated_natives = [_]DeprecatedNative{};
+
+/// Section 16.1 for a native member reached through a value of `base`.
+fn noteNativeUse(self: *Checker, base: Type, member: Ast.Expression.Member) Error!void {
+    if (deprecated_natives.len == 0) return;
+    const owner = instanceCatalogOwner(base) orelse return;
+    for (deprecated_natives) |native| {
+        if (!std.mem.eql(u8, native.owner, owner) or !std.mem.eql(u8, native.name, member.name)) continue;
+        const gop = try self.deprecation_warned.getOrPut(self.arena, .{ .file = self.file, .start = member.name_span.start });
+        if (gop.found_existing) return;
+        try self.reportWarning(member.name_span, "`{s}` is deprecated", .{member.name}, native.message);
+        self.diagnostics.items[self.diagnostics.items.len - 1].deprecated = true;
+        return;
+    }
+}
+
 /// Section 16.1: a use of a deprecated declaration warns with its message,
 /// unless the use is inside a deprecated declaration itself.
 fn noteUse(self: *Checker, key: []const u8, span: Source.Span) Error!void {
@@ -7882,6 +7904,7 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
         return base.elements[position];
     }
 
+    try self.noteNativeUse(base, member);
     if (base.kind == .tuple) {
         if (std.mem.eql(u8, member.name, "count")) {
             try self.reportWithHelp(
@@ -8176,6 +8199,7 @@ fn typeOfMethodCall(
         return .invalid;
     }
     if (!base.optional and isComparisonMember(base, member.name)) return self.typeOfComparisonMember(call, member, base);
+    if (base.kind != .struct_value) try self.noteNativeUse(base.payload(), member);
     // Counting spellings are native operations only after resolving the
     // receiver. A declared type owns its members, whatever their names.
     if (base.kind != .struct_value) {
