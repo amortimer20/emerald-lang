@@ -218,7 +218,7 @@ const Deprecation = struct {
     span: Source.Span,
 };
 
-const DeprecationUse = struct { file: u32, start: u32 };
+const DeprecationUse = struct { file: u32, start: u32, end: u32 };
 
 const StructSite = struct {
     file: u32,
@@ -1387,12 +1387,21 @@ fn noteNativeUse(self: *Checker, base: Type, member: Ast.Expression.Member) Erro
     const owner = instanceCatalogOwner(base) orelse return;
     for (deprecated_natives) |native| {
         if (!std.mem.eql(u8, native.owner, owner) or !std.mem.eql(u8, native.name, member.name)) continue;
-        const gop = try self.deprecation_warned.getOrPut(self.arena, .{ .file = self.file, .start = member.name_span.start });
+        const gop = try self.deprecation_warned.getOrPut(self.arena, .{ .file = self.file, .start = member.name_span.start, .end = member.name_span.end });
         if (gop.found_existing) return;
         try self.reportWarning(member.name_span, "`{s}` is deprecated", .{member.name}, native.message);
         self.diagnostics.items[self.diagnostics.items.len - 1].deprecated = true;
         return;
     }
+}
+
+/// `Old.value` and `Old.make()` use `Old` as well as its member, so a
+/// deprecated type warns at its name there too.
+fn noteQualifiedUse(self: *Checker, key: []const u8, expression: *const Ast.Expression) Error!void {
+    if (expression.data == .member) if (std.mem.lastIndexOf(u8, key, Resolver.method_separator)) |separator| {
+        try self.noteUse(key[0..separator], expression.data.member.base.span);
+    };
+    try self.noteUse(key, expression.span);
 }
 
 /// Section 16.1: a use of a deprecated declaration warns with its message,
@@ -1404,7 +1413,7 @@ fn noteUse(self: *Checker, key: []const u8, span: Source.Span) Error!void {
     while (entries.next()) |each| {
         if (each.file == self.file and span.start >= each.span.start and span.end <= each.span.end) return;
     }
-    const gop = try self.deprecation_warned.getOrPut(self.arena, .{ .file = self.file, .start = span.start });
+    const gop = try self.deprecation_warned.getOrPut(self.arena, .{ .file = self.file, .start = span.start, .end = span.end });
     if (gop.found_existing) return;
     try self.reportWarning(span, "`{s}` is deprecated", .{deprecation.name}, deprecation.message);
     self.diagnostics.items[self.diagnostics.items.len - 1].deprecated = true;
@@ -7643,7 +7652,7 @@ fn requireIndex(self: *Checker, index: *const Ast.Expression) Error!void {
 /// Section 14.2's `Shapes.area` used as a value rather than called. It is the
 /// name branch of `typeOf`, reached through a member expression.
 fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference: Reference, capture: ?Type) Error!Type {
-    try self.noteUse(reference.key, expression.span);
+    try self.noteQualifiedUse(reference.key, expression);
     try self.reachKey(reference.key);
     if (std.mem.eql(u8, reference.key, Resolver.float_infinity_key) or
         std.mem.eql(u8, reference.key, Resolver.float_nan_key) or
@@ -11249,7 +11258,7 @@ fn typeOfCall(
         return .invalid;
     };
     try self.checkTaskCapture(call.callee.span, name, binding);
-    if (self.module.getPtr(reference.key) == binding) try self.noteUse(reference.key, call.callee.span);
+    if (self.module.getPtr(reference.key) == binding) try self.noteQualifiedUse(reference.key, call.callee);
     if (try self.reportPrivateTypeMember(reference.key, call.callee.span)) {
         try self.typeArguments(call.arguments);
         return .invalid;
