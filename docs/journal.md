@@ -6102,6 +6102,16 @@ the process's real console for virtual-terminal mode. Merging #49 with branch de
 #50, which was based on it; restoring the branch, reopening, and retargeting fixed it, and #50
 was merged without deleting its branch until #51 was retargeted.
 
+## 2026-10-28: Sharing code, and the platform libraries' place
+
+Roadmap item 5 is taught: `examples/library/` is a `geometry/` library beside its demo
+`main.em`, `conformance/run/copied-library` proves the same folder works copied into another
+project, and the guide gains "Sharing code". A `main.em` below a project's top, most often a
+copied library's demo, now says that only the project's own `main.em` runs instead of telling
+the reader to move code into the file it is already in. The user also placed Odin's `vendor:`
+idea: built-in libraries are the one channel for native code, and a design plan for curated
+`Graphics`, `Game`, and `Audio` on raylib is roadmap item 11, decided before the compiler.
+
 ## 2026-10-28: The benchmark suite, and a quadratic sort
 
 Roadmap item 7 adds `benchmarks/`: thirteen deterministic programs, one per part of the
