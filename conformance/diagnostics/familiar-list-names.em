@@ -1,9 +1,10 @@
-# Another language's name for finding or appending gets Emerald's.
+# A method name from another language gets Emerald's name for it.
 
-var items = [1, 2]
-items.extend([3])
-items.concat([3])
-items.push_all([3])
-items.add_all([3])
-print(items.index(2))
-print(items.indexOf(2))
+var scores = [1, 2]
+scores.push(3)
+scores.extend([3])
+scores.concat([3])
+scores.push_all([3])
+scores.add_all([3])
+print(scores.index(2))
+print(scores.indexOf(2))
