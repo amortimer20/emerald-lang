@@ -37,13 +37,17 @@ jobs:
           - os: windows-latest
             build: debug
             optimize: Debug
-            # Workaround, not a fix: with the test binaries running at once, about one Windows
-            # Debug run in two stalls ("test runner failed to respond"); serially, 0 of 20 did.
-            # See docs/handoff.md, "Intermittent Windows Debug test stall".
+            # Zig 0.16.0's Windows process spawning lets a test binary inherit a sibling's
+            # stdout pipe when two start at once, so a finished binary's step waits on the
+            # sibling and fails "test runner failed to respond". Zig 0.17.0 fixes it
+            # (process_spawn_mutex); remove -j1 here and below with the upgrade (roadmap
+            # item 8). See docs/handoff.md, "Windows test stall".
             test_flags: -j1
           - os: windows-latest
             build: release-safe
             optimize: ReleaseSafe
+            # The same race: it stalled here too (emerald-lsp, PR #50, 2026-10-28).
+            test_flags: -j1
 
     steps:
       - name: Checkout
