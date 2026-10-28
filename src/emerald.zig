@@ -2523,6 +2523,21 @@ test "section 14.1 gives only the entry file a top level that runs" {
         },
     }, "shapes/rectangle.em", "this would never run");
 
+    // A copied library's own `main.em` (14.4) is told why it never runs,
+    // rather than to move its code into the file it is already in.
+    {
+        var project = try buildProject(testing.allocator, &.{
+            .{ .path = "main.em", .text = "print(Geometry.double(2))\n" },
+            .{ .path = "geometry/main.em", .namespace = "Geometry", .text = "print(\"demo\")\nfunc double(value: Int): Int {\n    return value * 2\n}\n" },
+        });
+        defer project.deinit(testing.allocator);
+        var report = try checkProject(testing.allocator, &project);
+        defer report.deinit();
+        const problem = report.diagnostics[0];
+        try testing.expectEqualStrings("this would never run", problem.message);
+        try testing.expect(std.mem.startsWith(u8, problem.help, "Only the project's own `main.em` runs its top level, so `geometry/main.em` never does."));
+    }
+
     // And so a binding there has nowhere to be assigned but its declaration.
     try expectProjectProblem(&.{
         .{ .path = "main.em", .text = "print(Shapes.total)\n" },
