@@ -3998,8 +3998,10 @@ evaluation in `.em` source. The same debugger core should serve the CLI and edit
 
 ### 19.1 Toolchain discipline
 
-- The initial toolchain is pinned to Zig `0.16.0` in the repository. CI uses the same
+- The toolchain is pinned to Zig `0.17.0` in the repository (0.16.0 until 2026-10-28). CI uses the same
   version, and upgrades never track `master` implicitly.
+- Releases are built for Linux on x86-64, macOS on Apple silicon (macOS 15 or later, Zig 0.17's
+  minimum), and Windows on x86-64. Intel Macs are not supported (the user, 2026-10-28).
 - Keep that release's standard-library source locally searchable through the paths reported
   by `zig env`.
 - Treat compiling probes and the pinned standard-library declarations as authoritative for

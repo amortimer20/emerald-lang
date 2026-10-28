@@ -282,9 +282,9 @@ Open work:
   - `--test-timeout` is no better stopgap: the runner uses the larger of it and 60 seconds as the
     response limit, but it also caps every single test, so it would have to exceed the longest
     conformance test.
-  - **With the Zig 0.17 upgrade** (roadmap item 8), remove both `-j1` flags and run the parallel
-    Windows suite repeatedly to confirm. The throwaway branch `claude/windows-stall-experiment`
-    was deleted (2026-10-28, at `8043db7`).
+  - **With the Zig 0.17 upgrade** (roadmap item 8; `claude/zig-0.17` removes both `-j1` flags),
+    run the parallel Windows suite repeatedly to confirm. The throwaway branch
+    `claude/windows-stall-experiment` was deleted (2026-10-28, at `8043db7`).
 - **Editor intelligence**, below: done, with two remaining gaps.
 
 **Editor intelligence** (the user's go-ahead, 2026-09-28; built by Codex, reviewed by
@@ -404,12 +404,15 @@ compiler), or the compiler depends on it.
    (the mode names became `debug`, `safe`, `fast`, `small`). 0.17 requires macOS 15 or later; the user
    decided (2026-10-28) that Intel Macs are not supported, so releases stay Apple silicon only
    and state macOS 15 as the minimum. The plan is
-   [`zig-0.17-upgrade-plan.md`](zig-0.17-upgrade-plan.md) (proposed 2026-10-28): build and test on
-   0.17.0 now on a branch, merge when 0.17.1 ships unless 0.17.0's `Run`-step regression proves
-   not to touch Emerald's build. 0.17's WebAssembly backend
+   [`zig-0.17-upgrade-plan.md`](zig-0.17-upgrade-plan.md), accepted 2026-10-28 and **ported on
+   `claude/zig-0.17` against 0.17.0**: both suites pass, the release targets cross-build, and the
+   benchmarks show nothing slower. 0.17.0's build regression (a directory option path) was worked
+   around. CI is green, 20 dispatched runs passed all 140 jobs (the parallel Windows suites, no
+   `-j1`, 20 of 20 each, so item 9 is confirmed), and a release dry run built all three assets.
+   It waits only for the user's choice: merge on 0.17.0, or wait for 0.17.1. 0.17's WebAssembly backend
    passes all behavior tests, which helps the playground (item 6). Zig is now the permanent
    implementation language (2026-10-11), so this and later upgrades are routine maintenance.
-9. **Confirm the Windows CI stall is gone after the Zig 0.17 upgrade** (see "Windows test
+9. **Confirmed on `claude/zig-0.17` (2026-10-28): the Windows CI stall is gone on Zig 0.17** (see "Windows test
    stall"). The cause is found: a Zig 0.16.0 handle-inheritance race in Windows process spawning,
    fixed in 0.17.0. With item 8, remove the `-j1` flags and run the parallel Windows suite
    repeatedly, so CI is trustworthy when the compiler starts depending on it.

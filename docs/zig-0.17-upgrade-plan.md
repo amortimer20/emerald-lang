@@ -1,7 +1,8 @@
 # Zig 0.17 upgrade: plan
 
-Status: proposed, 2026-10-28, for the user's decision. Roadmap item 8, with item 9 (confirming the
-Windows stall is gone) folded in. Nothing is changed yet.
+Status: accepted by the user, 2026-10-28 ("Accept, start branch"), and built on
+`claude/zig-0.17` against 0.17.0; "Settled while building" at the end records what the port
+needed. Roadmap item 8, with item 9 (confirming the Windows stall is gone) folded in.
 
 Zig is Emerald's permanent implementation language (2026-10-11), so this is routine maintenance,
 but it is the largest mechanical change the codebase has had: about 300 call sites, the build
@@ -108,3 +109,46 @@ The upgrade is done when all of these pass, with numbers recorded in the journal
   exactly what decision 1's early branch finds out.
 - **A release built with 0.17 failing on a user's machine** (an older macOS, an unusual Linux).
   Mitigation: the dry release build, the install scripts' checks, and the stated minimums.
+
+## Settled while building (2026-10-28, on 0.17.0)
+
+The port was smaller than the counts in section 3 suggested, because 0.17.0 still accepts much of
+what it deprecates. Following "the smallest fix 0.17 accepts":
+
+- **Unchanged:** the 275 `allocPrint` calls, and the `-Doptimize=ReleaseSafe` spelling, which 0.17
+  still accepts beside `safe`; CI, the release workflow, and the scripts keep it. Renaming either is
+  later cleanup, not this upgrade.
+- **Done by `zig fmt`:** 0.17's formatter rewrites the deprecated `@intFromEnum` as `@backingInt`
+  itself, in 8 files, and changes nothing else.
+- **`build.zig`:** `b.args` became `addPassthruArgs()` (four places); `.Debug` became `.debug`.
+  0.17.0 no longer accepts a directory as an option *path* ("checking cache failed: file_read
+  IsDir", likely the known build regression), so the conformance, examples, docs, and benchmarks
+  directories are plain strings relative to the repository root. The conformance run step now
+  starts there (`setCwd`) and always runs (`has_side_effects`), since Zig cannot see the cases it
+  reads at run time as inputs.
+- **Reflection:** `std.meta.fields` became `std.meta.fieldNames`, `@typeInfo`'s `fields` became
+  `field_names`, and `std.meta.Int` and `std.meta.Tuple` became the `@Int` and `@Tuple` builtins.
+  `std.heap.MemoryPoolAligned` became `std.heap.memory_pool.Aligned`.
+- **Language:** `errdefer |err|` lost its capture, so the type-setup failure path became a `catch`
+  around a new `runTypeSetup`; the array repetition operator `**` is gone, so five test strings use
+  a small compile-time `repeated` helper; `std.fs.path.resolve` no longer adds the working
+  directory, so the language-server conformance path is made absolute explicitly.
+- **`@bitCast`:** all 11 convert between integers, or an integer and a float, of the same size
+  (the seeded `Random` state, hashes, the prelude's float literals), where logical and memory bits
+  agree. The conformance cases with seeded output pass unchanged.
+- **Results on the development machine:** Debug and ReleaseSafe suites pass, `zig fmt --check` is
+  clean, and ReleaseSafe builds for all three release targets produce Linux ELF, macOS Mach-O, and
+  Windows PE binaries. The benchmarks, 0.16 against 0.17 alternating, show no program slower beyond
+  noise (the largest, 1.04) and several faster: `json` 0.61, `regex` 0.70, `pipeline` 0.72,
+  `sorting` 0.81 of the 0.16 time.
+- **CI and the stall (item 9):** two memory tests failed on Linux and Windows. Probed in Docker,
+  neither was a leak: the first measured run peaks 435 KB below every later one, and a program's
+  peak sits at one of two levels about 250 KB apart, by program rather than by work. The tests now
+  compare warmed-up long runs (a loop at 20,000 against 80,000 iterations, within 32 KB; calls at
+  2,047 against 131,071, within 512 KB). Then 20 dispatched CI runs passed every job, 140 of 140,
+  including the Windows Debug and ReleaseSafe suites in parallel with no `-j1`: 20 of 20 each,
+  where the parallel Debug suite on 0.16 stalled about one run in two. The stall is gone.
+- **Release:** a `release.yml` dry run built all three assets; the macOS arm64 and Linux x86-64
+  ones match their checksums and run Emerald programs (Linux under emulation). The install scripts
+  fetch only published releases, so they are checked at the first real one; the Windows asset was
+  not run here.

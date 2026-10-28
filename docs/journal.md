@@ -6151,3 +6151,16 @@ Zig 0.17.0's `process_spawn_mutex` fixes it. The session reproduced it with no E
 slow binary's inherited pipe count rose with each stall. Its guess that ReleaseSafe stays clear
 did not hold: PR #50's Windows ReleaseSafe job stalled the same way that day, so both Windows
 jobs now run serially until the 0.17 upgrade, and roadmap item 9 becomes confirming the fix then.
+
+## 2026-10-28: Zig 0.17.0, ported
+
+The upgrade plan was accepted and ported on `claude/zig-0.17` against 0.17.0. It needed far less
+than the counts suggested: 0.17.0 still accepts `allocPrint` and `-Doptimize=ReleaseSafe`, and its
+own `zig fmt` rewrites `@intFromEnum`. The real changes were the build script (`addPassthruArgs`,
+and directories passed as plain strings, since 0.17.0 rejects a directory option path), reflection
+(`fieldNames`, `@Int`, `@Tuple`), two removed language features (`errdefer`'s capture and `**`),
+and `path.resolve` no longer adding the working directory. Every `@bitCast` is a same-size integer
+or float conversion, and seeded output is unchanged. Both suites pass, the three release targets
+cross-build, and the benchmarks show nothing slower and `json`, `regex`, and `pipeline` 28 to 39%
+faster. The plan's "Settled while building" section has the details; CI, the parallel Windows
+runs, and a release dry run come next.

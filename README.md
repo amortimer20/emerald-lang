@@ -29,7 +29,7 @@ On **Windows**, open PowerShell and run:
 irm https://raw.githubusercontent.com/amortimer20/emerald-lang/main/install.ps1 | iex
 ```
 
-On **macOS** (Apple silicon) or **Linux** (x86-64), open a terminal and run:
+On **macOS** (Apple silicon, macOS 15 or later) or **Linux** (x86-64), open a terminal and run:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/amortimer20/emerald-lang/main/install.sh | sh

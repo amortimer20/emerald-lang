@@ -278,7 +278,7 @@ fn perform(client: *Client, url: []const u8, options: Options) Outcome {
         client.allocator.free(storage);
         return .{ .problem = .{ .kind = .request_failed, .message = "the HTTP response could not be stored" } };
     };
-    return .{ .response = .{ .status = @intFromEnum(response.head.status), .reason = reason, .url = final_url, .headers = headers, .body = body } };
+    return .{ .response = .{ .status = @backingInt(response.head.status), .reason = reason, .url = final_url, .headers = headers, .body = body } };
 }
 
 fn copyHeaders(allocator: Allocator, iterator: std.http.HeaderIterator) Allocator.Error![]Header {

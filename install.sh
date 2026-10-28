@@ -80,6 +80,14 @@ case "$(uname -s)-$(uname -m)" in
     *) fail "there is no Emerald release for $(uname -s) on $(uname -m) yet; see https://github.com/$repo#install to build it from source" ;;
 esac
 
+# Emerald is built with Zig 0.17, whose Mac binaries need macOS 15 or later.
+if [ "$(uname -s)" = Darwin ]; then
+    macos_version="$(sw_vers -productVersion 2>/dev/null || echo 0)"
+    if [ "${macos_version%%.*}" -lt 15 ] 2>/dev/null; then
+        fail "Emerald needs macOS 15 or later, and this Mac has macOS $macos_version; update macOS from System Settings, then run this again"
+    fi
+fi
+
 if [ "$version" = latest ]; then
     base="https://github.com/$repo/releases/latest/download"
 else
