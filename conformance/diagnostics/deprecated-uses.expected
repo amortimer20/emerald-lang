@@ -1,0 +1,40 @@
+diagnostics/deprecated-uses.em:38:7: warning: `sum_all` is deprecated
+  print(sum_all([1]), max_items, Spot(1).shifted().size, Spot.zero(), Light.amber, Spot(2).left)
+        ^^^^^^^
+Use `total` instead.
+diagnostics/deprecated-uses.em:38:21: warning: `max_items` is deprecated
+  print(sum_all([1]), max_items, Spot(1).shifted().size, Spot.zero(), Light.amber, Spot(2).left)
+                      ^^^^^^^^^
+Use `limit` instead.
+diagnostics/deprecated-uses.em:38:32: warning: `Spot` is deprecated
+  print(sum_all([1]), max_items, Spot(1).shifted().size, Spot.zero(), Light.amber, Spot(2).left)
+                                 ^^^^
+Use `Point` instead.
+diagnostics/deprecated-uses.em:38:40: warning: `shifted` is deprecated
+  print(sum_all([1]), max_items, Spot(1).shifted().size, Spot.zero(), Light.amber, Spot(2).left)
+                                         ^^^^^^^
+Use `moved` instead.
+diagnostics/deprecated-uses.em:38:50: warning: `size` is deprecated
+  print(sum_all([1]), max_items, Spot(1).shifted().size, Spot.zero(), Light.amber, Spot(2).left)
+                                                   ^^^^
+Use `area` instead.
+diagnostics/deprecated-uses.em:38:56: warning: `Spot` is deprecated
+  print(sum_all([1]), max_items, Spot(1).shifted().size, Spot.zero(), Light.amber, Spot(2).left)
+                                                         ^^^^
+Use `Point` instead.
+diagnostics/deprecated-uses.em:38:56: warning: `Spot.zero` is deprecated
+  print(sum_all([1]), max_items, Spot(1).shifted().size, Spot.zero(), Light.amber, Spot(2).left)
+                                                         ^^^^^^^^^
+Use `Spot.origin` instead.
+diagnostics/deprecated-uses.em:38:69: warning: `Light.amber` is deprecated
+  print(sum_all([1]), max_items, Spot(1).shifted().size, Spot.zero(), Light.amber, Spot(2).left)
+                                                                      ^^^^^^^^^^^
+Use `Light.yellow` instead.
+diagnostics/deprecated-uses.em:38:82: warning: `Spot` is deprecated
+  print(sum_all([1]), max_items, Spot(1).shifted().size, Spot.zero(), Light.amber, Spot(2).left)
+                                                                                   ^^^^
+Use `Point` instead.
+diagnostics/deprecated-uses.em:38:90: warning: `left` is deprecated
+  print(sum_all([1]), max_items, Spot(1).shifted().size, Spot.zero(), Light.amber, Spot(2).left)
+                                                                                           ^^^^
+Use `x` instead.

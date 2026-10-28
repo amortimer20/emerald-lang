@@ -1,7 +1,8 @@
 # Deprecation: design plan
 
-Status: accepted, 2026-10-28. The user accepted every recommendation below as proposed in
-conversation the same day. Building has not started; it waits for the user's go-ahead.
+Status: accepted, 2026-10-28, and being built on `claude/deprecation` (the user's go-ahead,
+2026-10-28: "carry on"). The user accepted every recommendation below as proposed in conversation
+the same day.
 
 Emerald 1.0 starts a compatibility promise (handoff, roadmap item 13), and a promise needs a way
 to retire things: a name that was a mistake, a method replaced by a better one, a spelling the
@@ -124,4 +125,53 @@ warnings (section 3) rather than exempting deprecations.
 
 ## Settled while building
 
-(Nothing built yet.)
+### Slice 1: the annotation and its warning (2026-10-28)
+
+- **Representation.** `Ast.Deprecated` (`span`, cooked `message`) on `FunctionDeclaration`,
+  `StructDeclaration`, its `Field`, `Property`, and `TypeField` (enum values included), and
+  `Declaration`. The parser attaches it after reading the member, by which member list grew, so
+  no member branch needed a change; an enum value may carry it on the line above, recognized by
+  looking ahead for `@deprecated("...")` followed by a value.
+- **Uses** are noted at the points the checker already resolves a declaration: a name read, a
+  call or construction (`typeOfCall`), a qualified name or enum value (`typeOfQualified`), a
+  method call or captured method, a method on `T with Trait`, a field or property read, a type
+  written in an annotation, and an override. Each warns once per place
+  (`deprecation_warned`), and a module binding warns only when the name really reaches it, so a
+  local of the same name does not.
+- **Not yet:** assigning to a deprecated field, naming one as a constructor argument, and an
+  operator that selects a deprecated `@operator` method do not warn; reading or calling them does.
+- **Refused:** a local, a constructor (the help names the type to deprecate instead), an empty
+  message, a non-literal argument, and a repeated annotation.
+- **Found while building:** a misspelled annotation's arguments, `@deprecatd("...")`, were read
+  as an expression of their own and reported again as an unused result; an unknown annotation's
+  `(...)` is now skipped.
+- **Formatter:** the annotation is written on its own line above what it marks, copied as
+  written; a run of enum values written on one line goes one per line when any is deprecated.
+
+### Slice 2: the editor (2026-10-28)
+
+- A deprecated use is published with LSP's `Deprecated` tag (2), and its message carries the
+  correction (`` `older` is deprecated. Use `newer` instead. ``), since an editor shows only the
+  message inline and never the help. `Diagnostic.deprecated` marks it.
+- Hover on a deprecated declaration, or a use of one, puts **Deprecated.** and the message after
+  the signature and before its `##` documentation.
+- Completion items for deprecated members carry `CompletionItemTag.Deprecated` (1) and sort after
+  the rest (`Completion.Item.lessThan`).
+- **Found while building:** `std.json` writes a `[]const u8` as a string, so the first tags went out
+  as `"\u0002"`; they are `u32` arrays.
+- Covered by an LSP unit test (the published diagnostic's message, severity, and tag) and two
+  conformance cases (completion order and tag, hover).
+
+### Slice 3: built-ins (2026-10-28)
+
+- A built-in written in the prelude already takes `@deprecated` (slice 1 treats the prelude like
+  any file).
+- A native member is listed in `Checker.deprecated_natives` (owner, name, message, with the
+  editor catalog's owner names) and given the same message as a `deprecated` field in
+  `src/builtins.json`. The checker warns at a native method call or property read on a value
+  (`noteNativeUse`); the editor's native hover and completion read the catalog's field.
+- `BuiltinParity.checkNames` fails when the two disagree, in either direction.
+- Nothing native is deprecated yet, so the table is empty. The path was checked by deprecating
+  `Int.factorial` temporarily (the warning, its message, and exit status `1`), then reverting.
+- AGENTS.md's "Before changing these areas" gains the procedure, and the website's parity script
+  checks that a deprecated member's page says so.

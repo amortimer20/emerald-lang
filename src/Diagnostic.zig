@@ -157,6 +157,9 @@ severity: Severity = .err,
 /// Present only when code has a curated command-line explanation.
 code: ?Code = null,
 replacement: ?Replacement = null,
+/// A use of a `@deprecated` declaration (16.1), which an editor draws struck
+/// through.
+deprecated: bool = false,
 /// The calls active when a runtime error was raised, innermost first. Empty for
 /// every diagnostic reported before a program runs.
 trace: []const Frame = &.{},

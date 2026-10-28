@@ -688,9 +688,10 @@ const Annotations = struct {
     abstract: ?Source.Span = null,
     test_annotation: ?Source.Span = null,
     operator: ?Ast.OperatorAnnotation = null,
+    deprecated: ?Ast.Deprecated = null,
 };
 
-const known_annotations = [_][]const u8{ "override", "abstract", "test", "operator" };
+const known_annotations = [_][]const u8{ "override", "abstract", "test", "operator", "deprecated" };
 
 fn parseAnnotations(self: *Parser) Error!Annotations {
     var found: Annotations = .{};
@@ -738,6 +739,11 @@ fn parseAnnotations(self: *Parser) Error!Annotations {
             if (found.operator != null) {
                 try self.note(annotation.span, "`@operator` is already written on this declaration", "A method supplies one operator. Give the other operator its own method.");
             } else found.operator = annotation;
+        } else if (std.mem.eql(u8, word, "deprecated")) {
+            const deprecated = try self.parseDeprecated(at, span);
+            if (found.deprecated != null) {
+                try self.note(deprecated.span, "`@deprecated` is already written on this declaration", "Write it once, with one message.");
+            } else found.deprecated = deprecated;
         } else if (std.mem.eql(u8, word, "override") or std.mem.eql(u8, word, "abstract") or std.mem.eql(u8, word, "test")) {
             const slot = if (std.mem.eql(u8, word, "override")) &found.override else if (std.mem.eql(u8, word, "abstract")) &found.abstract else &found.test_annotation;
             if (slot.* != null) {
@@ -753,17 +759,89 @@ fn parseAnnotations(self: *Parser) Error!Annotations {
             );
             // The word alone, so the `@` stays: the one exact edit the editor offers.
             self.diagnostics.items[self.diagnostics.items.len - 1].replacement = .{ .span = name.span, .text = suggestion };
+            self.skipAnnotationArguments();
         } else {
             try self.reportFmtNote(
                 span,
                 "`@{s}` is not an annotation",
                 .{word},
-                "Emerald's annotations are `@override`, `@abstract`, `@test`, and `@operator(\"*\")`.",
+                "Emerald's annotations are `@override`, `@abstract`, `@test`, `@operator(\"*\")`, and `@deprecated(\"...\")`.",
             );
+            self.skipAnnotationArguments();
         }
         self.skipSeparators();
     }
     return found;
+}
+
+/// The `("Use append instead.")` after `@deprecated`: one string literal, the
+/// correction a use's warning shows (16.1).
+fn parseDeprecated(self: *Parser, at: Token, span: Source.Span) Error!Ast.Deprecated {
+    const opening = self.peek();
+    if (opening.kind != .left_paren) return self.report(
+        span,
+        "`@deprecated` needs a message in parentheses",
+        "Say what to use instead, as in `@deprecated(\"Use append instead.\")`.",
+    );
+    _ = self.advance();
+    const message = self.peek();
+    if (message.kind != .string_literal) return self.report(
+        message.span,
+        "`@deprecated` needs a string literal",
+        "Write the message as text, as in `@deprecated(\"Use append instead.\")`; an annotation's argument is always a literal.",
+    );
+    _ = self.advance();
+    const closing = self.peek();
+    if (closing.kind != .right_paren) return self.report(
+        closing.span,
+        "expected `)` after the message",
+        "Close the annotation, as in `@deprecated(\"Use append instead.\")`.",
+    );
+    _ = self.advance();
+    const written = try self.cookLiteral(message);
+    const whole = spanning(at.span, closing.span);
+    if (std.mem.trim(u8, written, " \t\r\n").len == 0) try self.note(
+        message.span,
+        "`@deprecated` needs a message that says what to use instead",
+        "A warning with nothing to say teaches nothing. Write the replacement, or why there is none.",
+    );
+    return .{ .span = whole, .message = written };
+}
+
+/// Puts a top-level declaration's `@deprecated` on it, or says it belongs
+/// on a declaration the rest of the program can use.
+fn attachDeprecated(self: *Parser, statement: *Ast.Statement, deprecated: Ast.Deprecated) Error!void {
+    if (!self.at_top_level) return self.note(
+        deprecated.span,
+        "`@deprecated` belongs on a declaration other code can use",
+        "Only a top-level declaration, or a member of a type, can be deprecated. Remove it here.",
+    );
+    switch (statement.data) {
+        .function_declaration => |*function| function.deprecated = deprecated,
+        .struct_declaration => |*declaration| declaration.deprecated = deprecated,
+        .declaration => |*declaration| declaration.deprecated = deprecated,
+        else => try self.note(
+            deprecated.span,
+            "`@deprecated` belongs on a declaration",
+            "Put it on a function, a type, or a `const` or `var` at the top level.",
+        ),
+    }
+}
+
+/// Steps over an unknown annotation's `(...)`, which would otherwise be read
+/// as an expression of its own and reported a second time.
+fn skipAnnotationArguments(self: *Parser) void {
+    if (!self.check(.left_paren)) return;
+    var depth: usize = 0;
+    while (self.peek().kind != .eof) {
+        const token = self.advance();
+        if (token.kind == .left_paren) depth += 1;
+        if (token.kind == .right_paren) {
+            depth -= 1;
+            if (depth == 0) return;
+        }
+        if (token.kind == .newline and depth == 0) return;
+    }
 }
 
 fn operatorFromLiteral(literal: []const u8) ?Ast.BinaryOperator {
@@ -813,6 +891,12 @@ fn reportFmtNote(
 /// may be `@abstract`, or something no annotation applies to.
 fn parseAnnotatedStatement(self: *Parser) Error!Ast.Statement {
     const annotations = try self.parseAnnotations();
+    var statement = try self.parseAnnotatedDeclaration(annotations);
+    if (annotations.deprecated) |deprecated| try self.attachDeprecated(&statement, deprecated);
+    return statement;
+}
+
+fn parseAnnotatedDeclaration(self: *Parser, annotations: Annotations) Error!Ast.Statement {
     const next = self.peek();
     if (annotations.override) |span| {
         try self.note(
@@ -1065,7 +1149,9 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
 /// or separated by commas, before any other member. Each becomes a `const`
 /// type-level field of the enum holding that value.
 fn parseEnumValues(self: *Parser, type_name: Token, members: *StructMembers) Error!void {
-    while (self.startsEnumValue()) {
+    while (self.startsEnumValue() or self.deprecatedEnumValueAhead()) {
+        // Section 16.1: a value may be `@deprecated`, on the line above it.
+        const deprecated: ?Ast.Deprecated = if (self.check(.at)) (try self.parseAnnotations()).deprecated else null;
         const value = self.advance();
         const index: u32 = @intCast(members.type_fields.items.len);
         const value_name = try self.identifier(value);
@@ -1095,6 +1181,7 @@ fn parseEnumValues(self: *Parser, type_name: Token, members: *StructMembers) Err
             .enum_value = index,
             .data = data,
             .data_end = data_end,
+            .deprecated = deprecated,
         });
         if (self.match(.comma) != null) {
             self.skipSeparators();
@@ -1159,6 +1246,24 @@ fn parseChoiceData(self: *Parser, choice: Token) Error!struct { items: ?[]const 
 
 /// Whether the next member is a bare name, which in an enum is one of its
 /// values, or a name with its data in parentheses.
+/// `@deprecated("...")` on its own line, then an enum value: only then are the
+/// annotation's tokens the value's, rather than the first member's after them.
+fn deprecatedEnumValueAhead(self: *Parser) bool {
+    var at = self.index;
+    const shape = [_]Token.Kind{ .at, .identifier, .left_paren, .string_literal, .right_paren };
+    for (shape) |kind| {
+        if (self.tokens[at].kind != kind) return false;
+        at += 1;
+    }
+    if (!std.mem.eql(u8, self.text(self.tokens[self.index + 1]), "deprecated")) return false;
+    while (self.tokens[at].kind == .newline or self.tokens[at].kind == .doc_comment) at += 1;
+    if (self.tokens[at].kind != .identifier) return false;
+    var after = at + 1;
+    while (self.tokens[after].kind == .doc_comment) after += 1;
+    const next = self.tokens[after].kind;
+    return next == .newline or next == .comma or next == .right_brace or next == .eof or next == .left_paren;
+}
+
 fn startsEnumValue(self: *Parser) bool {
     if (!self.check(.identifier)) return false;
     const after = self.peekAfterNext().kind;
@@ -1173,6 +1278,19 @@ const StructMembers = struct {
     type_functions: std.ArrayList(Ast.StructDeclaration.TypeFunction) = .empty,
     type_fields: std.ArrayList(Ast.StructDeclaration.TypeField) = .empty,
     types: std.ArrayList(Ast.StructDeclaration.NestedType) = .empty,
+
+    const Counts = struct { fields: usize, methods: usize, properties: usize, type_functions: usize, type_fields: usize, types: usize };
+
+    fn counts(self: *const StructMembers) Counts {
+        return .{
+            .fields = self.fields.items.len,
+            .methods = self.methods.items.len,
+            .properties = self.properties.items.len,
+            .type_functions = self.type_functions.items.len,
+            .type_fields = self.type_fields.items.len,
+            .types = self.types.items.len,
+        };
+    }
 };
 
 /// Section 14.3's nested type, declared among a struct, class, or enum's
@@ -1210,7 +1328,35 @@ fn parseNestedType(self: *Parser, marker: Token, annotations: Annotations, membe
 
 /// One member of a struct body, added to `members`. `name` is the struct's.
 fn parseStructMember(self: *Parser, name: Token, members: *StructMembers) Error!void {
-    var annotations = try self.parseAnnotations();
+    const annotations = try self.parseAnnotations();
+    const before = members.counts();
+    const had_constructor = members.constructor != null;
+    try self.parseAnnotatedMember(name, members, annotations);
+    const deprecated = annotations.deprecated orelse return;
+    // The member just read is the one that grew a list.
+    if (members.fields.items.len > before.fields) {
+        members.fields.items[members.fields.items.len - 1].deprecated = deprecated;
+    } else if (members.methods.items.len > before.methods) {
+        members.methods.items[members.methods.items.len - 1].deprecated = deprecated;
+    } else if (members.properties.items.len > before.properties) {
+        members.properties.items[members.properties.items.len - 1].deprecated = deprecated;
+    } else if (members.type_functions.items.len > before.type_functions) {
+        members.type_functions.items[members.type_functions.items.len - 1].declaration.deprecated = deprecated;
+    } else if (members.type_fields.items.len > before.type_fields) {
+        members.type_fields.items[members.type_fields.items.len - 1].deprecated = deprecated;
+    } else if (members.types.items.len > before.types) {
+        members.types.items[members.types.items.len - 1].declaration.deprecated = deprecated;
+    } else if (!had_constructor and members.constructor != null) {
+        try self.note(
+            deprecated.span,
+            "a constructor cannot be deprecated on its own",
+            try std.fmt.allocPrint(self.arena, "Calling `{s}(...)` uses the type, so put `@deprecated` on `{s}` itself to retire it.", .{ self.text(name), self.text(name) }),
+        );
+    }
+}
+
+fn parseAnnotatedMember(self: *Parser, name: Token, members: *StructMembers, given: Annotations) Error!void {
+    var annotations = given;
     if (annotations.test_annotation) |span| {
         try self.note(span, "a test must be a top-level function", "Move this function outside the type, then keep `@test` on it.");
         annotations.test_annotation = null;

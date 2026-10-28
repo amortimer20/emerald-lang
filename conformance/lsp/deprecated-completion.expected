@@ -1,0 +1,41 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "label": "append",
+      "kind": 2,
+      "detail": "append(item: Int): Nothing",
+      "documentation": null,
+      "insertText": "append($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "items",
+      "kind": 5,
+      "detail": "items: List[Int]",
+      "documentation": null,
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "type_name",
+      "kind": 10,
+      "detail": "type_name: String",
+      "documentation": "The name of the value's type, as Emerald writes it, such as `Int` or `List[Int]`.",
+      "insertText": null,
+      "insertTextFormat": 1
+    },
+    {
+      "label": "push",
+      "kind": 2,
+      "tags": [
+        1
+      ],
+      "detail": "push(item: Int): Nothing",
+      "documentation": null,
+      "insertText": "push($0)",
+      "insertTextFormat": 2
+    }
+  ]
+}

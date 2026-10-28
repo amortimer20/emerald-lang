@@ -1,0 +1,4 @@
+diagnostics/deprecated-constructor.em:4:5: a constructor cannot be deprecated on its own
+      @deprecated("Use `Spot.at` instead.")
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Calling `Spot(...)` uses the type, so put `@deprecated` on `Spot` itself to retire it.

@@ -25,6 +25,9 @@ pub const Member = struct {
     name: []const u8,
     kind: Kind,
     changes: bool = false,
+    /// Section 16.1: the correction, when the member is `@deprecated`. The
+    /// checker's `deprecated_natives` must say the same.
+    deprecated: ?[]const u8 = null,
     signatures: []const Signature,
 };
 

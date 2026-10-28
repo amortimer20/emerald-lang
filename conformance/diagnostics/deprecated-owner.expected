@@ -1,0 +1,4 @@
+diagnostics/deprecated-owner.em:7:7: warning: `Old` is deprecated
+  print(Old.b)
+        ^^^
+Use New.
