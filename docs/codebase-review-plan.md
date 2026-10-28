@@ -1,7 +1,7 @@
 # Whole-codebase review: plan
 
 Status: accepted by the user, 2026-10-28. Roadmap item 10, the last item before the
-compiler. It starts after items 8 and 6 merge.
+compiler. Started 2026-10-28, once item 8 merged and the user moved item 6 after 1.0.
 
 The review's job is to make the interpreter's behavior trustworthy enough to be the compiler's
 contract. The compiler (item 12) will be checked against the conformance suite, so every rule the
@@ -24,9 +24,10 @@ the review is done.
 ## 1. When
 
 The review should look at the code the compiler will be held to, so it comes after the last
-changes that touch most of the interpreter: the Zig 0.17 upgrade (item 8, a draft PR now) and the
-browser playground (item 6, which adds a WebAssembly build and its own I/O). Item 11 is a design
-plan, not code, and does not need to wait. Item 9 is confirmed within item 8.
+change that touches most of the interpreter: the Zig 0.17 upgrade (item 8, merged 2026-10-28,
+with item 9 confirmed in it). The browser playground (item 6) was planned before it too, but the
+user moved it after 1.0 (2026-10-28), so its WebAssembly build and I/O are reviewed when it is
+built. Item 11 is a design plan, not code, and runs alongside.
 
 ## 2. What counts as a finding
 

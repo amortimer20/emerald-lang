@@ -380,9 +380,10 @@ compiler), or the compiler depends on it.
    section teaches using and writing one, and a nested `main.em`'s "this would never run" now
    explains that only the project's own `main.em` runs. The website's Sharing Code page follows
    the merge.
-6. **A browser playground**: a WebAssembly build of today's interpreter, so students on school
-   machines and Chromebooks can try Emerald without installing anything. Zig targets WebAssembly
-   directly.
+6. **A browser playground**: **moved after 1.0** (the user, 2026-10-28: "I'm ready to start working
+   on the compiler ASAP"). A WebAssembly build of the interpreter, so students on school machines
+   and Chromebooks can try Emerald without installing anything; Zig targets WebAssembly directly,
+   and 0.17's WebAssembly backend helps.
 7. **A benchmark suite**: about a dozen representative programs with recorded interpreter
    timings, the baseline that shows whether the compiler is faster and catches it getting slower. **Built on
    `claude/benchmarks`:** thirteen programs in `benchmarks/` (calls, loops and indexing, structs,
@@ -428,8 +429,8 @@ compiler), or the compiler depends on it.
    dedupes, ranks, and re-runs each reproduction; then fix batches with one commit per item, as the
    19-item batch was run. Skip style nits, the generated Unicode and time-zone tables, interpreter
    performance work, and rewriting working code. The plan is
-   [`codebase-review-plan.md`](codebase-review-plan.md) (accepted 2026-10-28): after items 8 and 6
-   merge; measure first (kcov in Docker, and a rule-by-rule coverage list); eight areas searched
+   [`codebase-review-plan.md`](codebase-review-plan.md) (accepted 2026-10-28): now that item 8 has
+   merged and item 6 has moved after 1.0; measure first (kcov in Docker, and a rule-by-rule coverage list); eight areas searched
    by subagents; one triage pass brought to the user; fix batches; done when every finding is
    settled and every rule has a case or a recorded reason.
 11. **The platform library family: shape and engine** (the user, 2026-10-28), a design plan
@@ -448,7 +449,8 @@ compiler), or the compiler depends on it.
    shows beginner games run well enough.
 
 Suggested order: 3 first (it needs the user's decisions) while 8 and 9 proceed; then 4 (the audit,
-then the slices, networking last), 5, 6, and 7; 11's plan before the compiler; 10 last.
+then the slices, networking last), 5 and 7, all done, as are 8 and 9; 6 moved after 1.0. Now 10,
+the review, with 11's plan alongside it, both before the compiler.
 
 ### The compiler
 
