@@ -216,7 +216,10 @@ Assigning to a deprecated field and naming one as a constructor argument do not 
 The website's Annotations page teaches `@deprecated` (emerald-website `1b48065`), describing
 0.8.0 ahead of its release. From the QA pass, B4 is done: every page was read at 375px in both themes, and the three
 that scrolled sideways (Console, JSON, Instant) were fixed (emerald-website `e43e535`). B5
-(the red "not defined" editor errors) waits on the user's report of where they appeared;
+(the red "not defined" editor errors) has a likely cause, found and fixed on
+`claude/lsp-subfolder`: the language server checked a file in a project's subfolder on its own,
+so every name from the rest of the project was "not defined". If the user still sees red
+errors after that ships, their report will say where;
 the flaky-test cause is settled (the exact-work test). The Zig 0.17 upgrade waits for 0.17.1.
 
 **Data-carrying enums are merged (PR #42, `8bdc35e`, 2026-10-16).**
@@ -325,8 +328,9 @@ compiler), or the compiler depends on it.
    slice 7 (website parity) is Claude's `scripts/check-builtin-parity.py` in `emerald-website`.
 2. **A QA iteration, then the 0.7.0 release**: done, 0.7.0 released 2026-10-11. The full
    checklist is in the journal (2026-10-27). Still open from it, both the user's: B4 (read the
-   site from Install through the first lessons, in both themes and at phone width) and B5
-   (reproduce the red "not defined" editor errors and send the message and its line). C4, the
+   site from Install through the first lessons, in both themes and at phone width), now done,
+   and B5 (the red "not defined" editor errors), whose likely cause, subfolder files checked
+   alone, is fixed on `claude/lsp-subfolder`. C4, the
    extension's `v0.3.0` tag, was missing everywhere; with the user's go-ahead it was recreated as
    an annotated tag on emerald-vscode `638d8cd` and pushed (2026-10-27).
 
@@ -397,9 +401,12 @@ compiler), or the compiler depends on it.
    `@intFromEnum`/`@enumFromInt`, `build.zig` (the configurer/maker split, `addPassthruArgs()` for
    the 4 `b.args` forwards, `Fmt` step paths), 4 `ArrayList.getLast` renames, 1 `errdefer` capture,
    4 `std.meta.field*` uses, and whether CI, fuzz, and release still accept `-Doptimize=ReleaseSafe`
-   (the mode names became `debug`, `safe`, `fast`, `small`). Open question for the user before the
-   switch: 0.17 requires macOS 15 or later, which drops Macs that cannot run it (roughly pre-2018);
-   if older classroom Macs matter, releases could stay on 0.16 longer. 0.17's WebAssembly backend
+   (the mode names became `debug`, `safe`, `fast`, `small`). 0.17 requires macOS 15 or later; the user
+   decided (2026-10-28) that Intel Macs are not supported, so releases stay Apple silicon only
+   and state macOS 15 as the minimum. The plan is
+   [`zig-0.17-upgrade-plan.md`](zig-0.17-upgrade-plan.md) (proposed 2026-10-28): build and test on
+   0.17.0 now on a branch, merge when 0.17.1 ships unless 0.17.0's `Run`-step regression proves
+   not to touch Emerald's build. 0.17's WebAssembly backend
    passes all behavior tests, which helps the playground (item 6). Zig is now the permanent
    implementation language (2026-10-11), so this and later upgrades are routine maintenance.
 9. **Confirm the Windows CI stall is gone after the Zig 0.17 upgrade** (see "Windows test
