@@ -3341,10 +3341,14 @@ test "only an Int range can be looped over so far" {
 test "memory stays flat however many times a loop runs" {
     const program = "var total = 0\nfor i in 1..{d} {{\n    var part = i * 2\n    total += part\n}}\nprint(total)\n";
     var buffer: [256]u8 = undefined;
-    const few = try peakMemory(try std.fmt.bufPrint(&buffer, program, .{3}));
-    const many = try peakMemory(try std.fmt.bufPrint(&buffer, program, .{20_000}));
-    if (many >= few + 16 * 1024) std.debug.print("peak memory: {d} bytes for 3 iterations, {d} for 20,000\n", .{ few, many });
-    try testing.expect(many < few + 16 * 1024);
+    // Under Zig 0.17 on Linux, the first measured run peaks about 435 KB
+    // lower than every run after it, whatever its length; after that, 5,000
+    // to 160,000 iterations differed by 11 bytes. `steadyPeak` discards a
+    // warm-up run, so only memory that grows with the loop counts.
+    const shorter = try steadyPeak(try std.fmt.bufPrint(&buffer, program, .{20_000}));
+    const longer = try steadyPeak(try std.fmt.bufPrint(&buffer, program, .{80_000}));
+    // 60,000 more iterations: even two bytes kept for each would cost 120 KB.
+    try expectFlat(shorter, longer);
 }
 
 // Section 6.2: the trailing `if`.
@@ -3711,6 +3715,25 @@ const PeakAllocator = struct {
     }
 };
 
+/// The smallest of three runs' peaks, after one warm-up run that is not
+/// counted. A run's peak includes a few large buffers whose lifetimes overlap
+/// differently from run to run, so under Zig 0.17 on Linux one run's peak sat
+/// 100 KB above another's for the same program, with the same small
+/// allocations live at both, and the first run measured sat 435 KB below.
+fn steadyPeak(text: []const u8) !usize {
+    _ = try peakMemory(text);
+    var lowest: usize = std.math.maxInt(usize);
+    for (0..3) |_| lowest = @min(lowest, try peakMemory(text));
+    return lowest;
+}
+
+/// A longer run may peak at most 32 KB above a shorter one.
+fn expectFlat(shorter: usize, longer: usize) !void {
+    if (longer < shorter + 32 * 1024) return;
+    std.debug.print("peak memory grew from {d} to {d} bytes\n", .{ shorter, longer });
+    return error.TestUnexpectedResult;
+}
+
 fn peakMemory(text: []const u8) !usize {
     var tracking: PeakAllocator = .{ .child = testing.allocator };
     const output = try runToString(tracking.allocator(), text, "");
@@ -3722,10 +3745,10 @@ test "memory stays flat however many calls a program makes" {
     // `calls(n)` makes 2^(n+1) - 1 calls but is never more than n + 1 deep.
     const program = "func calls(n: Int): Int {{\n    if n == 0 {{\n        return 1\n    }}\n    return calls(n - 1) + calls(n - 1)\n}}\nprint(calls({d}))\n";
     var buffer: [256]u8 = undefined;
-    const few = try peakMemory(try std.fmt.bufPrint(&buffer, program, .{3}));
-    const many = try peakMemory(try std.fmt.bufPrint(&buffer, program, .{14}));
-    // 32,767 calls against 15. Keeping a frame per call would cost megabytes.
-    try testing.expect(many < few + 16 * 1024);
+    const shorter = try steadyPeak(try std.fmt.bufPrint(&buffer, program, .{10}));
+    const longer = try steadyPeak(try std.fmt.bufPrint(&buffer, program, .{14}));
+    // 32,767 calls against 2,047. Keeping a frame per call would cost megabytes.
+    try expectFlat(shorter, longer);
 }
 
 test "recursion and mutual recursion run when annotated" {
