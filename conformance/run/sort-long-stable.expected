@@ -1,0 +1,5 @@
+200 true 0 9
+true [0, 1, 2, 3, 4]
+[1.25, 1.25, 1.25, 1.25]
+`sort` cannot order a List containing NaN
+100 4900.0

@@ -6101,3 +6101,19 @@ and CI found that `Console.clear`'s unit test cannot clear on Windows, where cle
 the process's real console for virtual-terminal mode. Merging #49 with branch deletion closed
 #50, which was based on it; restoring the branch, reopening, and retargeting fixed it, and #50
 was merged without deleting its branch until #51 was retargeted.
+
+## 2026-10-28: The benchmark suite, and a quadratic sort
+
+Roadmap item 7 adds `benchmarks/`: thirteen deterministic programs, one per part of the
+interpreter, sized to about half a second each in ReleaseSafe, with `tools/benchmark.py`
+modeled on `tools/startup-benchmark.py` (two binaries alternate, so machine drift affects both
+alike). Every run checks the program's output against its `.expected` file, so a fast wrong
+answer never counts. `zig build test` keeps the programs formatted but never times them.
+
+Sizing the suite found the first real result: `sort`, `sort!`, and `sort_by` were a stable
+insertion sort, quadratic in comparisons. Sorting 60,000 shuffled numbers took 6.9 seconds
+(0.01 for the same numbers already in order). The replacement insertion-sorts runs of 16 and
+merges them in rounds of doubling width, still stable, still allowing a comparison to raise: a
+merge writes to scratch space before copying back, so a `NaN` or a raising `compare` partway
+leaves every item in the list. The same sort now takes about 0.1 seconds, and
+`conformance/run/sort-long-stable` covers stability past one run and a failure mid-merge.

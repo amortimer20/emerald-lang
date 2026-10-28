@@ -377,7 +377,15 @@ compiler), or the compiler depends on it.
    machines and Chromebooks can try Emerald without installing anything. Zig targets WebAssembly
    directly.
 7. **A benchmark suite**: about a dozen representative programs with recorded interpreter
-   timings, the baseline that shows whether the compiler is faster and catches it getting slower.
+   timings, the baseline that shows whether the compiler is faster and catches it getting slower. **Built on
+   `claude/benchmarks`:** thirteen programs in `benchmarks/` (calls, loops and indexing, structs,
+   sorting, dictionaries, strings, classes, blocks, generics, JSON, regex, channels, and a
+   game-like frame loop), each checked against its `.expected` output on every run;
+   `tools/benchmark.py` alternates two binaries' runs and reports medians and their ratio; and
+   `benchmarks/baseline.md` records ReleaseSafe medians, each about 0.3 to 0.6 seconds. Sizing
+   the suite found `sort`, `sort!`, and `sort_by` were insertion sorts, O(n²): 60,000 shuffled
+   numbers took 6.9 seconds. They are now a stable merge of insertion-sorted runs, and the same
+   sort takes about 0.1 seconds.
 8. **Upgrade to Zig 0.17, once 0.17.1 is out** (the user, 2026-10-03). 0.17.0 has known regressions,
    one in `Run` steps, which the build uses heavily. 0.17 also replaces the build runner, which the
    Windows stall happens under, so upgrade before investigating the stall. Scope counted on

@@ -1649,6 +1649,8 @@ unchanged; `sort!()` changes the receiver and returns `Nothing`. Sorting is stab
 items keep their input order. Optional elements are rejected, and encountering `NaN` raises
 because it has no order. `sort_by { item => key }` computes one present ordered key per item,
 left to right, and returns a new stable ordering of the original items; a `NaN` key raises.
+All three take O(n log n) comparisons (a merge of insertion-sorted runs), and a comparison
+that raises partway leaves every item in the List, in some order.
 
 `unique_by { item => key }` computes one dictionary-eligible key per List item and keeps the
 first item for each key in input order. `associate { item => (key, value) }` builds a
