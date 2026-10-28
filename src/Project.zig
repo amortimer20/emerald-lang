@@ -123,7 +123,7 @@ pub fn loadIn(
 
     var entry_index: u32 = 0;
     for (loader.files.items, 0..) |file, index| {
-        if (std.mem.eql(u8, file.source.path, path)) entry_index = @intCast(index);
+        if (samePath(file.source.path, path)) entry_index = @intCast(index);
     }
     loader.files.items[entry_index].entry = true;
 
@@ -240,6 +240,20 @@ fn holdsEntryFile(io: std.Io, base: std.Io.Dir, directory: []const u8) bool {
         entry_file_name,
     }) catch return false;
     base.access(io, candidate, .{}) catch return false;
+    return true;
+}
+
+/// Whether two paths name the same file, where one may use `/` and the other
+/// the platform's own separator, as a path from an editor's URI and a joined
+/// one do on Windows.
+pub fn samePath(left: []const u8, right: []const u8) bool {
+    if (left.len != right.len) return false;
+    for (left, right) |a, b| {
+        const a_separator = a == '/' or a == '\\';
+        const b_separator = b == '/' or b == '\\';
+        if (a_separator != b_separator) return false;
+        if (!a_separator and a != b) return false;
+    }
     return true;
 }
 
@@ -526,4 +540,12 @@ test "a lone file outside the working directory is not placed in its project" {
 
     const outside = try enclosingProject(testing.allocator, testing.io, here, "../elsewhere/plants");
     try testing.expectEqual(@as(?[]const u8, null), outside);
+}
+
+test "samePath ignores which separator each path uses, and nothing else" {
+    try testing.expect(samePath("C:/work/game/main.em", "C:/work/game\\main.em"));
+    try testing.expect(samePath("a\\b/c.em", "a/b\\c.em"));
+    try testing.expect(!samePath("a/b/c.em", "a/b/d.em"));
+    try testing.expect(!samePath("a/b.em", "a/bb.em"));
+    try testing.expect(!samePath("a/b.em", "ab/.em"));
 }

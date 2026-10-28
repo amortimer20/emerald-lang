@@ -307,7 +307,7 @@ fn loadProjectFor(server: *Server, gpa: std.mem.Allocator, uri: []const u8, text
         } else |_| {}
     }
     for (project.files, 0..) |*file, index| {
-        if (!samePath(file.source.path, path)) continue;
+        if (!Project.samePath(file.source.path, path)) continue;
         const replaced = try Source.init(gpa, path, text);
         file.source.deinit(gpa);
         file.source = replaced;
@@ -315,19 +315,6 @@ fn loadProjectFor(server: *Server, gpa: std.mem.Allocator, uri: []const u8, text
     }
     project.deinit(gpa);
     return null;
-}
-
-/// Whether two paths name the same file, where one may use `/` and the other
-/// the platform's own separator, as a Windows URI and a joined path do.
-fn samePath(left: []const u8, right: []const u8) bool {
-    if (left.len != right.len) return false;
-    for (left, right) |a, b| {
-        const a_separator = a == '/' or a == '\\';
-        const b_separator = b == '/' or b == '\\';
-        if (a_separator != b_separator) return false;
-        if (!a_separator and a != b) return false;
-    }
-    return true;
 }
 
 /// A `file://` URI to a plain, percent-decoded filesystem path. Null for any
@@ -951,7 +938,11 @@ test "a file in a project's subfolder is checked with its whole project" {
     for (report.diagnostics) |diagnostic| {
         std.debug.print("unexpected diagnostic in {s}: {s}\n", .{ loaded.project.files[diagnostic.file].source.path, diagnostic.message });
     }
-    for (loaded.project.files) |file| std.debug.print("loaded {s} (namespace `{s}`, entry {})\n", .{ file.source.path, file.namespace, file.entry });
+    // The project's own `main.em` is its entry, whichever separator the
+    // editor's path and the joined one use (as they differ on Windows).
+    for (loaded.project.files) |file| {
+        try testing.expectEqual(std.mem.endsWith(u8, file.source.path, "main.em"), file.entry);
+    }
     try testing.expectEqual(@as(usize, 0), report.diagnostics.len);
 }
 
