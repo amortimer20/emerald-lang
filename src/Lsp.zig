@@ -1550,6 +1550,9 @@ fn definitionAt(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, file:
                     } else if (chainSegmentTarget(analysis, file, member.base, offset)) |target| return target;
                 }
             }
+            for (expr.data.call.names) |written| if (written) |name| {
+                if (offset >= name.span.start and offset <= name.span.end) return try labelTarget(gpa, analysis, file, expr.data.call, name.text);
+            };
         }
     }
 
@@ -2786,6 +2789,11 @@ fn collectReferencesInExpression(
         .comparison => |c| for (c.operands) |operand| try collectReferencesInExpression(gpa, analysis, target, file, operand, out),
         .call => |call| {
             try collectReferencesInExpression(gpa, analysis, target, file, call.callee, out);
+            for (call.names) |written| if (written) |name| {
+                if (try labelTarget(gpa, analysis, file, call, name.text)) |found| {
+                    if (targetEql(found, target)) try out.append(gpa, .{ .file = file, .span = name.span });
+                }
+            };
             for (call.arguments) |arg| try collectReferencesInExpression(gpa, analysis, target, file, arg, out);
         },
         .range => |r| {
@@ -2860,7 +2868,7 @@ fn onPrepareRename(server: *Server, gpa: std.mem.Allocator, uri: []const u8, pos
         try respond(gpa, out, id, null);
         return;
     }
-    if (isAnnotatedOperatorAt(&analysis, loaded.index, offset) or isChoiceDataItem(analysis.parsed, target)) {
+    if (isAnnotatedOperatorAt(&analysis, loaded.index, offset)) {
         try respond(gpa, out, id, null);
         return;
     }
@@ -2919,10 +2927,6 @@ fn onRename(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: 
     // rename cannot edit the declaration or present a complete edit set.
     if (target.file >= loaded.project.files.len) {
         try respondError(gpa, out, id, invalid_params_code, "a built-in name cannot be renamed");
-        return;
-    }
-    if (isChoiceDataItem(analysis.parsed, target)) {
-        try respondError(gpa, out, id, invalid_params_code, "an enum choice's data label cannot be renamed yet, since calls that name it are not tracked");
         return;
     }
     if (isAnnotatedOperatorAt(&analysis, loaded.index, offset)) {
@@ -3600,9 +3604,7 @@ const ChoiceSite = struct {
     item: ?Ast.Parameter = null,
 };
 
-/// The enum choice, or choice data item, whose name `target` is. Rename uses
-/// the item case: calls name these labels (`finished(path: ...)`), and those
-/// uses are not tracked, so a rename would change the declaration alone.
+/// The enum choice, or choice data item, whose name `target` is.
 fn findChoiceSite(parsed: []const Parser.Parsed, target: Resolver.Target) ?ChoiceSite {
     if (target.file >= parsed.len) return null;
     for (parsed[target.file].program.statements) |statement| switch (statement.data) {
@@ -3624,9 +3626,31 @@ fn choiceSiteWithin(declaration: Ast.StructDeclaration, start: u32) ?ChoiceSite 
     return null;
 }
 
-fn isChoiceDataItem(parsed: []const Parser.Parsed, target: Resolver.Target) bool {
-    const found = findChoiceSite(parsed, target) orelse return false;
-    return found.item != null;
+/// Section 7.3's named argument: the label in `Point(x: 1)` names a field,
+/// or a custom constructor's parameter; in `Download.finished(path: p)`, a
+/// choice's data item; and in `area(width: 2)`, a parameter. The resolver
+/// records none of them, so each is matched by name in what the call reaches.
+fn labelTarget(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, file: u32, call: Ast.Expression.Call, label: []const u8) !?Resolver.Target {
+    const callee = (if (call.callee.data == .member)
+        try memberDefinition(gpa, analysis, file, call.callee) orelse chainTypeTarget(analysis, file, call.callee)
+    else
+        analysis.resolved.facts.expression_targets.get(call.callee)) orelse return null;
+    if (findStructDeclarationAt(analysis, callee)) |declaration| {
+        if (declaration.constructor) |constructor| return parameterNamed(callee.file, constructor.parameters, label);
+        for (declaration.fields) |field| if (std.mem.eql(u8, field.name, label)) return .{ .file = callee.file, .span = field.name_span };
+        return null;
+    }
+    if (findChoiceSite(analysis.parsed, callee)) |site| {
+        if (site.item == null) if (site.choice.data) |data| return parameterNamed(callee.file, data, label);
+        return null;
+    }
+    if (findFunctionDeclaration(analysis.parsed, callee)) |function| return parameterNamed(callee.file, function.parameters, label);
+    return null;
+}
+
+fn parameterNamed(file: u32, parameters: []const Ast.Parameter, name: []const u8) ?Resolver.Target {
+    for (parameters) |parameter| if (std.mem.eql(u8, parameter.name, name)) return .{ .file = file, .span = parameter.name_span };
+    return null;
 }
 
 fn renderedType(gpa: std.mem.Allocator, value: Type) ![]const u8 {
@@ -5230,6 +5254,54 @@ test "references to a choice reach its construction and its match, and to a type
     try collectReferencesInStatements(gpa, &analysis, place, 0, analysis.parsed[0].program.statements, &sites);
     try testing.expectEqual(@as(usize, 2), sites.items.len);
     try testing.expectEqual(in_data, sites.items[0].span.start);
+}
+
+test "a named argument's label is a reference to the field, data item, or parameter it names" {
+    const gpa = testing.allocator;
+    const text =
+        "struct Point {\n" ++
+        "    var x: Int\n" ++
+        "}\n" ++
+        "enum Download {\n" ++
+        "    waiting\n" ++
+        "    finished(path: String)\n" ++
+        "}\n" ++
+        "func area(width: Int): Int {\n" ++
+        "    return width\n" ++
+        "}\n" ++
+        "const p = Point(x: 1)\n" ++
+        "const d = Download.finished(path: \"a\")\n" ++
+        "print(p, d, area(width: 2))\n";
+    var source = try Source.init(gpa, "t.em", text);
+    defer source.deinit(gpa);
+    var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+
+    var analysis = (try emerald.analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+
+    const cases = [_]struct { declared: []const u8, label: []const u8 }{
+        .{ .declared = "x: Int", .label = "x: 1" },
+        .{ .declared = "path: String", .label = "path: \"a\"" },
+        .{ .declared = "width: Int", .label = "width: 2" },
+    };
+    var sites: std.ArrayList(Resolver.Target) = .empty;
+    defer sites.deinit(gpa);
+    for (cases) |case| {
+        const declared: u32 = @intCast(std.mem.indexOf(u8, text, case.declared).?);
+        const label: u32 = @intCast(std.mem.indexOf(u8, text, case.label).?);
+        const target = (try definitionAt(gpa, &analysis, 0, declared)).?;
+        try testing.expectEqual(declared, target.span.start);
+        // Definition from the label reaches the same declaration.
+        try testing.expect(targetEql(target, (try definitionAt(gpa, &analysis, 0, label)).?));
+        sites.clearRetainingCapacity();
+        try collectReferencesInStatements(gpa, &analysis, target, 0, analysis.parsed[0].program.statements, &sites);
+        var found = false;
+        for (sites.items) |site| if (site.span.start == label) {
+            found = true;
+        };
+        try testing.expect(found);
+    }
 }
 
 test "collectReferencesInStatements finds named and operator uses of an annotated method" {

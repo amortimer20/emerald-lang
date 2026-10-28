@@ -229,10 +229,9 @@ rewrite-context 6.3 and 12 record the behavior. The website's Enums, Case, JSON,
 pages now teach it (emerald-website `882a878`), and the 0.8.0 release notes draft lists it and the
 `Set` fix.
 
-**Known editor gap (predates the enum plan):** named labels at call sites are not
-tracked, so renaming a struct field leaves `Point(x: 1)` unchanged and breaks it.
-Renaming an enum choice's data label is refused for the same reason. A fix tracks
-labels in the references walk for both.
+Named labels at call sites are references (`claude/rename-labels`): renaming a struct field,
+a choice's data item, or a parameter also renames `Point(x: 1)`, `Download.finished(path: p)`,
+and `area(width: 2)`, and definition and find references work from the label.
 
 The bug-fix batch is merged (items 1-19, 2026-10-01; items 14 and 19 did not reproduce, and
 the others have a validated commit each, with reproductions in the journal). Concurrency is
