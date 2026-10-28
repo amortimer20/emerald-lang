@@ -4571,7 +4571,11 @@ for working Emerald programs, implementation measurements, or a dedicated design
   raw-mode input and a redraw loop Emerald does not have, and the other three need native
   platform bindings (rendering, audio devices) with no extension mechanism to plug them in,
   and would ship with Emerald rather than separately, since there is no package manager
-  (14.4). Revisit any of these only once that infrastructure exists, or a concrete
+  (14.4). Built-in libraries are the one channel for native code, as Odin's `vendor:`
+  collection is: copied libraries stay pure Emerald. The direction (the user, 2026-10-28) is
+  curated, Emerald-shaped `Graphics`, `Game`, and `Audio` built on raylib rather than thin C
+  bindings, with its own design plan (handoff, roadmap item 11) decided before the compiler.
+  Revisit any of these only once that infrastructure exists, or a concrete
   beginner program makes an earlier case;
 - multicore execution and wider concurrency APIs beyond the structured tasks of 15.13.
 

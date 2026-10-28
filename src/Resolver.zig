@@ -522,7 +522,7 @@ pub fn resolve(
 
     for (files, programs, 0..) |file, program, index| {
         resolver.file = @intCast(index);
-        if (!file.entry) try resolver.checkModuleFile(program.statements);
+        if (!file.entry) try resolver.checkModuleFile(program.statements, file.source.path);
         try resolver.walkStatements(program.statements);
     }
     try resolver.judgeNestedUses();
@@ -1213,7 +1213,10 @@ fn joinPath(self: *Resolver, path: []const []const u8) Error![]const u8 {
 /// Section 14.1: outside the entry file a top level holds declarations and
 /// nothing else, so loading a project never runs arbitrary code and no file's
 /// position in the walk can change what a program does.
-fn checkModuleFile(self: *Resolver, statements: []const Ast.Statement) Error!void {
+fn checkModuleFile(self: *Resolver, statements: []const Ast.Statement, path: []const u8) Error!void {
+    // A `main.em` below the top is most often a copied library's own demo
+    // (14.4), and "move this into `main.em`" would name the file it is in.
+    const nested_main = std.mem.eql(u8, std.fs.path.basename(path), "main.em");
     for (statements) |statement| switch (statement.data) {
         .function_declaration, .struct_declaration => {},
         .destructuring => {},
@@ -1234,7 +1237,11 @@ fn checkModuleFile(self: *Resolver, statements: []const Ast.Statement) Error!voi
             statement.span,
             "this would never run",
             .{},
-            try std.fmt.allocPrint(
+            if (nested_main) try std.fmt.allocPrint(
+                self.arena,
+                "Only the project's own `{s}` runs its top level, so `{s}` never does. A library keeps its demo in the project around it; move this there, or into a function declared in this file.",
+                .{ self.entry_path, path },
+            ) else try std.fmt.allocPrint(
                 self.arena,
                 "Only the entry file runs its top level. Move this into `{s}`, or into a function declared in this file.",
                 .{self.entry_path},

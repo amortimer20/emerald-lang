@@ -177,3 +177,37 @@ file's declarations without ever starting the program those statements describe,
 observing whatever a test deliberately triggers. See [Errors and tests](../library/errors.md)
 for `@test`'s own rules (no parameters, no result, deterministic order, exit `3` on failure)
 and every `raise`/`catch`/`finally` mechanic this guide doesn't repeat.
+
+## Sharing code
+
+Emerald has no package manager (rewrite-context 14.4). A library is a directory, and you use
+one by copying it to the top of your project, beside `main.em`. Since every directory is a
+namespace, `geometry/` becomes `Geometry` with nothing to configure:
+
+```text
+my_game/
+  main.em          → Geometry.area(...), or `using Geometry`
+  geometry/        → copied in, unchanged
+    measure.em
+    shapes/
+      circle.em    → Geometry.Shapes.Circle
+```
+
+The version you have is the one you copied, and updating it means copying it again.
+
+A library meant for copying follows three rules, each forced by namespace paths starting at
+the project's top:
+
+- **It refers to itself by its own name.** Inside `geometry/`, a file writes
+  `Geometry.Shapes.Circle`, not `Shapes.Circle`, so the paths still hold once the folder is
+  copied to the top of another project.
+- **It has no top-level code.** Only the project's own `main.em` runs, so a `main.em` inside the
+  library is an error that says so.
+- **Its own repository is a project that contains it.** Run from inside `geometry/`, the
+  library would be the top and `Geometry` would not exist, so the repository holds `geometry/`
+  beside a `main.em` that demonstrates it.
+
+[`examples/library/`](../../examples/library/) is a library laid out this way, and
+[`conformance/run/copied-library`](../../conformance/run/copied-library) is the same folder
+copied into another project, unchanged. Libraries that need native code, such as graphics,
+ship with Emerald itself rather than being copied in.

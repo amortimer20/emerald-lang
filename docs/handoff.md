@@ -370,9 +370,12 @@ compiler), or the compiler depends on it.
    named for its namespace, copied into a project's root. Settled and checked against today's
    build: a library refers to itself by its own name (`Geometry.Shapes.Square`), has no top-level
    code (a `main.em` inside it is "this would never run"), and lives in a repository that is a
-   project containing it. Left to do: a guide page on using someone else's library and writing
-   one, and an example library laid out that way. That error's help says "Move this into
-   `main.em`" even when the file is a library's `main.em`; it could say why instead.
+   project containing it. **Done on `claude/sharing-code`:** `examples/library/` is a library laid
+   out that way (`geometry/` beside its demo `main.em` and a README on copying it), conformance
+   proves a copy works in another project (`run/copied-library/`), the guide's "Sharing code"
+   section teaches using and writing one, and a nested `main.em`'s "this would never run" now
+   explains that only the project's own `main.em` runs. The website's Sharing Code page follows
+   the merge.
 6. **A browser playground**: a WebAssembly build of today's interpreter, so students on school
    machines and Chromebooks can try Emerald without installing anything. Zig targets WebAssembly
    directly.
@@ -405,9 +408,23 @@ compiler), or the compiler depends on it.
    dedupes, ranks, and re-runs each reproduction; then fix batches with one commit per item, as the
    19-item batch was run. Skip style nits, the generated Unicode and time-zone tables, interpreter
    performance work, and rewriting working code.
+11. **The platform library family: shape and engine** (the user, 2026-10-28), a design plan
+   decided before the compiler work, after Odin's `vendor:` collection (raylib, SDL). Built-in
+   libraries are the one channel for native code: they ship inside Emerald and its release, while
+   copied-in libraries (item 5) stay pure Emerald. The recommendation the user accepted: curated,
+   Emerald-shaped `Graphics`, `Game`, and `Audio` (15.6's parked family) built on raylib (no
+   dependencies, Zig builds it, windows, 2D, 3D, audio, and input in one), not thin C bindings,
+   which would put C names, null returns, and C-shaped errors in student code against principles
+   1 and 8. SDL is heavier and lower-level, so not the engine. The plan settles: interpreter or
+   compiler first (games need a fast loop; item 7's benchmarks and a prototype frame rate decide,
+   and item 12's backend, Godot among the candidates, may bring its own graphics); platforms
+   (raylib needs X11 or Wayland libraries on Linux, the playground of item 6 needs its WebAssembly
+   build, and the binary grows for everyone); and the API, which 1.0's compatibility promise
+   covers. Default: build it after item 12 chooses the backend, unless an interpreter prototype
+   shows beginner games run well enough.
 
 Suggested order: 3 first (it needs the user's decisions) while 8 and 9 proceed; then 4 (the audit,
-then the slices, networking last), 5, 6, and 7; 10 last.
+then the slices, networking last), 5, 6, and 7; 11's plan before the compiler; 10 last.
 
 ### The compiler
 
