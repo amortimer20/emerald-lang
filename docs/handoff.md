@@ -352,16 +352,16 @@ compiler), or the compiler depends on it.
    lists, appending a list, two-value max and min, a random fraction, environment variables,
    standard error, clearing the terminal), the rest later or out. The user accepted it as listed,
    and [`stdlib-additions-design-plan.md`](stdlib-additions-design-plan.md) settles the twelve's
-   names and edge cases, in three slices (text, lists and numbers, the program's surroundings);
-   the user accepted it, and slice 1 (text: `join`, `words`, the character tests,
-   `to_character`) is built on `claude/stdlib-text`. Its website pages are drafted in the
-   emerald-website working tree, to commit after the PR merges. Slice 2 (lists and numbers:
+   names and edge cases, in three slices. **All three are merged** (2026-10-28): text (PR #49:
+   `join`, `words`, the character tests, `to_character`), lists and numbers (PR #50:
    `List.index_of`, `List.repeat`, `List.append_all`, `Math.max`/`Math.min`, `random_fraction`,
-   `Random.next_fraction`) is on `claude/stdlib-lists`, and slice 3 (`Program.environment`,
-   `print_error`, `Console.clear`) on `claude/stdlib-program`, stacked on slice 2. Their website
-   pages are not written yet. Then a design plan, and
-   slices as for the earlier libraries. Networking (sockets; an HTTP server is a candidate slice) is
-   one of the gaps and goes last; tasks already give each connection its own task. **A web
+   `Random.next_fraction`), and the program's surroundings (PR #51: `Program.environment`,
+   `print_error`, `Console.clear`). Slices 2 and 3 were built by subagents in parallel worktrees
+   and reviewed before their PRs. The website teaches all twelve (emerald-website `58c3df3`,
+   `460b88d`), and the 0.8.0 notes list them. Item 4's "in" set is complete; the audit's "later"
+   rows wait for a program to ask, and networking (sockets, a small HTTP server) is "later" too.
+   Known, not fixed: `String.repeat` and `List.repeat` with a huge count try to allocate rather
+   than failing fast. **A web
    framework is not planned** (the user, 2026-10-11: "my plans have changed"): no routing,
    templates, static-file serving, or HTML escaping beyond what the audit finds a program needs.
    It sits before the compiler because a library added afterwards has to work on both backends.

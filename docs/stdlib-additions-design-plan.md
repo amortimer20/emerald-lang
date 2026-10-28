@@ -1,9 +1,10 @@
 # Standard-library additions: design plan
 
-Status: accepted by the user, 2026-10-28 ("Accept, build slice 1"). Slice 1 (text) is built on
-`claude/stdlib-text`, slice 2 (lists and numbers) on `claude/stdlib-lists`, and slice 3 (the
-program's surroundings) on `claude/stdlib-program`, stacked on slice 2. It covers the twelve gaps the user accepted
-as "in" from [`stdlib-audit.md`](stdlib-audit.md) the same day. Nothing here is built.
+Status: accepted by the user, 2026-10-28, and **built and merged**: slice 1 (text) in PR #49,
+slice 2 (lists and numbers) in PR #50, and slice 3 (the program's surroundings) in PR #51. It
+covers the twelve gaps the user accepted as "in" from [`stdlib-audit.md`](stdlib-audit.md) the
+same day. Each section's "Settled while building" notes record where the result differs from
+the proposal.
 
 Each addition is small, and each closes something a first-course program hits in its first weeks.
 The plan settles names, shapes, and edge cases, so the slices can be built without reopening them.

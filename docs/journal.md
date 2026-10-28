@@ -6090,3 +6090,14 @@ output's policy, `print_error` can only take styling out (standard output styled
 error redirected), not add it. `Console.clear()` clears only when standard output is a
 terminal (and `TERM` is not `dumb`), turning on Windows' virtual-terminal mode the first time.
 The plan's "Settled while building" section records these choices.
+
+## 2026-10-28: The library additions are merged
+
+PRs #49, #50, and #51 merged the twelve additions in order. Slices 2 and 3 were built by two
+subagents at once, each in its own worktree branched from slice 1, then reviewed, stacked (slice
+3 merged slice 2 in, resolving the shared prelude list and docs once), and gated in both modes.
+Review fixed one hint (`random_fraction` used as a value now suggests `{ => random_fraction() }`),
+and CI found that `Console.clear`'s unit test cannot clear on Windows, where clearing first asks
+the process's real console for virtual-terminal mode. Merging #49 with branch deletion closed
+#50, which was based on it; restoring the branch, reopening, and retargeting fixed it, and #50
+was merged without deleting its branch until #51 was retargeted.

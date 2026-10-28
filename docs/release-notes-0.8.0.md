@@ -88,6 +88,15 @@ Every use then warns, with your message as the correction, and Visual Studio Cod
 
 - `compare`, `equals`, and `hash` on `Int`, `Float`, and `String`, and `equals` and `hash` on `Bool`. They give exactly what `<`, `==`, and a dictionary already give, as methods, so a generic function can call them. `compare` answers `-1`, `0`, or `1`, and on a `Float` it raises for NaN, as `hash` does.
 
+## New in the library
+
+Twelve small additions a first program reaches for:
+
+- **Text:** `["Ada", "Grace"].join(", ")` on a list of strings; `text.words()`, which splits on spaces without empty pieces; `letter?()`, `digit?()`, `whitespace?()`, `upper?()`, and `lower?()` on a string; and `97.to_character()`, which turns a code point back into a character, so a Caesar cipher can be finished.
+- **Lists:** `index_of(item)`, `repeat(times)` (`[["."].repeat(3)].repeat(3)` is a safe grid, since lists are values), and `append_all(items)`.
+- **Numbers:** `Math.max(a, b)` and `Math.min(a, b)` for any two values with an order, and `random_fraction()` (and `Random.next_fraction()`) for a number from `0.0` up to `1.0`.
+- **The program's surroundings:** `Program.environment("API_KEY")` reads an environment variable, `print_error(...)` writes to standard error, and `Console.clear()` clears the terminal (and does nothing when output is redirected).
+
 ## Fixes and care
 
 - A set of a type declared later in the file, holding a list, was wrongly accepted. It is refused, as it always should have been.
@@ -99,3 +108,4 @@ Every use then warns, with your message as the correction, and Visual Studio Cod
 - Brackets after a type, function, or method name are now real syntax rather than an error. No program that ran on 0.7.0 used them.
 - A method of your own named `compare`, `equals`, or `hash` keeps its name and wins over the new built-in ones, as before.
 - A set of a later-declared type that holds a list is now an error (see above).
+- A function of your own named `print_error` or `random_fraction` still works and wins over the new built-in, but now gets a warning saying it hides one. Rename it, or write `Emerald.print_error` to reach the built-in.
