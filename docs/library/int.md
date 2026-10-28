@@ -93,6 +93,15 @@ Widens the receiver to the equal `Float` value. This is the explicit spelling of
 conversion Emerald performs implicitly wherever a `Float` is expected (4.4); reach for it
 only when no such context already forces the widening.
 
+## to_character() -> String
+
+The one-character `String` whose code point the receiver is, the inverse of
+`String.code_points()`: `97.to_character()` is `"a"`, and
+`codes.map { code => code.to_character() }.join()` turns a list of code points back into text.
+
+**Raises** for a number that is no character's code point: a negative one, one past
+`1114111`, or a surrogate from `55296` to `57343`.
+
 ## Counting forms
 
 These are 6.4's loop-header forms, also callable directly.

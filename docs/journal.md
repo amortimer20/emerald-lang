@@ -6055,3 +6055,14 @@ repository is a project that contains it (run from inside, the library is the ro
 name does not exist). Rewrite-context 14.4 records the rules, 22 the decision, and the
 mentions of a future package manager in 15.7, 18, and 21 now say the language's own libraries
 ship with Emerald.
+
+## 2026-10-28: Library additions, slice 1: text
+
+The user accepted the standard-library audit and its design plan. Slice 1 adds `join` on
+`List[String]`, `words()`, the five character tests (`letter?`, `digit?`, `whitespace?`,
+`upper?`, `lower?`), and `Int.to_character()`. The character tests needed Unicode's
+`Alphabetic`, `Uppercase`, and `Lowercase`, so `tools/unicode/generate.zig` gained three tables
+and `src/unicode/tables.zig` was regenerated from the same 17.0.0 download; before the change
+the generator reproduced the committed tables byte for byte. `to_character`'s error speaks
+decimal (1114111, 55296 to 57343), because Emerald has no hexadecimal literals. Familiar names
+from other languages (`isalpha`, `is_digit`, `chr`, and their kin) now point to the new ones.

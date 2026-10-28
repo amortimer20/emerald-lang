@@ -1,0 +1,12 @@
+diagnostics/familiar-character-names.em:3:11: String has no method `isalpha`
+  print("a".isalpha())
+            ^^^^^^^
+Emerald calls this `letter?`.
+diagnostics/familiar-character-names.em:4:11: String has no method `is_digit`
+  print("7".is_digit())
+            ^^^^^^^^
+Emerald calls this `digit?`.
+diagnostics/familiar-character-names.em:5:10: Int has no method `chr`
+  print(65.chr())
+           ^^^
+Emerald calls this `to_character`.

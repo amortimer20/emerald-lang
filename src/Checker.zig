@@ -126,6 +126,7 @@ pub const Checked = struct {
         if (receiver.kind != .list) return true;
         const element = receiver.element.?.*;
         if (std.mem.eql(u8, name, "sum") or std.mem.eql(u8, name, "average")) return numericListElement(element);
+        if (std.mem.eql(u8, name, "join")) return element.kind == .string and !element.optional;
         const equatable_type = if (self.structs.get(Resolver.preludeKey("Equatable"))) |t| t.user else null;
         const hashable = if (self.structs.get(Resolver.preludeKey("Hashable"))) |t| t.user else null;
         if (std.mem.eql(u8, name, "frequencies") or std.mem.eql(u8, name, "to_set")) return element.eligibleKey(equatable_type, hashable);
@@ -8489,6 +8490,33 @@ fn typeOfMethodCall(
         return .invalid;
     }
 
+    // `join` is only for text: other elements would quietly depend on how a
+    // value happens to display, and one `map` makes that choice visible.
+    if (std.mem.eql(u8, member.name, "join")) {
+        if (!try self.requireArity(member, call.arguments, 0, 1)) {
+            try self.typeArguments(call.arguments);
+            return .invalid;
+        }
+        for (call.arguments) |argument| {
+            const actual = try self.typeOfExpected(argument, .string);
+            if (actual.assignableTo(.string)) continue;
+            try self.report(
+                argument.span,
+                "this is {f}, but `join` needs a String to put between the items",
+                .{actual},
+                "Pass the separator as text, as in `join(\", \")`, or nothing to join them directly.",
+            );
+        }
+        if (element.kind == .string and !element.optional) return .string;
+        try self.report(
+            member.name_span,
+            "`join` needs a List of Strings, but this is {f}",
+            .{base},
+            "Turn each item into text first, as in `items.map { item => \"#{item}\" }.join(\", \")`.",
+        );
+        return .invalid;
+    }
+
     // `average` stays numeric too, but it deliberately returns Float: a
     // whole-number average such as `[1, 2].average()` must not silently lose
     // its fractional part. Its one missing answer is the average of no items.
@@ -10112,6 +10140,8 @@ fn familiarIntName(name: []const u8) ?[]const u8 {
         .{ "is_odd", "odd?" },
         .{ "is_multiple_of", "multiple_of?" },
         .{ "to_f", "to_float" },
+        .{ "chr", "to_character" },
+        .{ "to_char", "to_character" },
         .{ "compare_to", "compare" },
         .{ "compareTo", "compare" },
         .{ "hash_code", "hash" },
@@ -10200,6 +10230,16 @@ fn familiarStringName(name: []const u8) ?[]const u8 {
         .{ "lowercase", "lower" },
         .{ "to_lower", "lower" },
         .{ "strip", "trim" },
+        .{ "isalpha", "letter?" },
+        .{ "is_letter", "letter?" },
+        .{ "isdigit", "digit?" },
+        .{ "is_digit", "digit?" },
+        .{ "isspace", "whitespace?" },
+        .{ "is_whitespace", "whitespace?" },
+        .{ "isupper", "upper?" },
+        .{ "is_upper", "upper?" },
+        .{ "islower", "lower?" },
+        .{ "is_lower", "lower?" },
         .{ "includes", "contains?" },
         .{ "contains", "contains?" },
         .{ "starts_with", "starts_with?" },

@@ -353,7 +353,9 @@ compiler), or the compiler depends on it.
    standard error, clearing the terminal), the rest later or out. The user accepted it as listed,
    and [`stdlib-additions-design-plan.md`](stdlib-additions-design-plan.md) settles the twelve's
    names and edge cases, in three slices (text, lists and numbers, the program's surroundings);
-   it waits for the user's go-ahead. Then a design plan, and
+   the user accepted it, and slice 1 (text: `join`, `words`, the character tests,
+   `to_character`) is built on `claude/stdlib-text`. Its website pages are drafted in the
+   emerald-website working tree, to commit after the PR merges. Slices 2 and 3 wait. Then a design plan, and
    slices as for the earlier libraries. Networking (sockets; an HTTP server is a candidate slice) is
    one of the gaps and goes last; tasks already give each connection its own task. **A web
    framework is not planned** (the user, 2026-10-11: "my plans have changed"): no routing,

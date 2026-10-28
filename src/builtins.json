@@ -624,6 +624,20 @@
   },
   {
    "owner": "Int",
+   "name": "to_character",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "String",
+     "summary": "The character this number is the code point of, as a one-character String.",
+     "raises": true,
+     "page": "builtins/types/int/#to_character"
+    }
+   ]
+  },
+  {
+   "owner": "Int",
    "name": "compare",
    "kind": "method",
    "signatures": [
@@ -1088,6 +1102,71 @@
   },
   {
    "owner": "String",
+   "name": "letter?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Bool",
+     "summary": "Whether the text is not empty and every character is a letter, in any language.",
+     "page": "builtins/types/string/#letter"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "digit?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Bool",
+     "summary": "Whether the text is not empty and every character is a digit from 0 to 9.",
+     "page": "builtins/types/string/#digit"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "whitespace?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Bool",
+     "summary": "Whether the text is not empty and every character is a space, tab, or line break.",
+     "page": "builtins/types/string/#whitespace"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "upper?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Bool",
+     "summary": "Whether the text has a letter and every letter is uppercase.",
+     "page": "builtins/types/string/#upper-1"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "lower?",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Bool",
+     "summary": "Whether the text has a letter and every letter is lowercase.",
+     "page": "builtins/types/string/#lower-1"
+    }
+   ]
+  },
+  {
+   "owner": "String",
    "name": "chars",
    "kind": "method",
    "signatures": [
@@ -1339,6 +1418,19 @@
      "result": "List[String]",
      "summary": "Each line, without its line break.",
      "page": "builtins/types/string/#lines"
+    }
+   ]
+  },
+  {
+   "owner": "String",
+   "name": "words",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "List[String]",
+     "summary": "Each word: the text between spaces, tabs, and line breaks, with none of them empty.",
+     "page": "builtins/types/string/#words"
     }
    ]
   },
@@ -2342,6 +2434,25 @@
      "summary": "All the items added up.",
      "raises": true,
      "page": "builtins/types/list/#sum"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "join",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "separator",
+       "type": "String",
+       "default": "\"\""
+      }
+     ],
+     "result": "String",
+     "summary": "The Strings run together, with the separator between each pair.",
+     "page": "builtins/types/list/#join"
     }
    ]
   },

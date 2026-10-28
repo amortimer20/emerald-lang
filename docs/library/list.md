@@ -228,6 +228,15 @@ Uses the same runtime-managed generator as the prelude's `random`/[`Random`](ran
 `random()` is `nothing` for an empty `List`, never a raise — see [`Random`](random.md)'s
 `choose` for the seeded equivalent.
 
+## Joining text
+
+## join(separator: String = "") -> String
+
+Only for `List[String]`: the items run together, with `separator` between each pair.
+`["a", "b"].join(", ")` is `"a, b"`, `["a", "b"].join()` is `"ab"`, and an empty `List`
+joins to `""`. Any other element type, `List[String?]` included, is a checker error whose
+correction maps the items to text first: `items.map { item => "#{item}" }.join(", ")`.
+
 ## Numeric aggregation
 
 ## sum() -> T

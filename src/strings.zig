@@ -260,7 +260,7 @@ pub fn lines(gpa: Allocator, bytes: []const u8) Allocator.Error![][]u8 {
     while (rest.len > 0) {
         const end = std.mem.indexOfScalar(u8, rest, '\n') orelse rest.len;
         const line = std.mem.trimEnd(u8, rest[0..end], "\r");
-        try pieces.append(gpa, try gpa.dupe(u8, line));
+        try appendCopy(gpa, &pieces, line);
         rest = if (end < rest.len) rest[end + 1 ..] else rest[rest.len..];
     }
     return pieces.toOwnedSlice(gpa);
@@ -316,6 +316,67 @@ pub fn isBlank(bytes: []const u8) bool {
         index += length;
     }
     return true;
+}
+
+/// Section 9.2's character tests. Each is false for an empty string and
+/// otherwise asks about every character, which passes when its first code
+/// point does, so `e` with a combining accent is still a letter.
+pub const CharacterTest = enum { letter, digit, whitespace, upper, lower };
+
+pub fn everyCharacter(bytes: []const u8, test_kind: CharacterTest) bool {
+    var clusters: unicode.Graphemes = .init(bytes);
+    var any = false;
+    // `upper?` and `lower?` ignore what has no case, but need one cased letter.
+    var cased = false;
+    while (clusters.next()) |cluster| {
+        any = true;
+        const code_point, _ = unicode.decode(cluster, 0);
+        switch (test_kind) {
+            .letter => if (!unicode.isAlphabetic(code_point)) return false,
+            // Only the digits `to_int` reads, so the two never disagree.
+            .digit => if (code_point < '0' or code_point > '9') return false,
+            .whitespace => if (!unicode.isWhiteSpace(code_point)) return false,
+            .upper, .lower => if (unicode.isCased(code_point)) {
+                cased = true;
+                const fits = if (test_kind == .upper) unicode.isUppercase(code_point) else unicode.isLowercase(code_point);
+                if (!fits) return false;
+            },
+        }
+    }
+    return switch (test_kind) {
+        .upper, .lower => cased,
+        else => any,
+    };
+}
+
+/// Section 9.2's `words()`: the text between runs of whitespace, with no empty
+/// pieces, so leading, trailing, and doubled spaces add nothing. It moves in
+/// whole characters, so a space never parts from an accent that follows it.
+pub fn words(gpa: Allocator, bytes: []const u8) Allocator.Error![][]u8 {
+    var pieces: std.ArrayList([]u8) = .empty;
+    errdefer {
+        for (pieces.items) |piece| gpa.free(piece);
+        pieces.deinit(gpa);
+    }
+    var start: ?usize = null;
+    var index: usize = 0;
+    var clusters: unicode.Graphemes = .init(bytes);
+    while (clusters.next()) |cluster| {
+        const code_point, _ = unicode.decode(cluster, 0);
+        if (unicode.isWhiteSpace(code_point)) {
+            if (start) |begin| try appendCopy(gpa, &pieces, bytes[begin..index]);
+            start = null;
+        } else if (start == null) start = index;
+        index += cluster.len;
+    }
+    if (start) |begin| try appendCopy(gpa, &pieces, bytes[begin..]);
+    return pieces.toOwnedSlice(gpa);
+}
+
+/// Appends a copy, freeing it if the list cannot grow to hold it.
+fn appendCopy(gpa: Allocator, pieces: *std.ArrayList([]u8), piece: []const u8) Allocator.Error!void {
+    try pieces.ensureUnusedCapacity(gpa, 1);
+    pieces.appendAssumeCapacity(try gpa.dupe(u8, piece));
 }
 
 /// The characters in reverse order, each kept whole. The caller owns it.
@@ -513,6 +574,44 @@ test "split, replace, and lines" {
     }
     try testing.expectEqual(@as(usize, 2), text_lines.len);
     try testing.expectEqualStrings("one", text_lines[0]);
+}
+
+test "character tests ask about every character, and need at least one" {
+    try std.testing.expect(everyCharacter("abc", .letter));
+    try std.testing.expect(everyCharacter("\u{e9}\u{df}\u{65e5}", .letter));
+    try std.testing.expect(everyCharacter("e\u{301}", .letter));
+    try std.testing.expect(!everyCharacter("", .letter));
+    try std.testing.expect(!everyCharacter("a1", .letter));
+    try std.testing.expect(everyCharacter("2026", .digit));
+    try std.testing.expect(!everyCharacter("\u{663}", .digit));
+    try std.testing.expect(everyCharacter(" \t\r\n", .whitespace));
+    try std.testing.expect(everyCharacter("A1", .upper));
+    try std.testing.expect(!everyCharacter("1", .upper));
+    try std.testing.expect(!everyCharacter("Ab", .upper));
+    try std.testing.expect(everyCharacter("\u{df}", .lower));
+}
+
+test "words drops empty pieces between runs of whitespace" {
+    const gpa = std.testing.allocator;
+    const pieces = try words(gpa, "  the  quick\tbrown\u{a0}fox ");
+    defer {
+        for (pieces) |piece| gpa.free(piece);
+        gpa.free(pieces);
+    }
+    try std.testing.expectEqual(@as(usize, 4), pieces.len);
+    try std.testing.expectEqualStrings("the", pieces[0]);
+    try std.testing.expectEqualStrings("fox", pieces[3]);
+    const accented = try words(gpa, "a \u{301}b");
+    defer {
+        for (accented) |piece| gpa.free(piece);
+        gpa.free(accented);
+    }
+    // The accent belongs to the space, so it is not a word's first character.
+    try std.testing.expectEqual(@as(usize, 2), accented.len);
+    try std.testing.expectEqualStrings("b", accented[1]);
+    const none = try words(gpa, "   ");
+    defer gpa.free(none);
+    try std.testing.expectEqual(@as(usize, 0), none.len);
 }
 
 test "trim works in whole characters" {

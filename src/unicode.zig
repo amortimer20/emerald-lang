@@ -76,6 +76,23 @@ pub fn isWhiteSpace(code_point: u21) bool {
     return inRanges(&tables.white_space, code_point);
 }
 
+/// Unicode's `Alphabetic`, which `String.letter?()` reads (9.2).
+pub fn isAlphabetic(code_point: u21) bool {
+    return inRanges(&tables.alphabetic, code_point);
+}
+
+pub fn isUppercase(code_point: u21) bool {
+    return inRanges(&tables.uppercase, code_point);
+}
+
+pub fn isLowercase(code_point: u21) bool {
+    return inRanges(&tables.lowercase, code_point);
+}
+
+pub fn isCased(code_point: u21) bool {
+    return inRanges(&tables.cased, code_point);
+}
+
 /// A word character as regular expressions' `\w` means one (UTS #18): a
 /// letter or other alphabetic character, a mark, a decimal digit in any
 /// script, or connector punctuation such as `_`.

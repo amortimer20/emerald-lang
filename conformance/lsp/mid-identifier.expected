@@ -75,6 +75,14 @@
       "insertTextFormat": 1
     },
     {
+      "label": "digit?",
+      "kind": 2,
+      "detail": "digit?(): Bool",
+      "documentation": "Whether the text is not empty and every character is a digit from 0 to 9.",
+      "insertText": "digit?()",
+      "insertTextFormat": 1
+    },
+    {
       "label": "empty?",
       "kind": 2,
       "detail": "empty?(): Bool",
@@ -123,6 +131,14 @@
       "insertTextFormat": 2
     },
     {
+      "label": "letter?",
+      "kind": 2,
+      "detail": "letter?(): Bool",
+      "documentation": "Whether the text is not empty and every character is a letter, in any language.",
+      "insertText": "letter?()",
+      "insertTextFormat": 1
+    },
+    {
       "label": "lines",
       "kind": 2,
       "detail": "lines(): List[String]",
@@ -136,6 +152,14 @@
       "detail": "lower(): String",
       "documentation": "The text in small letters.",
       "insertText": "lower()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "lower?",
+      "kind": 2,
+      "detail": "lower?(): Bool",
+      "documentation": "Whether the text has a letter and every letter is lowercase.",
+      "insertText": "lower?()",
       "insertTextFormat": 1
     },
     {
@@ -328,6 +352,30 @@
       "detail": "upper(): String",
       "documentation": "The text in capital letters.",
       "insertText": "upper()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "upper?",
+      "kind": 2,
+      "detail": "upper?(): Bool",
+      "documentation": "Whether the text has a letter and every letter is uppercase.",
+      "insertText": "upper?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "whitespace?",
+      "kind": 2,
+      "detail": "whitespace?(): Bool",
+      "documentation": "Whether the text is not empty and every character is a space, tab, or line break.",
+      "insertText": "whitespace?()",
+      "insertTextFormat": 1
+    },
+    {
+      "label": "words",
+      "kind": 2,
+      "detail": "words(): List[String]",
+      "documentation": "Each word: the text between spaces, tabs, and line breaks, with none of them empty.",
+      "insertText": "words()",
       "insertTextFormat": 1
     }
   ]
