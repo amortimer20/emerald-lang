@@ -2718,7 +2718,12 @@ the type is first constructed or a type-level member is accessed. Merely mention
 type in an annotation or `using` does not initialize it.
 
 `Program.arguments` is the provisional library name for a list of only the program
-arguments, excluding the Emerald executable and entry-file paths. On the CLI, `--`
+arguments, excluding the Emerald executable and entry-file paths. `Program.environment(name)`
+reads one environment variable as `String?`, giving `nothing` when it is not set, and raises
+`EncodingError` when its value is not UTF-8 text. It is read-only: a program cannot set,
+remove, or list variables, since changing the environment is a process-wide effect no
+beginner program needs and listing it invites iterating over secrets. An empty name, or one
+holding `=`, names no variable and gives `nothing`. On the CLI, `--`
 separates Emerald options from program arguments. A bare top-level `return` is allowed
 only in the selected entry file and ends the program successfully after pending `finally`
 blocks run. It cannot return a value; use `exit(code)` to choose a status. Unreachable
@@ -2943,7 +2948,7 @@ equality or identity once built.
 Initial bare functions include:
 
 ```text
-input, input_maybe, print, write, random, exit
+input, input_maybe, print, write, print_error, random, exit
 ```
 
 The prelude also declares `Ordered`, section 11.5's comparison trait. Like the functions, it
@@ -2961,6 +2966,16 @@ A string displays as its text. Inside a collection it displays quoted, with esca
 needed, so `["a, b"]` and `["a", "b"]` cannot be mistaken for each other.
 `print` appends a newline; `write` does not. Separator customization is deferred, and
 interpolation remains the primary way to construct deliberate prose.
+
+`print_error` is `print` for standard error: the same arguments, display, and line break.
+Standard output is flushed first, so on a terminal its lines keep the order they were written
+in. There is no `write_error`. Console styling on standard error follows 15.6's policy by
+standard error's own terminal check, with one limit: a styled string is built before anyone
+knows where it goes, from standard output's policy. So when standard output is styled and
+standard error is not (`emerald run game.em 2> errors.log`), `print_error` takes the styling
+back out, as `Console.plain` would; when standard output is not styled, text built plain stays
+plain on standard error too. A program that declares its own `print_error` hides the built-in
+with 14.2's warning.
 
 `exit()` ends the program successfully; `exit(code)` uses a process status from `0` through
 `255`. Other status values are diagnosed. `exit` unwinds pending `finally` blocks but is not
@@ -3148,6 +3163,13 @@ code is followed by the outer style's own open code rather than the terminal's d
 bare reset (`ESC[0m`) found inside input text reopens every enclosing layer the same way.
 `Console.plain` removes only complete SGR sequences and is documented as exactly that, not as
 a general escape-sequence sanitizer for untrusted terminal output.
+
+`Console.clear()` erases the screen and moves the cursor to the top left (`ESC[2J ESC[H`)
+when standard output is a terminal, and does nothing when it is a file or a pipe, so tests and
+redirected runs stay clean. It is about the screen, not color, so `--color` and `NO_COLOR` do
+not affect it; `TERM=dumb` does, because such a terminal cannot move its cursor and would show
+the sequence as text. On Windows it needs the virtual-terminal mode automatic color turns on,
+so the first clear turns that mode on; if the console refuses, clearing does nothing. Clearing a line and moving the cursor belong to the parked `Tui`.
 
 Table and panel layout widgets, and line-oriented prompts (confirm, text input,
 single/multi-select), are implemented slices of Console itself (24), not a separate library.
@@ -3428,7 +3450,7 @@ fails. A response is at most 64 MB after that content decoding.
 
 Only `http://` and `https://` addresses are accepted. HTTPS certificates are always verified:
 there is no insecure switch. Host proxy settings (`HTTP_PROXY`, `HTTPS_PROXY`, and their
-lowercase forms) apply privately when the host provides them, but Emerald code cannot read or
+lowercase forms) apply privately when the host provides them, but Emerald code cannot
 alter environment variables. Every request has a whole-request deadline. The transport reports
 expired, self-signed, and wrong-address certificates through one validation failure, so its
 plain `HttpError` says accurately that the server identity could not be verified rather than

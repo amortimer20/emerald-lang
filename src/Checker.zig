@@ -7669,6 +7669,15 @@ fn typeOfQualified(self: *Checker, expression: *const Ast.Expression, reference:
         );
         return .invalid;
     }
+    if (std.mem.eql(u8, reference.key, Resolver.program_environment_key)) {
+        try self.report(
+            expression.span,
+            "`Program.environment` is a built-in function, so it has to be called",
+            .{},
+            "Call it with the variable's name, as in `Program.environment(\"HOME\")`.",
+        );
+        return .invalid;
+    }
     if (Resolver.mathFunction(reference.key) != null) {
         // Keep the written path in the fix: an explicit prelude path or a
         // `using` alias may be needed when the project owns `Math` (14.2).
@@ -11252,6 +11261,7 @@ fn typeOfCall(
     try self.reachKey(reference.key);
     const name = builtin orelse reference.display;
     if (std.mem.eql(u8, reference.key, Resolver.program_sleep_key)) return self.typeOfSleep(call, name);
+    if (std.mem.eql(u8, reference.key, Resolver.program_environment_key)) return self.typeOfEnvironment(call, name);
     if (Resolver.mathFunction(reference.key)) |function| {
         if (!try self.requireArity(.{ .name = name, .name_span = call.callee.span, .base = call.callee }, call.arguments, function.parameters, function.parameters)) return .invalid;
         for (call.arguments) |argument| _ = try self.typeOfExpected(argument, .float);
@@ -12087,6 +12097,36 @@ fn typeOfSleep(self: *Checker, call: Ast.Expression.Call, name: []const u8) Erro
         );
     }
     return .nothing;
+}
+
+/// `Program.environment(name)`, which reads one variable and gives `nothing`
+/// when it is not set (15.10).
+fn typeOfEnvironment(self: *Checker, call: Ast.Expression.Call, name: []const u8) Error!Type {
+    const result = Type.optionalOf(.string);
+    if (try self.rejectNames(call)) {
+        try self.typeArguments(call.arguments);
+        return result;
+    }
+    if (call.arguments.len != 1) {
+        try self.report(
+            call.callee.span,
+            "`{s}` takes 1 argument, but this call passes {d}",
+            .{ name, call.arguments.len },
+            "Pass the variable's name, as in `Program.environment(\"HOME\")`.",
+        );
+        try self.typeArguments(call.arguments);
+        return result;
+    }
+    const actual = try self.typeOfExpected(call.arguments[0], .string);
+    if (!actual.assignableTo(.string)) {
+        try self.report(
+            call.arguments[0].span,
+            "this is {f}, but `{s}` needs the variable's name as a String",
+            .{ actual, name },
+            "Pass the name as text, as in `Program.environment(\"HOME\")`.",
+        );
+    }
+    return result;
 }
 
 /// The arguments of a call that builds a value of the type `key`: calling the

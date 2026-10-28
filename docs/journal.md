@@ -6066,3 +6066,15 @@ and `src/unicode/tables.zig` was regenerated from the same 17.0.0 download; befo
 the generator reproduced the committed tables byte for byte. `to_character`'s error speaks
 decimal (1114111, 55296 to 57343), because Emerald has no hexadecimal literals. Familiar names
 from other languages (`isalpha`, `is_digit`, `chr`, and their kin) now point to the new ones.
+
+## 2026-10-28: Library additions, slice 3: the program's surroundings
+
+`Program.environment(name)` reads one environment variable as `String?`, read-only, raising
+`EncodingError` for a value that is not UTF-8; rewrite-context 15.10 now says Emerald code
+cannot *alter* environment variables. `print_error` joins the prelude as `print` for standard
+error. The CLI and REPL now give the interpreter a standard-error stream and resolve its color
+by its own terminal check; because Console styles a string when it is built, from standard
+output's policy, `print_error` can only take styling out (standard output styled, standard
+error redirected), not add it. `Console.clear()` clears only when standard output is a
+terminal (and `TERM` is not `dumb`), turning on Windows' virtual-terminal mode the first time.
+The plan's "Settled while building" section records these choices.

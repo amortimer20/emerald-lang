@@ -113,7 +113,7 @@ pub fn main(init: std.process.Init) !u8 {
     if (args.len < 3) return commandMisuse(io, command, "expects a `<file.em>` path");
     if (command == .check) {
         if (args.len != 3) return commandMisuse(io, command, "does not run a program, so it cannot take program arguments");
-        return execute(gpa, io, command, args[2], &.{}, false, init.minimal.environ, .utc);
+        return execute(gpa, io, command, args[2], &.{}, .{}, init.minimal.environ, .utc);
     }
 
     // `run` and `test` accept an optional `--color=auto|always|never` flag
@@ -141,11 +141,11 @@ pub fn main(init: std.process.Init) !u8 {
         if (!std.mem.eql(u8, args[path_index + 1], "--")) return commandMisuse(io, command, "expects program arguments after `--`");
         program_arguments = args[path_index + 2 ..];
     }
-    const color = try resolveColor(io, init.environ_map, color_flag);
+    const terminal = try resolveTerminal(io, init.environ_map, color_flag);
     var zone_arena: std.heap.ArenaAllocator = .init(gpa);
     defer zone_arena.deinit();
     const local_zone = resolveLocalZone(zone_arena.allocator(), io, init.environ_map);
-    return execute(gpa, io, command, args[path_index], program_arguments, color, init.minimal.environ, local_zone);
+    return execute(gpa, io, command, args[path_index], program_arguments, terminal, init.minimal.environ, local_zone);
 }
 
 /// Section 15.8's `TimeZone.local` for one invocation, allocated in `arena`.
@@ -223,28 +223,58 @@ fn windowsZone(arena: std.mem.Allocator) TimeZone.Local {
     return .{ .name = name, .rules = .{ .initial = rule.standard, .footer = rule } };
 }
 
+/// What one `run`, `test`, or `repl` knows about its terminal: Console's
+/// styling for standard output and for standard error, each by that stream's
+/// own terminal check (15.6), and whether `Console.clear` may clear.
+const Terminal = struct {
+    color: bool = false,
+    error_color: bool = false,
+    clears: bool = false,
+};
+
+fn resolveTerminal(io: std.Io, environ_map: *const std.process.Environ.Map, flag: ?ColorPolicy.Flag) !Terminal {
+    return .{
+        .color = try resolveColor(io, environ_map, flag, std.Io.File.stdout()),
+        .error_color = try resolveColor(io, environ_map, flag, std.Io.File.stderr()),
+        .clears = resolveClears(io, environ_map),
+    };
+}
+
+/// Whether `Console.clear` may clear: standard output is a terminal that
+/// understands the sequence. `--color` and `NO_COLOR` are about color, not the
+/// screen, so they do not count; `TERM=dumb` does, because such a terminal
+/// cannot move its cursor and would show the sequence as text. On Windows the
+/// console takes the sequence only in virtual-terminal mode, the mode
+/// automatic color turns on; `Console.clear` turns it on the first time it
+/// clears, so a program that never clears leaves the console as it was.
+fn resolveClears(io: std.Io, environ_map: *const std.process.Environ.Map) bool {
+    if (!(std.Io.File.stdout().isTty(io) catch false)) return false;
+    if (environ_map.get("TERM")) |term| if (std.mem.eql(u8, term, "dumb")) return false;
+    return true;
+}
+
 /// Resolves rewrite-context 15.6's color precedence against the real
-/// process for one invocation: `flag` is whatever `--color` parsed to (`run`
-/// and `test`) or `null` (`repl`, which has no flag of its own).
-/// `ColorPolicy.resolve` itself is a pure function with its own unit tests;
-/// this just gathers what it needs from the environment and stdout.
+/// process for one invocation and one output stream: `flag` is whatever
+/// `--color` parsed to (`run` and `test`) or `null` (`repl`, which has no
+/// flag of its own). `ColorPolicy.resolve` itself is a pure function with its
+/// own unit tests; this just gathers what it needs from the environment and
+/// `file`, which is standard output or standard error.
 ///
 /// On Windows, a real console may need one-time setup: a legacy console does
 /// not process ANSI escapes until asked to. Forced output never configures a
 /// console, so it remains usable for files, pipes, and CI logs. If automatic
 /// Windows setup fails, automatic styling is simply unavailable for that run.
-fn resolveColor(io: std.Io, environ_map: *const std.process.Environ.Map, flag: ?ColorPolicy.Flag) !bool {
-    const stdout = std.Io.File.stdout();
+fn resolveColor(io: std.Io, environ_map: *const std.process.Environ.Map, flag: ?ColorPolicy.Flag, file: std.Io.File) !bool {
     // A failed terminal probe must not stop a program. It simply means auto
     // mode cannot establish a terminal that can render its ANSI strings.
-    const is_tty = stdout.isTty(io) catch false;
+    const is_tty = file.isTty(io) catch false;
     // On Windows, an ordinary console can render ANSI only after
     // `enableAnsiEscapeCodes` turns VT processing on. Its current support
     // answer is therefore not a reason to reject an otherwise real TTY.
     const supports_ansi = if (builtin.os.tag == .windows and is_tty)
         true
     else
-        stdout.supportsAnsiEscapeCodes(io) catch false;
+        file.supportsAnsiEscapeCodes(io) catch false;
     const no_color = environ_map.get("NO_COLOR");
     const force_color = environ_map.get("FORCE_COLOR");
     const color = ColorPolicy.resolve(.{
@@ -265,7 +295,7 @@ fn resolveColor(io: std.Io, environ_map: *const std.process.Environ.Map, flag: ?
     // FORCE_COLOR intentionally also work for redirected output, where there
     // is no console to configure and a downstream reader owns interpretation.
     if (color and auto and is_tty and builtin.os.tag == .windows) {
-        stdout.enableAnsiEscapeCodes(io) catch return false;
+        file.enableAnsiEscapeCodes(io) catch return false;
     }
     return color;
 }
@@ -399,7 +429,7 @@ fn commandMisuse(io: std.Io, command: ?Command, detail: []const u8) !u8 {
     return @intFromEnum(ExitCode.invalid_usage);
 }
 
-fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u8, program_arguments: []const []const u8, color: bool, environment: std.process.Environ, local_zone: TimeZone.Local) !u8 {
+fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u8, program_arguments: []const []const u8, terminal: Terminal, environment: std.process.Environ, local_zone: TimeZone.Local) !u8 {
     // Section 14.1: the file alone, unless it sits beside a `main.em`, in which
     // case the whole project comes with it.
     var project = emerald.Project.load(gpa, io, path) catch |err| {
@@ -422,11 +452,26 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
     var out = std.Io.File.stdout().writerStreaming(io, &out_buffer);
     var in_buffer: [4096]u8 = undefined;
     var in = std.Io.File.stdin().readerStreaming(io, &in_buffer);
+    // `print_error`'s stream, flushed after every line it writes.
+    var err_buffer: [4096]u8 = undefined;
+    var error_out = std.Io.File.stderr().writerStreaming(io, &err_buffer);
+    const streams: emerald.Streams = .{
+        .out = &out.interface,
+        .in = &in.interface,
+        .standard_input = true,
+        .color = terminal.color,
+        .err = &error_out.interface,
+        .error_color = terminal.error_color,
+        .terminal = terminal.clears,
+        .environment = environment,
+        .local_zone = local_zone,
+        .arguments = program_arguments,
+    };
 
     const analysis = switch (command) {
         .check => emerald.checkProject(gpa, &project),
-        .run => emerald.runProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface, .standard_input = true, .color = color, .environment = environment, .local_zone = local_zone, .arguments = program_arguments }),
-        .@"test" => emerald.testProject(gpa, &project, .{ .out = &out.interface, .in = &in.interface, .standard_input = true, .color = color, .environment = environment, .local_zone = local_zone, .arguments = program_arguments }),
+        .run => emerald.runProject(gpa, &project, streams),
+        .@"test" => emerald.testProject(gpa, &project, streams),
         // `main` routes `format`, `repl`, `lsp`, and `help` to their own functions
         // before this is reached.
         .format, .repl, .lsp, .explain, .help => unreachable,
@@ -435,6 +480,7 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
     defer report.deinit();
 
     try out.interface.flush();
+    try error_out.interface.flush();
 
     // A warning (Diagnostic.Severity) does not stop checking or execution,
     // unlike an error, so it may sit alongside a normal, complete run: print
@@ -554,15 +600,21 @@ fn executeRepl(gpa: std.mem.Allocator, io: std.Io, environment: std.process.Envi
     var out = std.Io.File.stdout().writerStreaming(io, &out_buffer);
     var in_buffer: [4096]u8 = undefined;
     var in = std.Io.File.stdin().readerStreaming(io, &in_buffer);
+    var err_buffer: [4096]u8 = undefined;
+    var error_out = std.Io.File.stderr().writerStreaming(io, &err_buffer);
 
     // Decision 5: the REPL resolves the policy the same way `run` does, with
     // no `--color` flag of its own to override it.
-    const color = try resolveColor(io, environ_map, null);
+    const terminal = try resolveTerminal(io, environ_map, null);
     var zone_arena: std.heap.ArenaAllocator = .init(gpa);
     defer zone_arena.deinit();
     const local_zone = resolveLocalZone(zone_arena.allocator(), io, environ_map);
 
-    const status = Repl.run(gpa, &in.interface, &out.interface, color, environment, local_zone, .{ .io = io, .standard_input = true }) catch |err| switch (err) {
+    const status = Repl.run(gpa, &in.interface, &out.interface, terminal.color, environment, local_zone, .{
+        .io = io,
+        .standard_input = true,
+        .console = .{ .err = &error_out.interface, .error_color = terminal.error_color, .terminal = terminal.clears },
+    }) catch |err| switch (err) {
         error.OutOfMemory => return internalFailure(io, error.OutOfMemory),
         error.WriteFailed => return internalFailure(io, error.WriteFailed),
         error.ReadFailed => {

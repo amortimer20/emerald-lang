@@ -1,7 +1,8 @@
 # Standard-library additions: design plan
 
 Status: accepted by the user, 2026-10-28 ("Accept, build slice 1"). Slice 1 (text) is built on
-`claude/stdlib-text`; slices 2 and 3 wait. It covers the twelve gaps the user accepted
+`claude/stdlib-text`; slice 3 (the program's surroundings) is built on `claude/stdlib-program`,
+branched from it; slice 2 is being built separately. It covers the twelve gaps the user accepted
 as "in" from [`stdlib-audit.md`](stdlib-audit.md) the same day. Nothing here is built.
 
 Each addition is small, and each closes something a first-course program hits in its first weeks.
@@ -262,6 +263,42 @@ Each slice comes with:
 
 The release notes gain one "New in the library" section listing all twelve, and an upgrading note
 for item 11's names.
+
+## Settled while building
+
+Slice 3 (items 10 to 12):
+
+- **`print_error` takes any number of values**, like `print`, rather than exactly one. The plan
+  wrote `print_error(value)` but asked for `print`'s exact display rules, and those include
+  several values separated by one space; a beginner who changes `print` to `print_error` should
+  not meet a new arity rule.
+- **Per-stream color is half possible.** Styling is added when `Console.red` builds its string,
+  from standard output's policy, before anything knows the string is going to standard error.
+  Standard error's policy is resolved separately by its own terminal check, and `print_error`
+  takes the styling back out (as `Console.plain` does) when standard output is styled and
+  standard error is not, which is the plan's "plain in a log file" case
+  (`emerald run game.em 2> errors.log`). The reverse, styling text that was built plain because
+  standard output is redirected, cannot be done without changing what `Console.red` returns, so
+  it stays plain. Recorded in 15.2.
+- **`print_error` flushes standard output first**, then writes and flushes its own line, so a
+  terminal shows lines in the order the program wrote them.
+- **Embeddings and the conformance runner** give no separate standard error by default, and
+  `print_error` then writes to the one output stream, in order. `run/print-error.em` therefore
+  shows its lines inline; `emerald.zig`'s unit tests check the separate stream and the styling.
+- **`Program.environment` with an empty name, or one holding `=` or NUL**, gives `nothing`
+  rather than raising: no variable can have such a name, so it is simply not set. Its
+  `EncodingError` message names the variable. The conformance runner provides no environment,
+  so a set variable and a non-UTF-8 one are unit tests (POSIX only, since Windows has no way to
+  give a fixed environment block).
+- **`Console.clear` honors `TERM=dumb`**, which the plan did not mention. It stays independent
+  of `--color` and `NO_COLOR` as planned, but a dumb terminal cannot move its cursor and would
+  print the sequence as text. The sequence is `ESC[2J ESC[H`; scrollback is left alone.
+- **On Windows, `Console.clear` turns on virtual-terminal mode lazily**, the first time it
+  clears, instead of at startup, so 15.6's rule that forced styling never configures a console
+  holds for every program that does not clear.
+- **No familiar names.** The familiar-name tables cover value members only, not `Program`'s
+  type-level members, so `getenv`/`env` get the ordinary unknown-member error, whose list of
+  members now includes `Program.environment`.
 
 ## Left out on purpose
 

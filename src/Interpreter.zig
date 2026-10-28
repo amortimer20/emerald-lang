@@ -247,8 +247,24 @@ in: *std.Io.Reader,
 io: std.Io,
 /// The execution-owned Console styling policy.
 color: bool,
-/// The host environment is private runtime configuration. HTTP reads only
-/// proxy variables from it; Emerald programs have no environment API.
+/// Where `print_error` writes: standard error (15.2). Null writes to `out`
+/// instead, so an embedding that gives one stream sees both in order.
+err: ?*std.Io.Writer = null,
+/// Whether standard error takes Console's styling, by its own terminal check
+/// (15.6). A styled string is built before anyone knows where it goes, from
+/// `color`, so when `color` is on and this is off `print_error` takes the
+/// styling back out. The reverse cannot be done: text built plain stays plain.
+error_color: bool = false,
+/// Whether `out` is the process's standard output, on a terminal that
+/// `Console.clear` may clear (15.6). Unlike `color`, `--color` and
+/// `NO_COLOR` do not change it.
+terminal: bool = false,
+/// Windows only: whether `Console.clear` has turned on the console's
+/// virtual-terminal processing, which it does the first time it clears.
+terminal_ready: bool = false,
+/// The host environment. A program reads one variable at a time through
+/// `Program.environment` and cannot change any (15.10); HTTP reads the proxy
+/// variables privately.
 environment: std.process.Environ,
 /// Section 15.8's `TimeZone.local`, resolved once for the whole execution.
 local_zone: TimeZone.Local,
@@ -405,6 +421,16 @@ pub const SessionResult = union(enum) {
     complete,
     failed: Diagnostic,
     exited: u8,
+};
+
+/// What an execution knows about standard error and the terminal, beside
+/// `out` and its `color`: `print_error`'s stream and styling, and whether
+/// `Console.clear` may clear. The defaults suit any caller that is not a
+/// command-line run: standard error joins `out`, and nothing is a terminal.
+pub const ConsoleStreams = struct {
+    err: ?*std.Io.Writer = null,
+    error_color: bool = false,
+    terminal: bool = false,
 };
 
 /// One long-lived interactive execution.  It deliberately owns the scheduler
@@ -862,6 +888,7 @@ pub fn run(
     io: std.Io,
     arguments: []const []const u8,
     color: bool,
+    console: ConsoleStreams,
     standard_input: bool,
     process_environment: std.process.Environ,
     local_zone: TimeZone.Local,
@@ -920,6 +947,9 @@ pub fn run(
         .in = in,
         .io = io,
         .color = color,
+        .err = console.err,
+        .error_color = console.error_color,
+        .terminal = console.terminal,
         .standard_input = standard_input,
         .environment = process_environment,
         .local_zone = local_zone,
@@ -3924,6 +3954,7 @@ fn evaluateCallInner(
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::_color")) return .initBool(self.color);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::_width")) return self.callConsoleWidth(call);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::plain")) return self.callConsolePlain(call);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::clear")) return self.callConsoleClear();
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::table")) {
             if (self.json_encodes.get(call.callee)) |record_type| return self.callConsoleStructTable(expression.span, call, record_type);
         }
@@ -3934,6 +3965,7 @@ fn evaluateCallInner(
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_offset_seconds")) return self.callZoneOffset(call);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_suggestion")) return self.callZoneSuggestion(call);
         if (std.mem.eql(u8, key, Resolver.program_sleep_key)) return self.callSleep(expression.span, call);
+        if (std.mem.eql(u8, key, Resolver.program_environment_key)) return self.callEnvironment(expression.span, call);
         if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Regex::")) {
             if (try self.callRegex(key[Resolver.prelude_namespace.len + ".Regex::".len ..], call)) |result| return result;
         }
@@ -4614,20 +4646,45 @@ fn callConsolePlain(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
         self.gpa.free(values);
     }
 
-    const text = values[0].data.string.bytes;
-    var plain: std.ArrayList(u8) = .empty;
-    errdefer plain.deinit(self.gpa);
+    return .{ .data = .{ .string = try self.heap.createText(try plainText(self.gpa, values[0].data.string.bytes)) } };
+}
 
+/// `text` without its complete ANSI SGR sequences, which is what Console's
+/// styling adds, leaving any other control text alone.
+fn plainText(gpa: std.mem.Allocator, text: []const u8) std.mem.Allocator.Error![]u8 {
+    var plain: std.ArrayList(u8) = .empty;
+    errdefer plain.deinit(gpa);
     var index: usize = 0;
     while (index < text.len) {
         if (unicode.sgrEnd(text, index)) |end| {
             index = end;
             continue;
         }
-        try plain.append(self.gpa, text[index]);
+        try plain.append(gpa, text[index]);
         index += 1;
     }
-    return .{ .data = .{ .string = try self.heap.createText(try plain.toOwnedSlice(self.gpa)) } };
+    return plain.toOwnedSlice(gpa);
+}
+
+/// Section 15.6's `Console.clear()`: clears the screen and puts the cursor at
+/// the top left, but only on a terminal, so redirected output stays clean.
+fn callConsoleClear(self: *Interpreter) Error!Value {
+    if (!self.terminal) return Value.nothing;
+    // A Windows console takes the sequence only in virtual-terminal mode,
+    // which automatic color may already have turned on. A console that
+    // refuses it is not cleared.
+    if (@import("builtin").os.tag == .windows and !self.terminal_ready) {
+        try self.out.flush();
+        std.Io.File.stdout().enableAnsiEscapeCodes(self.io) catch {
+            self.terminal = false;
+            return Value.nothing;
+        };
+        self.terminal_ready = true;
+    }
+    // Erase the whole screen, then move the cursor home.
+    try self.out.writeAll("\x1b[2J\x1b[H");
+    try self.out.flush();
+    return Value.nothing;
 }
 
 fn callConsoleWidth(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
@@ -4705,6 +4762,7 @@ fn callBuiltin(self: *Interpreter, expression: *const Ast.Expression, call: Ast.
         self.task.state.exit_code = @intCast(code);
         return error.Exited;
     }
+    if (std.mem.eql(u8, name, "print_error")) return self.evaluatePrintError(call);
     return self.evaluatePrint(call, std.mem.eql(u8, name, "print"));
 }
 
@@ -6995,6 +7053,30 @@ fn clockNanoseconds(io: std.Io, clock: std.Io.Clock) i64 {
     return @intCast(clock.now(io).toNanoseconds());
 }
 
+/// Section 15.10's `Program.environment`: one variable's value, or `nothing`
+/// when it is not set. No variable is named `""` or has `=` or a NUL in its
+/// name, so asking for one finds nothing.
+fn callEnvironment(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call) Error!Value {
+    const argument = try self.evaluate(call.arguments[0]);
+    defer self.heap.release(argument);
+    const name = argument.data.string.bytes;
+    if (name.len == 0 or std.mem.indexOfAny(u8, name, "=\x00") != null) return Value.nothing;
+    var variables = std.process.Environ.createMap(self.environment, self.gpa) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        // Only WASI can fail otherwise, and then nothing is readable.
+        else => return Value.nothing,
+    };
+    defer variables.deinit();
+    const value = variables.get(name) orelse return Value.nothing;
+    // Windows gives WTF-8, which an unpaired surrogate leaves invalid UTF-8.
+    if (!std.unicode.utf8ValidateSlice(value)) {
+        const message = try std.fmt.allocPrint(self.arena, "the environment variable `{s}` is not valid UTF-8 text", .{name});
+        self.task.state.raised_value = try self.makeError(Resolver.preludeKey("EncodingError"), message);
+        return self.raiseTyped(span, "EncodingError", message, "Set the variable to UTF-8 text before running the program.");
+    }
+    return self.heap.copyText(value);
+}
+
 /// Section 15.8's `Program.sleep`. The checker guarantees a `Duration`, whose
 /// private fields are whole seconds and a nanosecond part.
 fn callSleep(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call) Error!Value {
@@ -7564,27 +7646,55 @@ fn readInputLine(reader: *std.Io.Reader, gpa: std.mem.Allocator) error{ ReadFail
 /// reason: a `Textual` value renders by running its own `to_string()`, which
 /// can raise partway through a line that has already begun.
 fn evaluatePrint(self: *Interpreter, call: Ast.Expression.Call, newline: bool) Error!Value {
-    const values = try self.evaluateArguments(call.arguments);
-    defer {
-        for (values) |value| self.heap.release(value);
-        self.gpa.free(values);
-    }
-
     var line: std.Io.Writer.Allocating = .init(self.gpa);
     defer line.deinit();
-    for (values, 0..) |value, position| {
-        // Section 15.2 separates multiple arguments with one space.
-        if (position != 0) try line.writer.writeAll(" ");
-        try value.writeThrough(&line.writer, false, TextualDisplay{
-            .interpreter = self,
-            .span = call.arguments[position].span,
-        });
-    }
+    try self.displayArguments(call, &line.writer);
     // Section 15.2: `print` ends the line and `write` does not.
     if (newline) try line.writer.writeAll("\n");
     try self.out.writeAll(line.written());
     // Section 15.2 gives both no result, which is section 4.2's `Nothing`.
     return Value.nothing;
+}
+
+/// Section 15.2's `print_error`: `print`, to standard error.
+fn evaluatePrintError(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
+    var line: std.Io.Writer.Allocating = .init(self.gpa);
+    defer line.deinit();
+    try self.displayArguments(call, &line.writer);
+    try line.writer.writeAll("\n");
+    const err = self.err orelse {
+        try self.out.writeAll(line.written());
+        return Value.nothing;
+    };
+    // What the program printed before this line reaches the terminal first.
+    try self.out.flush();
+    if (self.color and !self.error_color) {
+        const plain = try plainText(self.gpa, line.written());
+        defer self.gpa.free(plain);
+        try err.writeAll(plain);
+    } else {
+        try err.writeAll(line.written());
+    }
+    try err.flush();
+    return Value.nothing;
+}
+
+/// The arguments of `print`, `write`, or `print_error`, shown as section 15.2
+/// says.
+fn displayArguments(self: *Interpreter, call: Ast.Expression.Call, writer: *std.Io.Writer) Error!void {
+    const values = try self.evaluateArguments(call.arguments);
+    defer {
+        for (values) |value| self.heap.release(value);
+        self.gpa.free(values);
+    }
+    for (values, 0..) |value, position| {
+        // Section 15.2 separates multiple arguments with one space.
+        if (position != 0) try writer.writeAll(" ");
+        try value.writeThrough(writer, false, TextualDisplay{
+            .interpreter = self,
+            .span = call.arguments[position].span,
+        });
+    }
 }
 
 /// One call, whatever form it was written in. `captured` is the scope stack the

@@ -485,6 +485,9 @@ fn produce(
             defer out.deinit();
 
             var in: std.Io.Reader = .fixed(input);
+            // No `err` stream: `print_error` joins `out`, in order. Nor is the
+            // output a terminal, so `Console.clear` writes nothing. A program
+            // gets no environment, so every variable is unset.
             var report = try emerald.runProject(gpa, project, .{
                 .out = &out.writer,
                 .in = &in,

@@ -3937,6 +3937,25 @@
   },
   {
    "owner": "Program",
+   "name": "environment",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "name",
+       "type": "String"
+      }
+     ],
+     "result": "String?",
+     "summary": "The value of the environment variable called `name`, or `nothing` when it is not set.",
+     "raises": true,
+     "page": "library/program/program/#environment"
+    }
+   ]
+  },
+  {
+   "owner": "Program",
    "name": "sleep",
    "kind": "type_method",
    "signatures": [
@@ -3989,6 +4008,25 @@
      "result": "Nothing",
      "summary": "Shows each value, separated by a space, exactly as `print` does, but does not end the line.",
      "page": "builtins/functions/write/#write"
+    }
+   ]
+  },
+  {
+   "owner": null,
+   "name": "print_error",
+   "kind": "function",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "values",
+       "type": "Any",
+       "variadic": true
+      }
+     ],
+     "result": "Nothing",
+     "summary": "Shows each value exactly as `print` does, then ends the line, on standard error instead of standard output.",
+     "page": "builtins/functions/print_error/#print_error"
     }
    ]
   },

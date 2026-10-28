@@ -491,6 +491,14 @@
       "insertTextFormat": 2
     },
     {
+      "label": "print_error",
+      "kind": 3,
+      "detail": "print_error(values: Any...): Nothing",
+      "documentation": "Shows each value exactly as `print` does, then ends the line, on standard error instead of standard output.",
+      "insertText": "print_error($0)",
+      "insertTextFormat": 2
+    },
+    {
       "label": "probe",
       "kind": 3,
       "detail": "probe(): Nothing",

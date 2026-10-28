@@ -1,0 +1,4 @@
+diagnostics/print-error-shadowing.em:3:6: warning: `print_error` hides Emerald's built-in `print_error`
+  func print_error(message: String) {
+       ^^^^^^^^^^^
+A name the program declares always wins, so `print_error` here means this one. Write `Emerald.print_error` to reach the built-in, or choose a different name.

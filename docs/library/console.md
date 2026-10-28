@@ -76,6 +76,26 @@ incomplete or malformed sequences are left untouched. `plain` undoes Console's o
 is not a general terminal-output sanitizer, and does not attempt to strip arbitrary or
 adversarial escape sequences.
 
+## `Console.clear`
+
+```emerald
+Console.clear() -> Nothing
+```
+
+Clears the terminal and puts the cursor at the top left, when standard output is a terminal.
+When output goes to a file or a pipe it does nothing, so a test's output and a redirected run
+stay clean. It is about the screen, not color, so `--color` and `NO_COLOR` do not change it;
+`TERM=dumb` does, since such a terminal cannot move its cursor. On Windows, the first clear
+turns on the same console mode automatic color uses, and a console that refuses it is not
+cleared.
+
+```emerald
+Console.clear()
+print("Round 2")
+```
+
+See [`conformance/run/console-clear.em`](../../conformance/run/console-clear.em).
+
 ## The color policy
 
 Whether any of the above actually emits ANSI escapes is one policy per execution, owned by
@@ -96,6 +116,11 @@ ordinary console needs a one-time request to process ANSI escapes at all, which 
 automatically; forced styling (`--color=always`, `FORCE_COLOR`) never touches the console, so
 it is correct for redirected output — a file, a pipe, CI logs — where there is no console to
 configure and the reader on the other end interprets the escapes itself.
+
+Standard error goes through the same steps with its own terminal check in step 5. Styling is
+added when a string is built, from standard output's answer, so when standard output is styled
+and standard error is not, [`print_error`](prelude.md) takes the
+styling back out.
 
 ## Layout
 
