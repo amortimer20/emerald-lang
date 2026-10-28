@@ -112,6 +112,12 @@ implemented and Claude reviewed.
   name-check chains (`typeOfBytesMethod` and its siblings), the interpreter's dispatch, and the
   hand-written "did you mean" hint text. The language server offers none of them. Change all
   three, and the docs.
+- **Deprecating something** follows [`docs/deprecation-design-plan.md`](docs/deprecation-design-plan.md):
+  a program or prelude declaration takes `@deprecated("...")`; a native member goes in
+  `Checker.deprecated_natives` and gets the same message as a `deprecated` field in
+  `src/builtins.json` (the parity test checks they agree), and its library and website pages say
+  so. List every deprecation in the release notes' "Upgrading" section, and remove nothing until
+  a later release.
 - **The prelude** (`src/prelude.em`) is parsed when Emerald is built, so an unparseable prelude
   fails the build. A run checks only the prelude bodies it reaches (`Checker.reachKey`,
   `prelude_reached`, `Interpreter.requireChecked`), and each body sees only the module variables

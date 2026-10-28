@@ -1,0 +1,4 @@
+diagnostics/deprecated-not-literal.em:3:13: `@deprecated` needs a string literal
+  @deprecated(message)
+              ^^^^^^^
+Write the message as text, as in `@deprecated("Use append instead.")`; an annotation's argument is always a literal.

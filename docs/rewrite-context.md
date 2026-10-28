@@ -3553,6 +3553,18 @@ The clean initial set is intentionally small:
 - `@operator("+")`, `@operator("-")`, `@operator("*")`, or `@operator("/")`
   registers a public instance method of a struct or class for that arithmetic symbol
   (11.5).
+- `@deprecated("Use append instead.")` marks a declaration as going away: a top-level
+  function, type, or `const`/`var`, or a type's field, method, property, type-level member,
+  enum value, or nested type. Its one argument is a string literal, the correction, and an
+  empty one is an error. Every use is a warning carrying it (17.1); the declaration still
+  works. A use inside the deprecated declaration, or inside another deprecated declaration,
+  does not warn, and overriding a deprecated method does. A constructor is not deprecated on
+  its own (calling `Spot(...)` uses the type), nor is a local. A built-in in the prelude takes
+  the annotation; a native one is listed in the checker and the editor catalog with the same
+  message. The editor strikes deprecated uses through and puts the message in hover. The policy is
+  [deprecation-design-plan.md](deprecation-design-plan.md)'s: before 1.0, one release warns
+  before the release that removes; after 1.0, a minor release may deprecate and only a major
+  one removes.
 
 Interop-specific annotations such as the former `.NET`-oriented `@export`, `@mirrors`,
 and emitted-name controls are not carried forward automatically. Add a portable annotation
@@ -3630,8 +3642,9 @@ location but is otherwise the same four-part shape, and does not stop checking o
 nothing more specific (a runtime failure, a test failure) took priority, so a warning is
 never silently missed, but the checked program still runs. Warnings currently reported: a
 nonexhaustive statement `case` with a coverable subject (6.3, 12); an `is` test already known
-to be true (4.4); and code after a statement that can never complete, such as after
-`return` (6.5).
+to be true (4.4); code after a statement that can never complete, such as after
+`return` (6.5); and a use of a `@deprecated` declaration (16.1), which, like every warning,
+makes the command exit `1`.
 
 ### 17.2 Pedagogical behavior
 

@@ -141,6 +141,8 @@ pub const StructDeclaration = struct {
     /// Section 10.7's `@abstract`, which keeps the class from being constructed
     /// and lets its methods leave out their bodies.
     abstract_span: ?Source.Span = null,
+    /// `@deprecated("...")` (16.1): every use warns with this message.
+    deprecated: ?Deprecated = null,
     fields: []const Field,
     /// Section 10.2's custom constructor, which replaces the generated one.
     /// A type declares at most one, since overloading is deferred.
@@ -199,6 +201,7 @@ pub const StructDeclaration = struct {
         data: ?[]const Parameter = null,
         /// The `)` closing a choice's data, so a tool can reach its end.
         data_end: ?Source.Span = null,
+        deprecated: ?Deprecated = null,
     };
 
     pub const Field = struct {
@@ -209,6 +212,7 @@ pub const StructDeclaration = struct {
         /// Section 10.2's default, which runs when construction leaves the
         /// field to it.
         default: ?*const Expression = null,
+        deprecated: ?Deprecated = null,
     };
 
     /// `const area: Float { ... }`, or `var diameter: Float { get { ... } set
@@ -225,6 +229,7 @@ pub const StructDeclaration = struct {
         setter: ?FunctionDeclaration,
         /// Section 10.7's `@override`, which replaces a base class's property.
         override_span: ?Source.Span = null,
+        deprecated: ?Deprecated = null,
     };
 
     /// `constructor(x: Float) { self.x = x }`. It has no name and no return
@@ -300,9 +305,18 @@ pub const For = struct {
 /// Nested function declarations, defaults, and named arguments are deferred; a
 /// name declares at most one function, per section 7.3. Anonymous functions are
 /// `Expression.Lambda`.
+/// Section 16.1's `@deprecated("Use append instead.")`: the declaration still
+/// works, and every use of it warns with `message`, the correction.
+pub const Deprecated = struct {
+    span: Source.Span,
+    message: []const u8,
+};
+
 pub const FunctionDeclaration = struct {
     name: []const u8,
     name_span: Source.Span,
+    /// `@deprecated("...")` (16.1): every use warns with this message.
+    deprecated: ?Deprecated = null,
     /// Section 11.3's `[T]` after the name, in scope from the name through
     /// the body; empty for an ordinary function.
     type_parameters: []const TypeParameter = &.{},
@@ -383,6 +397,7 @@ pub const Declaration = struct {
     /// annotation, and requires an annotation when there is no initializer.
     annotation: ?TypeExpression,
     initializer: ?*const Expression,
+    deprecated: ?Deprecated = null,
 };
 
 /// A type as written in the source: a name, section 8.2's `[T]`, or section

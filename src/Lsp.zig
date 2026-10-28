@@ -88,6 +88,8 @@ const LspDiagnostic = struct {
     severity: u32,
     message: []const u8,
     data: ?DiagnosticData = null,
+    /// LSP's `DiagnosticTag.Deprecated` (2), which editors draw struck through.
+    deprecated: bool = false,
 
     pub fn jsonStringify(self: LspDiagnostic, json: *std.json.Stringify) !void {
         try json.beginObject();
@@ -100,6 +102,10 @@ const LspDiagnostic = struct {
         if (self.data) |data| {
             try json.objectField("data");
             try json.write(data);
+        }
+        if (self.deprecated) {
+            try json.objectField("tags");
+            try json.write(&[_]u32{2});
         }
         try json.endObject();
     }
@@ -764,6 +770,8 @@ fn publishDiagnostics(server: *Server, gpa: std.mem.Allocator, uri: []const u8, 
     const source = &loaded.project.files[loaded.index].source;
     var diagnostics: std.ArrayList(LspDiagnostic) = .empty;
     defer diagnostics.deinit(gpa);
+    var arena_for_messages: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_for_messages.deinit();
     for (report.diagnostics) |diagnostic| {
         // A project's other files are checked too, so their share of the
         // whole project's diagnostics still needs its own report — not
@@ -774,7 +782,10 @@ fn publishDiagnostics(server: *Server, gpa: std.mem.Allocator, uri: []const u8, 
             .range = lspRange(source, diagnostic.span),
             // LSP's `DiagnosticSeverity`: 1 is Error, 2 is Warning.
             .severity = if (diagnostic.severity == .warning) 2 else 1,
-            .message = diagnostic.message,
+            // A deprecation's correction is the point, so it travels with
+            // the message, which is all an editor shows inline.
+            .message = if (diagnostic.deprecated) try std.fmt.allocPrint(arena_for_messages.allocator(), "{s}. {s}", .{ diagnostic.message, diagnostic.help }) else diagnostic.message,
+            .deprecated = diagnostic.deprecated,
             .data = if (diagnostic.replacement) |replacement| .{
                 .replacement = .{ .range = lspRange(source, replacement.span), .newText = replacement.text },
                 .oldText = source.text[replacement.span.start..replacement.span.end],
@@ -885,6 +896,35 @@ fn onCodeAction(server: *Server, gpa: std.mem.Allocator, uri: []const u8, params
         });
     }
     try respond(gpa, out, id, actions.items);
+}
+
+test "a deprecated use is published struck through, with its correction in the message" {
+    const gpa = testing.allocator;
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const text = "@deprecated(\"Use `newer` instead.\")\nfunc older() {\n}\n\nolder()\n";
+    var requests: std.Io.Writer.Allocating = .init(gpa);
+    defer requests.deinit();
+    try writeMessage(gpa, &requests.writer, .{ .jsonrpc = "2.0", .id = 0, .method = "initialize", .params = .{} });
+    try writeMessage(gpa, &requests.writer, .{ .jsonrpc = "2.0", .method = "textDocument/didOpen", .params = .{
+        .textDocument = .{ .uri = "file:///deprecated-test.em", .languageId = "emerald", .version = 1, .text = text },
+    } });
+    var reader: std.Io.Reader = .fixed(requests.written());
+    var responses: std.Io.Writer.Allocating = .init(gpa);
+    defer responses.deinit();
+    var server: Server = .{ .gpa = gpa, .io = io };
+    defer server.deinit();
+    try runMessages(&server, gpa, &reader, &responses.writer);
+    reader = .fixed(responses.written());
+    var initialized = (try readMessage(gpa, &reader)).?;
+    defer initialized.deinit();
+    var published = (try readMessage(gpa, &reader)).?;
+    defer published.deinit();
+    const diagnostics = published.value.object.get("params").?.object.get("diagnostics").?.array.items;
+    try testing.expectEqual(@as(usize, 1), diagnostics.len);
+    const diagnostic = diagnostics[0].object;
+    try testing.expectEqualStrings("`older` is deprecated. Use `newer` instead.", diagnostic.get("message").?.string);
+    try testing.expectEqual(@as(i64, 2), diagnostic.get("severity").?.integer);
+    try testing.expectEqual(@as(i64, 2), diagnostic.get("tags").?.array.items[0].integer);
 }
 
 test "compiler quick fixes produce programs that check, including UTF-16 and name edits" {
@@ -1314,6 +1354,7 @@ fn renderNativeHover(gpa: std.mem.Allocator, detail: []const u8, member: emerald
     if (owner) |namespace| if (!std.mem.eql(u8, namespace, "*")) try text.writer.print("{s}.", .{namespace});
     try text.writer.writeAll(detail);
     try text.writer.writeAll("\n```\n\n");
+    if (member.deprecated) |message| try text.writer.print("**Deprecated.** {s}\n\n", .{message});
     try text.writer.writeAll(member.signatures[0].summary);
     if (member.signatures[0].raises) try text.writer.writeAll("\n\nMay raise an error.");
     try text.writer.print("\n\n[Read more](https://emerald-lang.web.app/docs/{s})", .{member.signatures[0].page});
@@ -1326,6 +1367,8 @@ fn renderDeclarationHover(gpa: std.mem.Allocator, item: CompletionItem, link: ?[
     try text.writer.writeAll("```emerald\n");
     try text.writer.writeAll(item.detail orelse item.label);
     try text.writer.writeAll("\n```");
+    // Section 16.1: the correction first, before anything else said about it.
+    if (item.deprecated) |message| try text.writer.print("\n\n**Deprecated.** {s}", .{message});
     if (item.documentation) |documentation| {
         if (documentation.len != 0) {
             try text.writer.writeAll("\n\n");
@@ -4424,8 +4467,8 @@ fn describeInstanceMember(gpa: std.mem.Allocator, analysis: *const emerald.Analy
         if (findStructDeclarationAt(analysis, target)) |s| {
             if (Resolver.isPrivate(label) and !insideCompletionType(analysis, target, file, cursor)) return null;
             const source = &analysis.files[target.file].source;
-            for (s.fields) |field| if (std.mem.eql(u8, field.name, label)) return try Completion.field(gpa, source, label, field.name_span, field.annotation, null, null, 5);
-            for (s.properties) |property| if (std.mem.eql(u8, property.name, label)) return try Completion.field(gpa, source, label, property.name_span, property.annotation, null, null, 10);
+            for (s.fields) |field| if (std.mem.eql(u8, field.name, label)) return (try Completion.field(gpa, source, label, field.name_span, field.annotation, null, null, 5)).deprecate(field.deprecated);
+            for (s.properties) |property| if (std.mem.eql(u8, property.name, label)) return (try Completion.field(gpa, source, label, property.name_span, property.annotation, null, null, 10)).deprecate(property.deprecated);
             for (s.methods) |method| if (std.mem.eql(u8, method.name, label)) return try describeFunction(gpa, analysis, target.file, method, label, 2);
         }
     }
@@ -4451,7 +4494,7 @@ fn enrichTypeMembers(server: *Server, gpa: std.mem.Allocator, analysis: *const e
             const described = if (field.enum_value != null)
                 try Completion.choice(gpa, source, s.name, field)
             else
-                try Completion.field(gpa, source, item.label, field.name_span, field.annotation, field.initializer, null, 10);
+                (try Completion.field(gpa, source, item.label, field.name_span, field.annotation, field.initializer, null, 10)).deprecate(field.deprecated);
             item.deinit(gpa);
             item.* = described;
             break;
@@ -4498,10 +4541,10 @@ fn describeModuleItem(gpa: std.mem.Allocator, analysis: *const emerald.Analysis,
         .function_declaration => |function| if (function.name_span.start == target.span.start) return try describeFunction(gpa, analysis, target.file, function, label, 3),
         .declaration => |declaration| if (declaration.name_span.start == target.span.start) {
             const inferred = if (declaration.initializer) |initializer| if (analysis.checked.expression_types.get(initializer)) |info| info.type else null else null;
-            return try Completion.field(gpa, source, label, declaration.name_span, declaration.annotation, declaration.initializer, inferred, 6);
+            return (try Completion.field(gpa, source, label, declaration.name_span, declaration.annotation, declaration.initializer, inferred, 6)).deprecate(declaration.deprecated);
         },
         .struct_declaration => |s| if (findStructDeclarationWithin(s, target.span)) |found| {
-            var item: CompletionItem = .{ .label = label, .kind = if (found.enumeration) 13 else if (found.class) 7 else if (found.trait) 8 else 22 };
+            var item: CompletionItem = .{ .label = label, .kind = if (found.enumeration) 13 else if (found.class) 7 else if (found.trait) 8 else 22, .deprecated = if (found.deprecated) |d| d.message else null };
             errdefer item.deinit(gpa);
             item.detail = try gpa.dupe(u8, label);
             item.documentation = try Completion.documentation(gpa, source, found.name_span);
@@ -4520,11 +4563,11 @@ fn describeTarget(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, tar
             return try describeFunction(gpa, analysis, target.file, function, function.name, 3),
         .declaration => |declaration| if (declaration.name_span.start == target.span.start) {
             const inferred = if (declaration.initializer) |initializer| if (analysis.checked.expression_types.get(initializer)) |info| info.type else null else null;
-            return try Completion.field(gpa, source, declaration.name, declaration.name_span, declaration.annotation, declaration.initializer, inferred, 6);
+            return (try Completion.field(gpa, source, declaration.name, declaration.name_span, declaration.annotation, declaration.initializer, inferred, 6)).deprecate(declaration.deprecated);
         },
         .struct_declaration => |declaration| {
             if (declaration.name_span.start == target.span.start) {
-                var item: CompletionItem = .{ .label = declaration.name, .kind = if (declaration.enumeration) 13 else if (declaration.class) 7 else if (declaration.trait) 8 else 22 };
+                var item: CompletionItem = .{ .label = declaration.name, .kind = if (declaration.enumeration) 13 else if (declaration.class) 7 else if (declaration.trait) 8 else 22, .deprecated = if (declaration.deprecated) |d| d.message else null };
                 errdefer item.deinit(gpa);
                 // Section 11.3: a generic type is shown with its `[T]`.
                 if (declaration.type_parameters.len > 0) {
@@ -4548,10 +4591,10 @@ fn describeStructTarget(gpa: std.mem.Allocator, analysis: *const emerald.Analysi
     const source = &analysis.files[file].source;
     for (declaration.methods) |method| if (method.name_span.start == start) return try describeFunction(gpa, analysis, file, method, method.name, 2);
     for (declaration.properties) |property| if (property.name_span.start == start) {
-        return try Completion.field(gpa, source, property.name, property.name_span, property.annotation, null, null, 10);
+        return (try Completion.field(gpa, source, property.name, property.name_span, property.annotation, null, null, 10)).deprecate(property.deprecated);
     };
     for (declaration.fields) |field| if (field.name_span.start == start) {
-        return try Completion.field(gpa, source, field.name, field.name_span, field.annotation, null, null, 5);
+        return (try Completion.field(gpa, source, field.name, field.name_span, field.annotation, null, null, 5)).deprecate(field.deprecated);
     };
     for (declaration.type_functions) |function| if (function.member_span.start == start) {
         return try describeFunction(gpa, analysis, file, function.declaration, function.declaration.name, 2);
@@ -4566,11 +4609,11 @@ fn describeStructTarget(gpa: std.mem.Allocator, analysis: *const emerald.Analysi
     };
     for (declaration.type_fields) |field| if (field.name_span.start == start) {
         if (field.enum_value != null) return try Completion.choice(gpa, source, declaration.name, field);
-        return try Completion.field(gpa, source, field.name, field.name_span, field.annotation, field.initializer, null, 10);
+        return (try Completion.field(gpa, source, field.name, field.name_span, field.annotation, field.initializer, null, 10)).deprecate(field.deprecated);
     };
     for (declaration.types) |nested| {
         if (nested.declaration.name_span.start == start) {
-            var item: CompletionItem = .{ .label = nested.declaration.name, .kind = if (nested.declaration.enumeration) 13 else if (nested.declaration.class) 7 else 22 };
+            var item: CompletionItem = .{ .label = nested.declaration.name, .kind = if (nested.declaration.enumeration) 13 else if (nested.declaration.class) 7 else 22, .deprecated = if (nested.declaration.deprecated) |d| d.message else null };
             item.documentation = try Completion.documentation(gpa, source, nested.declaration.name_span);
             return item;
         }

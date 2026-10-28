@@ -1,0 +1,4 @@
+diagnostics/deprecated-local.em:2:5: `@deprecated` belongs on a declaration other code can use
+      @deprecated("Use `z` instead.")
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Only a top-level declaration, or a member of a type, can be deprecated. Remove it here.

@@ -208,8 +208,12 @@ rather than through checker fields, is done (PR #45, `claude/expected-type`). Th
 language with a path into elementary data structures (rewrite-context 1), the generics wall log
 is retired as a gate and now collects friction for the 1.0 review, the parenthesis-free header
 block is not for 1.0 (rewrite-context 7.4), and deprecation follows
-[`deprecation-design-plan.md`](deprecation-design-plan.md), accepted and not yet built (it waits
-for the user's go-ahead). Still open from the QA pass: B4
+[`deprecation-design-plan.md`](deprecation-design-plan.md), now built on `claude/deprecation`
+(slices 1 to 3: `@deprecated("message")` and its warning, the editor's strike-through, hover, and
+completion, and the native-member path) and waiting on its PR. Nothing native is deprecated yet,
+so `Checker.deprecated_natives` is empty; the path was checked by hand with a temporary entry.
+Assigning to a deprecated field and naming one as a constructor argument do not warn yet (16.1).
+After it merges, add `@deprecated` to the website's Annotations page, whose table still says four. Still open from the QA pass: B4
 (reading the site) and B5 (reproducing the red "not defined" editor errors) were not reported;
 the flaky-test cause is settled (the exact-work test). The Zig 0.17 upgrade waits for 0.17.1.
 
@@ -333,8 +337,8 @@ compiler), or the compiler depends on it.
    implementation can follow in this phase or be scheduled, but the compiler is designed against
    them (generics, for instance, decide whether code is copied per type or keeps types at run time).
    Also settle the parked small syntax ideas (the parenthesis-free header block) and **a
-   deprecation story**: there is no `@deprecated`, and 1.0's compatibility promise needs a way to
-   warn about and retire things.
+   deprecation story**: 1.0's compatibility promise needs a way to warn about and retire things.
+   Settled 2026-10-28; `@deprecated` is built on `claude/deprecation` (see "Current status").
 4. **Complete the initial standard library** (the user, 2026-10-11): 1.0 ships with it. It is not
    urgent, and networking is bundled into it. Done today: dates and times, regular expressions, JSON,
    an HTTP client, CSV, Base64 and digests, Console, files, and tasks and channels. Spec 15.7 lists

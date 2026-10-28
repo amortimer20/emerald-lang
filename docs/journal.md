@@ -6008,3 +6008,28 @@ its diagnostic found that the help always showed an `if` example, even under `wh
 never offered a named result; it now offers both corrections without naming a keyword.
 Deprecation gets `@deprecated("message")` and a release policy, in an accepted plan that waits for
 a go-ahead to build; warnings keep their exit status of `1`, deprecations included.
+
+## 2026-10-28: Deprecation slice 1, the annotation and its warning
+
+`@deprecated("message")` parses on top-level functions, types, and bindings, and on a type's
+fields, methods, properties, type-level members, enum values, and nested types; every use warns
+with the message, uses inside a deprecated declaration stay quiet, and overriding a deprecated
+method warns. The plan's "Settled while building" lists where uses are noted and what is not yet
+noted (assignment to a deprecated field, a named constructor argument, an operator). A misspelled
+annotation's `(...)` used to cascade into an unused-result error and is now skipped.
+
+Validation: `zig build test -j1` in Debug and ReleaseSafe, `zig fmt --check`, `git diff --check`.
+
+## 2026-10-28: Deprecation slice 2, the editor
+
+Deprecated uses are struck through, their correction rides in the message (editors never show a
+diagnostic's help), hover leads with it, and completion tags deprecated members and lists them
+last. The first attempt serialized the tags as a byte string, because `std.json` treats `[]u8` as
+text; a probe against a real server caught it before any case was written.
+
+## 2026-10-28: Deprecation slice 3, built-ins
+
+Prelude built-ins needed nothing new. Native members get a checker table and a catalog field that
+the parity test keeps in agreement, with the warning, hover, and completion following them. No
+native is deprecated, so the path was exercised once with a temporary entry and reverted; the
+procedure for a real deprecation is in AGENTS.md.

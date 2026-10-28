@@ -348,6 +348,23 @@ pub fn checkNames() !void {
             }
         }
     }
+    // Section 16.1: a deprecated native says so in both places, with one message.
+    for (catalog.value.members) |member| {
+        const listed = for (Checker.deprecated_natives) |native| {
+            if (Builtins.sameOwner(member.owner, native.owner) and std.mem.eql(u8, member.name, native.name)) break native.message;
+        } else null;
+        const agree = if (member.deprecated) |message| (if (listed) |other| std.mem.eql(u8, message, other) else false) else listed == null;
+        if (!agree) {
+            std.debug.print("{s}.{s}: the data's and the checker's deprecation disagree\n", .{ member.owner orelse "prelude", member.name });
+            mismatches += 1;
+        }
+    }
+    for (Checker.deprecated_natives) |native| {
+        if (Builtins.find(catalog.value, native.owner, native.name) == null) {
+            std.debug.print("{s}.{s}: the checker deprecates a member the data lacks\n", .{ native.owner, native.name });
+            mismatches += 1;
+        }
+    }
     for (catalog.value.members) |member| {
         var found = false;
         for (inventories) |inventory| {
