@@ -2,8 +2,8 @@
 
 `Math` is a built-in namespace for numerical operations broader than one `Float`'s own
 methods (`square_root`, `to_radians`, `to_degrees` — see [`Float`](float.md)). Every function
-takes and returns `Float`, accepting an `Int` argument through ordinary widening (4.4);
-angles are radians. A project that declares its own `Math` namespace keeps ownership of that
+but `max` and `min` takes and returns `Float`, accepting an `Int` argument through ordinary
+widening (4.4); angles are radians. A project that declares its own `Math` namespace keeps ownership of that
 name, and the built-in one steps aside.
 
 Built-in Math functions must be called, not stored as function values. Wrap a call
@@ -64,3 +64,20 @@ Raises `base` to `exponent`, both as `Float`. A negative `base` raised to a non-
 `exponent` produces `NaN`. The language operator `**` (5.3) remains the ordinary way to
 write a power expression when both operands are already known statically; `Math.power` is
 for a base or exponent computed as a value.
+
+## Choosing between two values
+
+## Math.max(first: T, second: T) -> T
+
+## Math.min(first: T, second: T) -> T
+
+The larger or smaller of two values of one ordered type: Ints, Floats, Strings, dates and
+times, and a program's own `Ordered` types, through their `compare`. An `Int` beside a
+`Float` makes both Floats, as in a list literal, so `Math.min(3, 2.5)` is `2.5` and
+`Math.max(3, 2.5)` is `3.0`. When the two are equal, both give `first`, which matters only
+for an `Ordered` type whose `compare` calls different values equal. An optional argument, two
+different types, or a type without an order is a checking error. For more than two values,
+use `List`'s `max()` and `min()`.
+
+**Raises** when either argument is `NaN` (`` `Math.max` cannot compare NaN ``), as `List.max()`
+does.

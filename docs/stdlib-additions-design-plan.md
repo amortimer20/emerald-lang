@@ -1,7 +1,7 @@
 # Standard-library additions: design plan
 
 Status: accepted by the user, 2026-10-28 ("Accept, build slice 1"). Slice 1 (text) is built on
-`claude/stdlib-text`; slices 2 and 3 wait. It covers the twelve gaps the user accepted
+`claude/stdlib-text`, and slice 2 (lists and numbers) on `claude/stdlib-lists`; slice 3 waits. It covers the twelve gaps the user accepted
 as "in" from [`stdlib-audit.md`](stdlib-audit.md) the same day. Nothing here is built.
 
 Each addition is small, and each closes something a first-course program hits in its first weeks.
@@ -120,6 +120,8 @@ print(queue.index_of("Linus")) # nothing
 - It gives the first match's position, or `nothing`, as `String.index_of` does. It accepts the
   same element types as `contains?` and compares the same way, through `Equatable`.
 - `last_index_of` stays "later", as the audit says.
+- **Settled while building:** an `Int` argument finds an equal `Float` item, and
+  `index_of(nothing)` on a `List[T?]` finds the first absent item, both exactly as `contains?`.
 
 ## 6. `repeat` on a list
 
@@ -134,6 +136,9 @@ print(grid) # [[".", ".", "."], [".", "X", "."], [".", ".", "."]]
 - Lists are values, so every row is its own. The guide says so, because this is exactly where
   Python's `[[0] * 3] * 3` shares one row three times.
 - *Rejected:* `map` on `Range`, a bigger change that is not the beginner's question here.
+- **Settled while building:** the wording is `` a List cannot be repeated -2 times `` with
+  "Repeat it 0 or more times; 0 gives an empty List." An empty list repeated any count is `[]`
+  at once, and a result too large to address runs out of memory, as `String.repeat` does.
 
 ## 7. `append_all`
 
@@ -149,6 +154,9 @@ print(all_scores) # [90, 85, 70, 100]
   call. The value semantics already guarantee that, but it gets its own test.
 - *Rejected:* `extend` (Python's name says less); `+` on lists, which is a language question that
   stays in the generics friction log.
+- **Settled while building:** `extend`, `concat`, `push_all`, and `add_all` are familiar names
+  whose diagnostic points to `append_all`, as `index` and `indexOf` point to `index_of`. A
+  `List[Float]` takes a `List[Int]` literal's items widened, as `append` does.
 
 ## 8. `Math.max` and `Math.min`
 
@@ -171,6 +179,18 @@ print(Math.max("pear", "apple")) # pear
   like the other scalar-generic natives (`compare`, 11.3), or `Math` can gain prelude-written
   generic functions. The slice decides, and records why.
 - *Rejected:* `a.max(b)` as a method (Rust). It reads as "a's maximum" to a beginner.
+- **Built (slice 2):** the checker special-cases them, like the scalar comparison members,
+  rather than giving `Math` prelude-written generic functions. `Math` is native: its members
+  resolve to `Math` keys in the resolver, and a prelude function would need a second route
+  from `Math.max` to a hidden prelude name, plus reach and display work, for no behaviour the
+  special case lacks. They sit in `Type.math_functions` marked `ordered`, so resolution, the
+  "has to be called" diagnostic, and the parity test treat them as `Math` members. The checker
+  unifies the two argument types as a list literal does and accepts Ints, Floats, Strings,
+  `T with Ordered`, and types adopting `Ordered`; the interpreter orders the values with
+  `List.max`'s ordering, a struct's through its `compare`.
+- **Settled while building:** a `NaN` argument raises (`` `Math.max` cannot compare NaN ``),
+  as `List.max()` does, rather than giving IEEE's answer, which would depend on the argument
+  order and break "equal values give `first`".
 
 ## 9. `random_fraction` and `next_fraction`
 
@@ -189,6 +209,10 @@ print(generator.next_fraction()) # the same fraction every run
   a reason to add them.
 - *Rejected:* `chance?(0.3)`. It is pleasant, but a simulation needs the number itself, and a
   comparison with `<` teaches more.
+- **Settled while building:** both use Zig's `std.Random.float(f64)` on the generator `random`
+  and `next` already use; `next_fraction` advances a `Random`'s state exactly as `next` does,
+  so the two interleave repeatably. A program's own `random_fraction` gets the hiding warning
+  (`conformance/diagnostics/random-fraction.em`).
 
 ## 10. `Program.environment`
 

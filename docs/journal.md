@@ -6066,3 +6066,15 @@ and `src/unicode/tables.zig` was regenerated from the same 17.0.0 download; befo
 the generator reproduced the committed tables byte for byte. `to_character`'s error speaks
 decimal (1114111, 55296 to 57343), because Emerald has no hexadecimal literals. Familiar names
 from other languages (`isalpha`, `is_digit`, `chr`, and their kin) now point to the new ones.
+
+## 2026-10-28: Library additions, slice 2: lists and numbers
+
+Slice 2 adds `index_of`, `repeat`, and `append_all` on `List`, `Math.max` and `Math.min`, the
+prelude's `random_fraction()`, and `Random.next_fraction()`. `Math` is native and had no generic
+members, so `max` and `min` are checker special cases (as the scalar comparison members are):
+the two argument types unify as a list literal's do, which is what makes `Math.min(3, 2.5)` a
+`Float`, and the interpreter orders them with `List.max`'s ordering, raising for `NaN` as it
+does. `append_all` reads its argument before the receiver is made unique, so appending a list to
+itself appends what it held before the call. The fractions come from the generators `random` and
+`next` already use. Familiar names (`extend`, `concat`, `push_all`, `index`, `indexOf`) point
+to the new ones.

@@ -1834,7 +1834,7 @@ fn orderHelp(self: *Checker, element: Type) Error![]const u8 {
 /// with `==`, which `T` has only when it requires `Equatable`. Returns whether
 /// it reported.
 fn rejectUnequatableElements(self: *Checker, member: Ast.Expression.Member, element: Type) Error!bool {
-    const comparing = [_][]const u8{ "contains?", "remove", "remove_all", "unique", "unique!" };
+    const comparing = [_][]const u8{ "contains?", "index_of", "remove", "remove_all", "unique", "unique!" };
     const found = for (comparing) |name| {
         if (std.mem.eql(u8, name, member.name)) break true;
     } else false;
@@ -8159,7 +8159,7 @@ pub const list_branch_methods = [_][]const u8{
 pub const list_properties = [_][]const u8{ "count", "first", "last" };
 pub const task_methods = [_][]const u8{ "wait", "result", "done?", "cancel" };
 pub const channel_methods = [_][]const u8{ "send", "receive", "close" };
-pub const random_methods = [_][]const u8{ "next", "choose", "shuffle!" };
+pub const random_methods = [_][]const u8{ "next", "next_fraction", "choose", "shuffle!" };
 pub const task_group_methods = [_][]const u8{"start"};
 
 fn typeOfMethodCall(
@@ -8312,6 +8312,10 @@ fn typeOfMethodCall(
             if (argument.kind == .range) return .int;
             try self.report(call.arguments[0].span, "`next` needs a Range, but this is {f}", .{argument}, "Pass a Range such as `1..6`.");
             return .invalid;
+        }
+        if (std.mem.eql(u8, member.name, "next_fraction")) {
+            if (!try self.requireArity(member, call.arguments, 0, 0)) return .invalid;
+            return .float;
         }
         if (std.mem.eql(u8, member.name, "choose")) {
             if (!try self.requireArity(member, call.arguments, 1, 1)) return .invalid;
@@ -8653,6 +8657,7 @@ fn typeOfMethodCall(
         .lists => try Type.listOf(self.arena, try Type.listOf(self.arena, element)),
         .pairs => try Type.listOf(self.arena, try Type.tupleOf(self.arena, &.{ element, element })),
         .float => .float,
+        .position => Type.int.optionalOf(),
     };
 }
 
@@ -10266,6 +10271,12 @@ fn familiarListName(name: []const u8) ?[]const u8 {
         .{ "len", "count" },
         .{ "push", "append" },
         .{ "add", "append" },
+        .{ "extend", "append_all" },
+        .{ "concat", "append_all" },
+        .{ "push_all", "append_all" },
+        .{ "add_all", "append_all" },
+        .{ "index", "index_of" },
+        .{ "indexOf", "index_of" },
         .{ "pop", "remove_last" },
         .{ "shift", "remove_first" },
         .{ "includes", "contains?" },
@@ -11254,6 +11265,7 @@ fn typeOfCall(
     if (std.mem.eql(u8, reference.key, Resolver.program_sleep_key)) return self.typeOfSleep(call, name);
     if (Resolver.mathFunction(reference.key)) |function| {
         if (!try self.requireArity(.{ .name = name, .name_span = call.callee.span, .base = call.callee }, call.arguments, function.parameters, function.parameters)) return .invalid;
+        if (function.ordered) return self.typeOfMathExtreme(call, name);
         for (call.arguments) |argument| _ = try self.typeOfExpected(argument, .float);
         return .float;
     }
@@ -11459,6 +11471,10 @@ fn typeOfCall(
         }
         if (std.mem.eql(u8, name, "input") or std.mem.eql(u8, name, "input_maybe")) {
             return self.typeOfInput(call, name);
+        }
+        if (std.mem.eql(u8, name, "random_fraction")) {
+            if (!try self.requireArity(.{ .name = name, .name_span = call.callee.span, .base = call.callee }, call.arguments, 0, 0)) return .invalid;
+            return .float;
         }
         if (std.mem.eql(u8, name, "random")) {
             if (!try self.requireArity(.{ .name = name, .name_span = call.callee.span, .base = call.callee }, call.arguments, 1, 1)) return .invalid;
@@ -13007,6 +13023,51 @@ fn typeOfValueCall(self: *Checker, call: Ast.Expression.Call, callee: Type, name
         );
     }
     return signature.return_type;
+}
+
+/// `Math.max(first, second)` and `Math.min(first, second)`
+/// (stdlib-additions-design-plan item 8): generic over `Ordered` without a
+/// declared type parameter, the way the scalar comparison members are (11.3).
+/// The two arguments settle one type as a list literal's items do, so an Int
+/// beside a Float makes both Floats, and the result is that type. The
+/// interpreter orders the values themselves, a struct's through its own
+/// `compare`, so nothing needs recording here.
+fn typeOfMathExtreme(self: *Checker, call: Ast.Expression.Call, name: []const u8) Error!Type {
+    const first = try self.typeOf(call.arguments[0]);
+    const second = try self.typeOf(call.arguments[1]);
+    if (first.isInvalid() or second.isInvalid()) return .invalid;
+    for (call.arguments, [_]Type{ first, second }) |argument, actual| {
+        if (!actual.optional or actual.kind == .nothing) continue;
+        try self.report(
+            argument.span,
+            "this is {f}, so `{s}` may have nothing to compare",
+            .{ actual, name },
+            "Give it a fallback with `.or(...)`, or check it against `nothing` first.",
+        );
+        return .invalid;
+    }
+    const unified = unifiedType(&.{ first, second });
+    if (unified.isInvalid() or !first.assignableTo(unified) or !second.assignableTo(unified)) {
+        try self.report(
+            call.arguments[1].span,
+            "`{s}` compares two values of one type, but these are {f} and {f}",
+            .{ name, first, second },
+            "Pass two numbers, two Strings, or two values of one `Ordered` type.",
+        );
+        return .invalid;
+    }
+    if (unified.kind == .int or unified.kind == .float or unified.kind == .string or self.parameterRequires(unified, "Ordered")) return unified;
+    if (unified.kind == .struct_value) {
+        const ordered = try self.typeOfOperatorCall(call.callee.span, name, .ordered, null, unified, unified);
+        return if (ordered.kind == .invalid) .invalid else unified;
+    }
+    try self.report(
+        call.callee.span,
+        "`{s}` needs values that have an order, but these are {f}",
+        .{ name, unified },
+        try self.orderHelp(unified),
+    );
+    return .invalid;
 }
 
 /// Section 15.2's `input(prompt)`: the prompt is optional and is a String.

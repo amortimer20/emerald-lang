@@ -1860,6 +1860,25 @@
   },
   {
    "owner": "List",
+   "name": "append_all",
+   "kind": "method",
+   "changes": true,
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "items",
+       "type": "List[T]"
+      }
+     ],
+     "result": "Nothing",
+     "summary": "Adds every item of `items` at the end, in order.",
+     "page": "builtins/types/list/#append_all"
+    }
+   ]
+  },
+  {
+   "owner": "List",
    "name": "insert",
    "kind": "method",
    "changes": true,
@@ -2013,6 +2032,24 @@
      "result": "Bool",
      "summary": "Whether an item equal to `item` is in the list.",
      "page": "builtins/types/list/#contains"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "index_of",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "item",
+       "type": "T"
+      }
+     ],
+     "result": "Int?",
+     "summary": "The position of the first item equal to `item`, or `nothing` when there is none.",
+     "page": "builtins/types/list/#index_of"
     }
    ]
   },
@@ -2549,6 +2586,25 @@
      "result": "List[T]",
      "summary": "This list's items followed by `other`'s.",
      "page": "builtins/types/list/#chain"
+    }
+   ]
+  },
+  {
+   "owner": "List",
+   "name": "repeat",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "times",
+       "type": "Int"
+      }
+     ],
+     "result": "List[T]",
+     "summary": "The items, `times` times over.",
+     "raises": true,
+     "page": "builtins/types/list/#repeat"
     }
    ]
   },
@@ -3924,6 +3980,52 @@
    ]
   },
   {
+   "owner": "Math",
+   "name": "max",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "first",
+       "type": "T"
+      },
+      {
+       "name": "second",
+       "type": "T"
+      }
+     ],
+     "result": "T",
+     "summary": "The larger of two values of one ordered type, `first` when they are equal.",
+     "raises": true,
+     "page": "library/program/math/#max"
+    }
+   ]
+  },
+  {
+   "owner": "Math",
+   "name": "min",
+   "kind": "type_method",
+   "signatures": [
+    {
+     "parameters": [
+      {
+       "name": "first",
+       "type": "T"
+      },
+      {
+       "name": "second",
+       "type": "T"
+      }
+     ],
+     "result": "T",
+     "summary": "The smaller of two values of one ordered type, `first` when they are equal.",
+     "raises": true,
+     "page": "library/program/math/#min"
+    }
+   ]
+  },
+  {
    "owner": "Program",
    "name": "arguments",
    "kind": "type_property",
@@ -4047,6 +4149,19 @@
      "summary": "A whole number chosen at random from `range`, every number in it equally likely.",
      "raises": true,
      "page": "builtins/functions/random/#random"
+    }
+   ]
+  },
+  {
+   "owner": null,
+   "name": "random_fraction",
+   "kind": "function",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Float",
+     "summary": "A fraction chosen at random, from `0.0` up to but not including `1.0`.",
+     "page": "builtins/functions/random/#random_fraction"
     }
    ]
   },
@@ -4229,6 +4344,19 @@
      "summary": "One whole number from `range`, as the built-in `random(range)` chooses, but repeatably.",
      "raises": true,
      "page": "library/program/random/#next"
+    }
+   ]
+  },
+  {
+   "owner": "Random",
+   "name": "next_fraction",
+   "kind": "method",
+   "signatures": [
+    {
+     "parameters": [],
+     "result": "Float",
+     "summary": "A fraction from `0.0` up to but not including `1.0`, as `random_fraction()` chooses, but repeatably.",
+     "page": "library/program/random/#next_fraction"
     }
    ]
   },

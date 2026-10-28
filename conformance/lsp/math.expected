@@ -67,6 +67,22 @@
       "insertTextFormat": 2
     },
     {
+      "label": "max",
+      "kind": 2,
+      "detail": "max(first: T, second: T): T",
+      "documentation": "The larger of two values of one ordered type, `first` when they are equal.",
+      "insertText": "max($0)",
+      "insertTextFormat": 2
+    },
+    {
+      "label": "min",
+      "kind": 2,
+      "detail": "min(first: T, second: T): T",
+      "documentation": "The smaller of two values of one ordered type, `first` when they are equal.",
+      "insertText": "min($0)",
+      "insertTextFormat": 2
+    },
+    {
       "label": "natural_log",
       "kind": 2,
       "detail": "natural_log(value: Float): Float",

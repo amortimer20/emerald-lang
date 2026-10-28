@@ -788,11 +788,12 @@ pub const ListMethod = struct {
     mutates: bool,
 
     pub const Operand = enum { element, index, list };
-    pub const Result = enum { nothing, bool, element, list, lists, pairs, float };
+    pub const Result = enum { nothing, bool, element, list, lists, pairs, float, position };
 };
 
 pub const list_methods = std.StaticStringMap(ListMethod).initComptime(.{
     .{ "append", ListMethod{ .parameters = &.{.element}, .result = .nothing, .mutates = true } },
+    .{ "append_all", ListMethod{ .parameters = &.{.list}, .result = .nothing, .mutates = true } },
     .{ "insert", ListMethod{ .parameters = &.{ .index, .element }, .result = .nothing, .mutates = true } },
     .{ "remove", ListMethod{ .parameters = &.{.element}, .result = .nothing, .mutates = true } },
     .{ "remove_all", ListMethod{ .parameters = &.{.element}, .result = .nothing, .mutates = true } },
@@ -804,6 +805,8 @@ pub const list_methods = std.StaticStringMap(ListMethod).initComptime(.{
     .{ "remove_last", ListMethod{ .parameters = &.{}, .result = .element, .mutates = true } },
     .{ "clear", ListMethod{ .parameters = &.{}, .result = .nothing, .mutates = true } },
     .{ "contains?", ListMethod{ .parameters = &.{.element}, .result = .bool, .mutates = false } },
+    // The first equal item's position, or `nothing`: an `Int?`.
+    .{ "index_of", ListMethod{ .parameters = &.{.element}, .result = .position, .mutates = false } },
     .{ "empty?", ListMethod{ .parameters = &.{}, .result = .bool, .mutates = false } },
     .{ "chain", ListMethod{ .parameters = &.{.list}, .result = .list, .mutates = false } },
     .{ "chunks", ListMethod{ .parameters = &.{.index}, .result = .lists, .mutates = false } },
@@ -811,6 +814,7 @@ pub const list_methods = std.StaticStringMap(ListMethod).initComptime(.{
     .{ "pairs", ListMethod{ .parameters = &.{}, .result = .pairs, .mutates = false } },
     .{ "take", ListMethod{ .parameters = &.{.index}, .result = .list, .mutates = false } },
     .{ "drop", ListMethod{ .parameters = &.{.index}, .result = .list, .mutates = false } },
+    .{ "repeat", ListMethod{ .parameters = &.{.index}, .result = .list, .mutates = false } },
     .{ "reverse", ListMethod{ .parameters = &.{}, .result = .list, .mutates = false } },
     .{ "reverse!", ListMethod{ .parameters = &.{}, .result = .nothing, .mutates = true } },
     .{ "unique", ListMethod{ .parameters = &.{}, .result = .list, .mutates = false } },
@@ -933,8 +937,11 @@ pub const FloatMethod = struct {
 };
 
 /// Section 9.3's namespace-level numerical operations. Their arguments are
-/// Floats, with Emerald's ordinary Int-to-Float widening at each call site.
-pub const MathFunction = struct { parameters: usize };
+/// Floats, with Emerald's ordinary Int-to-Float widening at each call site,
+/// except for an `ordered` one (`max`, `min`): it takes two values of any one
+/// `Ordered` type and gives one of them back, which the checker and the
+/// interpreter handle on their own paths.
+pub const MathFunction = struct { parameters: usize, ordered: bool = false };
 pub const math_functions = std.StaticStringMap(MathFunction).initComptime(.{
     .{ "sin", MathFunction{ .parameters = 1 } },
     .{ "cos", MathFunction{ .parameters = 1 } },
@@ -947,6 +954,8 @@ pub const math_functions = std.StaticStringMap(MathFunction).initComptime(.{
     .{ "log10", MathFunction{ .parameters = 1 } },
     .{ "log", MathFunction{ .parameters = 2 } },
     .{ "power", MathFunction{ .parameters = 2 } },
+    .{ "max", MathFunction{ .parameters = 2, .ordered = true } },
+    .{ "min", MathFunction{ .parameters = 2, .ordered = true } },
 });
 
 pub const float_methods = std.StaticStringMap(FloatMethod).initComptime(.{

@@ -1,0 +1,36 @@
+diagnostics/list-index-repeat-append.em:2:1: `fixed` is a `const`, so its contents cannot change
+  fixed.append_all([3])
+  ^^^^^
+Declare `fixed` with `var` if it needs to change.
+diagnostics/list-index-repeat-append.em:3:1: `append_all` changes a list, but this list is a temporary value, so the change would be lost
+  [1].append_all([2])
+  ^^^
+Store the list in a `var` first, then call `append_all` on it.
+diagnostics/list-index-repeat-append.em:5:19: this is String, but the list holds Int
+  items.append_all(["a"])
+                    ^^^
+A list holds one type of value.
+diagnostics/list-index-repeat-append.em:6:18: this is Int, but `append_all` needs List[Int]
+  items.append_all(3)
+                   ^
+Pass a List of the same element type.
+diagnostics/list-index-repeat-append.em:8:18: this is List[String], but `append_all` needs List[Int]
+  items.append_all(words)
+                   ^^^^^
+Pass a List of the same element type.
+diagnostics/list-index-repeat-append.em:9:20: this is String, but `repeat` needs Int
+  print(items.repeat("x"))
+                     ^^^
+Pass a whole number.
+diagnostics/list-index-repeat-append.em:10:22: this is String, but `index_of` needs Int
+  print(items.index_of("a"))
+                       ^^^
+Pass a value of the type the list holds, or convert it first.
+diagnostics/list-index-repeat-append.em:11:13: `index_of` takes 1 argument, but this call passes 0
+  print(items.index_of())
+              ^^^^^^^^
+Match the number of arguments to what the method needs.
+diagnostics/list-index-repeat-append.em:13:17: `index_of` compares `T` values with `==`, and `T` could be any type
+      return list.index_of(item)
+                  ^^^^^^^^
+Write `T with Equatable` where `T` is declared to require that its values can be compared.

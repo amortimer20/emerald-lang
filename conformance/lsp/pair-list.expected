@@ -27,6 +27,14 @@
       "insertTextFormat": 2
     },
     {
+      "label": "append_all",
+      "kind": 2,
+      "detail": "append_all(items: List[(String, Int)]): Nothing",
+      "documentation": "Adds every item of `items` at the end, in order.",
+      "insertText": "append_all($0)",
+      "insertTextFormat": 2
+    },
+    {
       "label": "associate",
       "kind": 2,
       "detail": "associate() { item: (String, Int) => (K, V) }: Dict[K, V]",
@@ -195,6 +203,14 @@
       "insertTextFormat": 1
     },
     {
+      "label": "index_of",
+      "kind": 2,
+      "detail": "index_of(item: (String, Int)): Int?",
+      "documentation": "The position of the first item equal to `item`, or `nothing` when there is none.",
+      "insertText": "index_of($0)",
+      "insertTextFormat": 2
+    },
+    {
       "label": "insert",
       "kind": 2,
       "detail": "insert(index: Int, item: (String, Int)): Nothing",
@@ -345,6 +361,14 @@
       "documentation": "Removes the last item and gives it back.",
       "insertText": "remove_last()",
       "insertTextFormat": 1
+    },
+    {
+      "label": "repeat",
+      "kind": 2,
+      "detail": "repeat(times: Int): List[(String, Int)]",
+      "documentation": "The items, `times` times over.",
+      "insertText": "repeat($0)",
+      "insertTextFormat": 2
     },
     {
       "label": "reverse",
