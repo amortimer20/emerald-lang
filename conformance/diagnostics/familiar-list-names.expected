@@ -2,3 +2,27 @@ diagnostics/familiar-list-names.em:4:8: List[Int] has no method `push`
   scores.push(3)
          ^^^^
 Emerald calls this `append`.
+diagnostics/familiar-list-names.em:5:8: List[Int] has no method `extend`
+  scores.extend([3])
+         ^^^^^^
+Emerald calls this `append_all`.
+diagnostics/familiar-list-names.em:6:8: List[Int] has no method `concat`
+  scores.concat([3])
+         ^^^^^^
+Emerald calls this `append_all`.
+diagnostics/familiar-list-names.em:7:8: List[Int] has no method `push_all`
+  scores.push_all([3])
+         ^^^^^^^^
+Emerald calls this `append_all`.
+diagnostics/familiar-list-names.em:8:8: List[Int] has no method `add_all`
+  scores.add_all([3])
+         ^^^^^^^
+Emerald calls this `append_all`.
+diagnostics/familiar-list-names.em:9:14: List[Int] has no method `index`
+  print(scores.index(2))
+               ^^^^^
+Emerald calls this `index_of`.
+diagnostics/familiar-list-names.em:10:14: List[Int] has no method `indexOf`
+  print(scores.indexOf(2))
+               ^^^^^^^
+Emerald calls this `index_of`.

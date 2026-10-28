@@ -1,0 +1,36 @@
+diagnostics/math-max-min.em:1:19: `Math.max` compares two values of one type, but these are Int and String
+  print(Math.max(1, "a"))
+                    ^^^
+Pass two numbers, two Strings, or two values of one `Ordered` type.
+diagnostics/math-max-min.em:2:7: `Math.max` needs values that have an order, but these are List[Int]
+  print(Math.max([1], [2]))
+        ^^^^^^^^
+Ints, Floats, Strings, and types that adopt `Ordered` have an order. Use another operation for these elements.
+diagnostics/math-max-min.em:4:16: this is Int?, so `Math.min` may have nothing to compare
+  print(Math.min(maybe, 1))
+                 ^^^^^
+Give it a fallback with `.or(...)`, or check it against `nothing` first.
+diagnostics/math-max-min.em:5:7: `Math.max` takes 2 arguments, but this call passes 1
+  print(Math.max(1))
+        ^^^^^^^^
+Match the number of arguments to what the method needs.
+diagnostics/math-max-min.em:6:7: `Math.min` takes 2 arguments, but this call passes 3
+  print(Math.min(1, 2, 3))
+        ^^^^^^^^
+Match the number of arguments to what the method needs.
+diagnostics/math-max-min.em:10:7: `Math.max` needs Plain to adopt `Ordered`
+  print(Math.max(Plain(1), Plain(2)))
+        ^^^^^^^^
+Add `with Ordered` to `Plain`, and give it `@override func compare(other: Plain): Int`.
+diagnostics/math-max-min.em:12:12: `Math.max` needs values that have an order, but these are T
+      return Math.max(first, second)
+             ^^^^^^^^
+`T` could be any type. Write `T with Ordered` where `T` is declared to require that its values can be put in order.
+diagnostics/math-max-min.em:14:17: `Math.max` is a built-in function, so it has to be called
+  const largest = Math.max
+                  ^^^^^^^^
+Call it with numbers, as in `Math.max(...)`, or wrap the call in a block.
+diagnostics/math-max-min.em:15:25: `Math.max` compares two values of one type, but these are Nothing and Int
+  print(Math.max(nothing, 1))
+                          ^
+Pass two numbers, two Strings, or two values of one `Ordered` type.

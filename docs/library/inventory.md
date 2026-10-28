@@ -15,7 +15,7 @@ so each is written bare and is always reachable qualified (`Emerald.print`, `Eme
 | --- | --- | --- |
 | `print`, `write` | [Prelude](prelude.md) | `examples/greeter.em` |
 | `input`, `input_maybe` | [Prelude](prelude.md) | `conformance/runtime-errors/input-ended.em` |
-| `random`, `exit` | [Prelude](prelude.md) | `conformance/runtime-errors/random-empty-range.em` |
+| `random`, `random_fraction`, `exit` | [Prelude](prelude.md) | `conformance/runtime-errors/random-empty-range.em` |
 | `assert` | [Errors and tests](errors.md) | `conformance/runtime-errors/assertion.em` |
 
 ## Built-in types and namespaces
@@ -25,7 +25,7 @@ so each is written bare and is always reachable qualified (`Emerald.print`, `Eme
 | [`Int`](int.md) | Arithmetic helpers, predicates, number theory, conversion, counting blocks | `conformance/run/int-methods.em` |
 | [`Float`](float.md) | Rounding, classification, conversion, angles, square root | `conformance/run/float-methods.em` |
 | [`Bool`](bool.md) | Display, equality, and hashing | `conformance/run/generics-constraints.em` |
-| [`Math`](math.md) | Constants, trigonometry, logarithms, powers | `conformance/run/math.em` |
+| [`Math`](math.md) | Constants, trigonometry, logarithms, powers, two-value `max`/`min` | `conformance/run/math.em` |
 | [`String`](string.md) | Unicode-aware queries, editing, splitting, conversion | `conformance/run/string-methods.em` |
 | [`Bytes`](bytes.md) | Raw binary construction, conversion, indexing, slicing, hex encoding | `conformance/run/bytes-hex.em` |
 | [`List[T]`](list.md) | Properties, reading, changing, higher-order, and shape methods | `conformance/run/lists.em` |
@@ -33,7 +33,7 @@ so each is written bare and is always reachable qualified (`Emerald.print`, `Eme
 | [`Set[T]`](set.md) | Membership, set algebra, callbacks | `conformance/run/set-operations.em` |
 | [Tuples](tuples.md) | Positions, unpacking, equality | `examples/tuples.em` |
 | [`Range`](range.md) | Iteration, `count`, `empty?()`, `step`, `reverse`, `to_list` | `conformance/run/range-values.em` |
-| [`Random`](random.md) | Seeded range selection, choosing, and shuffling | `conformance/run/randomness.em` |
+| [`Random`](random.md) | Seeded range selection, fractions, choosing, and shuffling | `conformance/run/randomness.em` |
 | [`File`, `Directory`, `Path`](file.md) | Whole-file and streamed UTF-8 text, directories, lexical paths | `conformance/run/file-streaming.em` |
 | [`Program`](program.md) | The running program's own CLI arguments, its environment variables, and pausing it | `conformance/run/program-arguments.em` |
 | [`Tasks`, `Task[T]`, `TaskGroup`, `Channel[T]`](tasks.md) | Structured results, FIFO messages, waiting, cancellation, deadlocks | `examples/tasks.em` |

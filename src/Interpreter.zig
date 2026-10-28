@@ -3985,7 +3985,10 @@ fn evaluateCallInner(
             return self.callDigest(key[(Resolver.prelude_namespace ++ ".Digest::").len..], call);
         }
         if (isFilesystemKey(key)) return self.callFilesystem(expression.span, key, call);
-        if (Resolver.mathFunction(key) != null) return self.callMath(call, key);
+        if (Resolver.mathFunction(key)) |function| {
+            if (function.ordered) return self.callMathExtreme(expression.span, call, key);
+            return self.callMath(call, key);
+        }
         try self.reach(key, call.callee.span);
         if (self.choices.get(key)) |choice| return self.constructChoice(call, choice);
         if (self.structs.get(key)) |descriptor| return self.constructStruct(expression.span, key, descriptor, call);
@@ -4749,6 +4752,7 @@ fn callBuiltin(self: *Interpreter, expression: *const Ast.Expression, call: Ast.
     if (std.mem.eql(u8, name, "input") or std.mem.eql(u8, name, "input_maybe")) {
         return self.evaluateInput(expression.span, call, std.mem.eql(u8, name, "input_maybe"));
     }
+    if (std.mem.eql(u8, name, "random_fraction")) return .initFloat(self.random().float(f64));
     if (std.mem.eql(u8, name, "random")) {
         const range = (try self.evaluate(call.arguments[0])).data.range;
         if (range.empty()) return self.raise(expression.span, "`random` cannot choose from an empty Range", "Pass a Range that contains at least one value.");
@@ -5418,6 +5422,36 @@ fn evaluateCountingBlock(self: *Interpreter, expression: *const Ast.Expression, 
         if (current == range.last) return Value.nothing;
         current = if (range.descending) current - range.step_size else current + range.step_size;
     }
+}
+
+/// `Math.max` and `Math.min`: one of the two arguments, `first` when they are
+/// equal. An Int beside a Float is widened, as the checker typed the call.
+/// The checker allows only Ints, Floats, Strings, and `Ordered` values, so the
+/// ordering is the one `List.max` uses, and NaN raises as it does there.
+fn callMathExtreme(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call, key: []const u8) Error!Value {
+    const minimum = std.mem.eql(u8, key[Resolver.math_prefix.len..], "min");
+    var first = try self.evaluate(call.arguments[0]);
+    errdefer self.heap.release(first);
+    var second = try self.evaluate(call.arguments[1]);
+    errdefer self.heap.release(second);
+    if (first.data == .float or second.data == .float) {
+        first = widen(first, .float);
+        second = widen(second, .float);
+        if (std.math.isNan(first.data.float) or std.math.isNan(second.data.float)) return self.raiseFmt(
+            span,
+            "`Math.{s}` cannot compare NaN",
+            .{if (minimum) "min" else "max"},
+            "Check values with `nan?()` before choosing a minimum or maximum.",
+        );
+    }
+    const ordering = try self.orderListItems(span, first.data, first, second, .ordinary);
+    const take_second = if (minimum) ordering == .gt else ordering == .lt;
+    if (take_second) {
+        self.heap.release(first);
+        return second;
+    }
+    self.heap.release(second);
+    return first;
 }
 
 fn callMath(self: *Interpreter, call: Ast.Expression.Call, key: []const u8) Error!Value {
@@ -9022,7 +9056,7 @@ fn callMethod(
     // These generic native operations have no declared method key. The
     // checker accepts them only on the prelude Random type; user methods
     // with the same spelling have already taken the resolved path above.
-    if (std.mem.eql(u8, member.name, "next") or std.mem.eql(u8, member.name, "choose") or
+    if (std.mem.eql(u8, member.name, "next") or std.mem.eql(u8, member.name, "next_fraction") or std.mem.eql(u8, member.name, "choose") or
         (std.mem.eql(u8, member.name, "shuffle!") and call.arguments.len == 1))
     {
         return self.callRandomMethod(expression, call, member);
@@ -9119,6 +9153,7 @@ fn callRandomMethod(self: *Interpreter, expression: *const Ast.Expression, call:
         if (range.empty()) return self.raise(expression.span, "`next` cannot choose from an empty Range", "Pass a Range that contains at least one value.");
         return .initInt(self.seededRange(instance, range));
     }
+    if (std.mem.eql(u8, member.name, "next_fraction")) return .initFloat(self.seededFraction(instance));
     if (std.mem.eql(u8, member.name, "choose")) {
         const list_value = try self.evaluate(call.arguments[0]);
         defer self.heap.release(list_value);
@@ -9149,6 +9184,17 @@ fn seededIndex(self: *Interpreter, instance: *Heap.StructValue, length: usize) u
     var engine = std.Random.DefaultPrng.init(@bitCast(instance.fields[0].data.int));
     const source = engine.random();
     const result = source.uintLessThan(usize, length);
+    instance.fields[0] = .initInt(@bitCast(source.int(u64)));
+    _ = self;
+    return result;
+}
+
+/// A Float from 0.0 up to but not including 1.0, from the same generator and
+/// state as `next`, so a seeded `Random` gives the same fractions every run.
+fn seededFraction(self: *Interpreter, instance: *Heap.StructValue) f64 {
+    var engine = std.Random.DefaultPrng.init(@bitCast(instance.fields[0].data.int));
+    const source = engine.random();
+    const result = source.float(f64);
     instance.fields[0] = .initInt(@bitCast(source.int(u64)));
     _ = self;
     return result;
@@ -9257,7 +9303,7 @@ fn callMapTransform(
 /// when an item is itself a collection or object.
 fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List, name: []const u8, arguments: []const Value) Error!Value {
     const items = list.items.items;
-    const Method = enum { @"empty?", @"contains?", chain, chunks, windows, pairs, take, drop, reverse, unique, zip, sum, average, min, max, sort, shuffle, random, join };
+    const Method = enum { @"empty?", @"contains?", index_of, chain, chunks, windows, pairs, take, drop, repeat, reverse, unique, zip, sum, average, min, max, sort, shuffle, random, join };
     return switch (std.meta.stringToEnum(Method, name).?) {
         .@"empty?" => .initBool(items.len == 0),
         .@"contains?" => blk: {
@@ -9265,6 +9311,12 @@ fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List,
                 if (try Value.equals(self.gpa, item, arguments[0], self.equatable(span))) break :blk .initBool(true);
             }
             break :blk .initBool(false);
+        },
+        .index_of => blk: {
+            for (items, 0..) |item, position| {
+                if (try Value.equals(self.gpa, item, arguments[0], self.equatable(span))) break :blk .initInt(@intCast(position));
+            }
+            break :blk Value.nothing;
         },
         .chain => blk: {
             const other = arguments[0];
@@ -9352,6 +9404,27 @@ fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List,
                 self.copyList(list.element, items[0..boundary])
             else
                 self.copyList(list.element, items[boundary..]);
+        },
+        .repeat => blk: {
+            const times = arguments[0].data.int;
+            if (times < 0) return self.raiseFmt(
+                span,
+                "a List cannot be repeated {d} times",
+                .{times},
+                "Repeat it 0 or more times; 0 gives an empty List.",
+            );
+            // As for `String.repeat`, a result too large to address is as
+            // unrepresentable as one too large to allocate. An empty List
+            // repeated any number of times is still empty, without counting.
+            if (items.len == 0) break :blk self.copyList(list.element, items);
+            const size = std.math.mul(usize, items.len, @intCast(times)) catch return error.OutOfMemory;
+            const result = try self.heap.createList(list.element, size);
+            const value: Value = .{ .data = .{ .list = result } };
+            errdefer self.heap.release(value);
+            for (0..@intCast(times)) |_| {
+                for (items) |item| result.items.appendAssumeCapacity(Heap.retain(item));
+            }
+            break :blk value;
         },
         .reverse => blk: {
             const result = try self.heap.createList(list.element, items.len);
@@ -10972,9 +11045,21 @@ fn raisePadding(self: *Interpreter, span: Source.Span, width: i64, fill: []const
 /// taken by the list, and the rest are released here.
 fn mutateList(self: *Interpreter, span: Source.Span, list: *Heap.List, name: []const u8, arguments: []const Value) Error!Value {
     const items = &list.items;
-    const Method = enum { append, insert, remove, remove_all, remove_at, remove_first, remove_last, clear, @"reverse!", @"unique!", @"sort!", @"shuffle!" };
+    const Method = enum { append, append_all, insert, remove, remove_all, remove_at, remove_first, remove_last, clear, @"reverse!", @"unique!", @"sort!", @"shuffle!" };
     switch (std.meta.stringToEnum(Method, name).?) {
         .append => try items.append(self.gpa, widen(arguments[0], list.element)),
+        .append_all => {
+            // The argument was evaluated before the receiver was made unique,
+            // so `items.append_all(items)` reads what the list held before
+            // the call, never the items it is adding. Reading by position up
+            // to the count taken first keeps that true even if both were one
+            // list, whose storage growing would move.
+            defer self.heap.release(arguments[0]);
+            const added = arguments[0].data.list;
+            const count = added.items.items.len;
+            try items.ensureUnusedCapacity(self.gpa, count);
+            for (0..count) |position| items.appendAssumeCapacity(widen(Heap.retain(added.items.items[position]), list.element));
+        },
         .insert => {
             const index = arguments[0].data.int;
             if (index < 0 or index > items.items.len) {

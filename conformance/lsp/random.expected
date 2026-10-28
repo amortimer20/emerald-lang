@@ -19,6 +19,14 @@
       "insertTextFormat": 2
     },
     {
+      "label": "next_fraction",
+      "kind": 2,
+      "detail": "next_fraction(): Float",
+      "documentation": "A fraction from `0.0` up to but not including `1.0`, as `random_fraction()` chooses, but repeatably.",
+      "insertText": "next_fraction()",
+      "insertTextFormat": 1
+    },
+    {
       "label": "shuffle!",
       "kind": 2,
       "detail": "shuffle!(list: List[T]): Nothing",

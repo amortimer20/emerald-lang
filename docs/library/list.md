@@ -75,6 +75,8 @@ the end and every out-of-range endpoint raise rather than being clamped.
 
 ## append(element: T) -> Nothing
 
+## append_all(items: List[T]) -> Nothing
+
 ## insert(index: Int, element: T) -> Nothing
 
 ## remove(element: T) -> Nothing
@@ -91,13 +93,16 @@ the end and every out-of-range endpoint raise rather than being clamped.
 
 ## clear() -> Nothing
 
-**Changes** all nine need a changeable receiver — a `const`, a struct's `const` field, a
+**Changes** all ten need a changeable receiver — a `const`, a struct's `const` field, a
 function parameter, a loop variable, or a temporary value is rejected, each with its own
 diagnostic (`` `{name}` is a `const`, so its contents cannot change ``, a parameter's "the
 change would be lost when the function returns," and a temporary's "the change would be
 lost" — 4.3, 7.1).
 
-`insert` accepts any index from `0` through `count` inclusive (`count` appends).
+`append_all` adds every item of `items` at the end, in order; `chain` is the way to build a
+new List without changing either one. `items.append_all(items)` appends what the List held
+before the call, so it doubles the List once. `insert` accepts any index from `0` through
+`count` inclusive (`count` appends).
 `remove`/`remove_all` match by value and quietly do nothing if the element is absent — no
 raise. `remove_if` is `reject`'s in-place sibling: it removes every element the block
 accepts, in place, rather than returning a new `List`; index removal remains the distinct
@@ -195,6 +200,16 @@ returns `[]`.
 
 **Raises** for a negative `count` (`` `take`/`drop` cannot use count {n} ``).
 
+## repeat(times: Int) -> List[T]
+
+The items, `times` times over, as `String.repeat` does for text: `[0].repeat(5)` is
+`[0, 0, 0, 0, 0]`, `[1, 2].repeat(2)` is `[1, 2, 1, 2]`, and `0` gives `[]`. Lists are values,
+so every copy is its own: after `var grid = [["."].repeat(3)].repeat(3)`, changing
+`grid[1][1]` changes one row only, where Python's `[[0] * 3] * 3` would share one row three
+times.
+
+**Raises** for a negative `times` (`` a List cannot be repeated {n} times ``).
+
 ## reverse() -> List[T]
 
 ## reverse!() -> Nothing (**Changes**)
@@ -281,13 +296,17 @@ NaN ``), and `` `min_by` and `max_by` cannot order a key of NaN ``.
 ## find_index { item: T => Bool } -> Int?
 
 **Callback.** Both short-circuit on the first accepted item; `find` returns it, `find_index`
-returns its position. There is no bare `index_of(element)` on `List` (that name is a
-[`String`](string.md) method) — use `contains?` for a plain membership check, since `find(...)
+returns its position. Use `contains?` for a plain membership check, since `find(...)
 == nothing` cannot tell "not found" from "found `nothing` itself."
 
 ## contains?(element: T) -> Bool
 
-Value equality, recursive/structural.
+## index_of(element: T) -> Int?
+
+Value equality, recursive/structural. `index_of` gives the first equal item's position, or
+`nothing` when there is none, as [`String`](string.md)'s `index_of` does; on a `List[T?]`,
+`index_of(nothing)` finds the first absent item. A `T` without `Equatable` is rejected for
+both, as for `remove`.
 
 ## Callback traversal
 

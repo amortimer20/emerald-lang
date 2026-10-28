@@ -1453,7 +1453,10 @@ value is absent. `remove_all(element)` removes every equal value. Both return `N
 `remove_at(index)`, `remove_first()`, and `remove_last()` return the element they remove,
 and removing from an empty list is an error rather than an optional result, matching the
 strict bounds of indexing. `insert(index, element)` accepts any index from `0` through
-`count`; inserting at `count` appends. `append`, `insert`, `remove`, `remove_all`,
+`count`; inserting at `count` appends. `append_all(items)` appends every item of another
+List of the same element type, in order; its argument is read before the receiver changes,
+so `items.append_all(items)` appends what the list held before the call. `append`,
+`append_all`, `insert`, `remove`, `remove_all`,
 `remove_at`, `remove_first`, `remove_last`, and `clear` change the list they are called on,
 so they are rejected on a `const`, a parameter, or a loop variable (4.3, 7.1), and on a
 temporary such as `make_list().append(1)`, where the change could never be seen.
@@ -1468,12 +1471,12 @@ natural applicability and exact return-type review:
 
 - traversal: `each`, `each_with_index`, `reverse_each`;
 - questions: `empty?`, `contains?`, `any?`, `all?`, `none?`, `one?`, `count_where`;
-- searching: `find`, `find_index`, `first`, `last`;
+- searching: `find`, `find_index`, `index_of`, `first`, `last`;
 - transformation: `map`, `filter`, `reject`, `flat_map`, `filter_map`;
 - portions: `take`, `drop`, `take_while`, `drop_while`;
 - grouping: `group_by`, `partition`, `frequencies`;
 - aggregation: `reduce`, `sum`, `average`, `min`, `max`, `min_by`, `max_by`, `min_max`, `join`;
-- combining and shapes: `zip`, `chain`, `chunks`, `windows`, `pairs`;
+- combining and shapes: `zip`, `chain`, `repeat`, `chunks`, `windows`, `pairs`;
 - ordering: `sort`, `sort_by`, `reverse`, `shuffle`;
 - uniqueness: `unique`, `unique_by`;
 - conversion: `to_list`, `to_set`, `to_dictionary`.
@@ -1607,6 +1610,12 @@ with the separator between each pair, and an empty List joins to `""`. Any other
 an optional `String` included, gets a correction toward `map` first, because joining through a
 value's display form would make the result depend on `Textual` (15.1) without the program
 saying so.
+
+`index_of(item)` gives the first equal item's position, or `nothing`, as `String.index_of`
+does; it accepts what `contains?` accepts and compares the same way, so a `T` needs
+`Equatable`. `repeat(times)` means what `String.repeat` means: `[1, 2].repeat(2)` is
+`[1, 2, 1, 2]`, `0` gives `[]`, and a negative count raises. Lists are values, so the copies
+are independent: `[["."].repeat(3)].repeat(3)` is three rows, not one row three times.
 
 `average()` is currently a List operation for `List[Int]` and `List[Float]`. It returns `Float?`:
 `nothing` for an empty List, otherwise the arithmetic mean after each Int has widened as it
@@ -1862,9 +1871,19 @@ and makes `between?` false.
 Operations naturally performed by one value are methods, including `square_root()` and
 angle conversion such as `to_radians()`. `Math` holds broader operations and constants:
 `pi`, `e`, `sin`, `cos`, `tan`, `arc_sin`, `arc_cos`, `arc_tan`, `arc_tan2`,
-`natural_log`, `log10`, `log(value, base)`, and `power(base, exponent)`. Every function
-accepts `Int` through ordinary numeric widening and returns `Float`; angles use radians by
-default. The language operator `**` remains the natural ordinary power expression.
+`natural_log`, `log10`, `log(value, base)`, `power(base, exponent)`, `max(first, second)`,
+and `min(first, second)`. Every function but `max` and `min` accepts `Int` through ordinary
+numeric widening and returns `Float`; angles use radians by default. The language operator
+`**` remains the natural ordinary power expression.
+
+`Math.max` and `Math.min` (the user, 2026-10-28; `stdlib-additions-design-plan.md`) behave as
+`max[T with Ordered](first: T, second: T): T` would: two values of one ordered type (Ints,
+Floats, Strings, and `Ordered` types, through their `compare`), with an `Int` beside a `Float`
+widening as in a list literal, so `Math.min(3, 2.5)` is `2.5`. Equal values give `first`. An
+optional argument or a type without an order is a checking error, and a `NaN` raises, as for
+`List.max()`. They have no written type parameter: the checker types each call, as it does
+the scalar comparison members (11.3), and like the other `Math` functions they must be called
+rather than kept as values. Exactly two arguments; a List's `max()` covers more.
 
 `Math` follows ordinary IEEE Float results: an inverse-trigonometric input outside its real
 domain, a negative logarithm, an invalid logarithm base, or a negative base raised to a
@@ -1884,8 +1903,12 @@ var shuffled = cards.shuffle()
 cards.shuffle!()
 ```
 
-Repeatable work uses `Random(seed: 42)` with `next(range)`, `choose(collection)`, and
-`shuffle!(collection)`. The global form delegates to a runtime-managed generator. Range
+`random_fraction()` gives a `Float` from `0.0` up to but not including `1.0`, from the same
+generator; it is its own name because Emerald has no overloading (21) and `random` takes a
+Range.
+
+Repeatable work uses `Random(seed: 42)` with `next(range)`, `next_fraction()`,
+`choose(collection)`, and `shuffle!(collection)`. The global form delegates to a runtime-managed generator. Range
 bounds retain the ordinary inclusive or exclusive meaning of their syntax, and choosing
 from an empty range is an error.
 
@@ -1908,12 +1931,12 @@ historical implementation.
 | `String` | The complete vocabulary in 9.2, including logical `pad_start`/`pad_end`, optional `index_of`, and the three-policy parsing families |
 | `Int` | `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `even?`, `odd?`, `multiple_of?`, `digits`, `gcd`, `lcm`, `factorial`, `times`, `up_to`, `down_to`, `to_float`, `to_character`, `to_string` |
 | `Float` | `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `floor`, `ceil`, `round`, `round_to`, `truncate`, `finite?`, `infinite?`, `nan?`, `to_int`, `to_string` |
-| `List` | `append`, `insert`, `remove`, `remove_all`, `remove_at`, `remove_first`, `remove_last`, `clear`, plus applicable rich collection operations |
+| `List` | `append`, `append_all`, `insert`, `remove`, `remove_all`, `remove_at`, `remove_first`, `remove_last`, `clear`, plus applicable rich collection operations |
 | `Dictionary` | bracket lookup and assignment, `contains_key?`, `contains_value?`, `keys`, `values`, `entries`, `remove`, `merge`, `map_keys`, `map_values`, plus applicable rich collection operations |
 | `Set` | `add`, `remove`, `union`, `intersection`, `difference`, `symmetric_difference`, `subset?`, `superset?`, `disjoint?`, plus applicable rich collection operations |
 | Tuple | two or more heterogeneous positions, positional structural equality, and destructuring |
 | `Range` | ordinary iteration, `step`, eager rich transformations, and `times`, `up_to`, and `down_to` on integers |
-| `Math` | `pi`, `e`, trigonometry, logarithms, and explicit power helpers; receiver methods cover natural single-number operations such as `square_root` |
+| `Math` | `pi`, `e`, trigonometry, logarithms, explicit power helpers, and two-value `max`/`min`; receiver methods cover natural single-number operations such as `square_root` |
 
 The three parsing forms intentionally express three different failure policies:
 
@@ -2905,7 +2928,8 @@ operations without one natural receiver live in named modules. Prelude functions
 reserved for universal, frequent actions.
 
 The old `Kernel` name is not carried forward. Every built-in — the prelude functions
-(`print`, `write`, `input`, `input_maybe`, `random`, `exit`), the prelude's types and traits
+(`print`, `write`, `input`, `input_maybe`, `random`, `random_fraction`, `exit`), the
+prelude's types and traits
 (`File`, `Random`, `RuntimeError`, `Ordered`, and the rest), and the built-in namespaces
 `Math` and `Program` — lives in one namespace, `Emerald`, implicitly imported into every file
 (14.2). Each is written bare, and is always reachable qualified: `Emerald.print`,
@@ -2948,7 +2972,7 @@ equality or identity once built.
 Initial bare functions include:
 
 ```text
-input, input_maybe, print, write, print_error, random, exit
+input, input_maybe, print, write, print_error, random, random_fraction, exit
 ```
 
 The prelude also declares `Ordered`, section 11.5's comparison trait. Like the functions, it

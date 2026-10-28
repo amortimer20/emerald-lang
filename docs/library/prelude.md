@@ -2,7 +2,7 @@
 
 The prelude functions are visible bare in every file, with no import. A file's own
 declaration of the same name replaces the prelude's for that file (15.2). This page covers
-`print`, `write`, `print_error`, `input`, `input_maybe`, `random`, and `exit`. `assert` is documented with
+`print`, `write`, `print_error`, `input`, `input_maybe`, `random`, `random_fraction`, and `exit`. `assert` is documented with
 errors and tests, since its behavior belongs beside `raise`/`catch` rather than beside these
 seven; the prelude's comparison trait (`Ordered`), its equality traits
 ([`Equatable`/`Hashable`](../language/objects-and-traits.md#custom-equality-and-hashing)),
@@ -83,6 +83,12 @@ range's own bounds decide which values are reachable — `random(1..6)` can retu
 and [`conformance/run/randomness.em`](../../conformance/run/randomness.em), which also shows
 `List.random()`, `List.shuffle()`/`shuffle!()`, and the seeded `Random(seed:)` generator —
 each belongs to its own receiver's family page rather than to this bare function.
+
+## random_fraction() -> Float
+
+A `Float` chosen at random from `0.0` up to but not including `1.0`, from the same
+runtime-managed generator as `random`: `if random_fraction() < 0.3 { ... }` happens about
+three times in ten. [`Random`](random.md)'s `next_fraction()` is the seeded form.
 
 ## exit() -> Nothing
 
