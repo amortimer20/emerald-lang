@@ -295,8 +295,19 @@ fn loadProjectFor(server: *Server, gpa: std.mem.Allocator, uri: []const u8, text
     defer gpa.free(path);
     var project = Project.load(gpa, server.io, path) catch return null;
     errdefer project.deinit(gpa);
+    // A file in a project's subfolder runs on its own from the command line
+    // (14.1), but an editor opening it means the project around it: checked
+    // alone, every name from the rest of the project would be "not defined".
+    if (project.enclosing_project) |enclosing| {
+        const entry = try std.fs.path.join(gpa, &.{ enclosing, Project.entry_file_name });
+        defer gpa.free(entry);
+        if (Project.load(gpa, server.io, entry)) |whole| {
+            project.deinit(gpa);
+            project = whole;
+        } else |_| {}
+    }
     for (project.files, 0..) |*file, index| {
-        if (!std.mem.eql(u8, file.source.path, path)) continue;
+        if (!Project.samePath(file.source.path, path)) continue;
         const replaced = try Source.init(gpa, path, text);
         file.source.deinit(gpa);
         file.source = replaced;
@@ -900,6 +911,43 @@ fn onCodeAction(server: *Server, gpa: std.mem.Allocator, uri: []const u8, params
         });
     }
     try respond(gpa, out, id, actions.items);
+}
+
+test "a file in a project's subfolder is checked with its whole project" {
+    const gpa = testing.allocator;
+    const io = std.Io.Threaded.global_single_threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "main.em", .data = "print(Geometry.quadruple(2))\n" });
+    try tmp.dir.createDirPath(io, "geometry");
+    try tmp.dir.writeFile(io, .{ .sub_path = "geometry/double.em", .data = "func double(value: Int): Int {\n    return value * 2\n}\n" });
+    const text = "func quadruple(value: Int): Int {\n    return Geometry.double(Geometry.double(value))\n}\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "geometry/quadruple.em", .data = text });
+    const root = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(root);
+    const path = try std.fs.path.join(gpa, &.{ root, "geometry", "quadruple.em" });
+    defer gpa.free(path);
+    const uri = try pathToUri(gpa, path);
+    defer gpa.free(uri);
+
+    var server: Server = .{ .gpa = gpa, .io = io };
+    defer server.deinit();
+    // Opened on its own, as an editor opens one file of a project: its folder
+    // has no `main.em`, but the folder above does, so it is that project's.
+    var loaded = try loadDocument(&server, gpa, uri, text);
+    defer loaded.deinit(gpa);
+    try testing.expect(loaded.project.files.len == 3);
+    var report = try emerald.checkProject(gpa, &loaded.project);
+    defer report.deinit();
+    for (report.diagnostics) |diagnostic| {
+        std.debug.print("unexpected diagnostic in {s}: {s}\n", .{ loaded.project.files[diagnostic.file].source.path, diagnostic.message });
+    }
+    // The project's own `main.em` is its entry, whichever separator the
+    // editor's path and the joined one use (as they differ on Windows).
+    for (loaded.project.files) |file| {
+        try testing.expectEqual(std.mem.endsWith(u8, file.source.path, "main.em"), file.entry);
+    }
+    try testing.expectEqual(@as(usize, 0), report.diagnostics.len);
 }
 
 test "a deprecated use is published struck through, with its correction in the message" {

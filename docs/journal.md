@@ -6128,6 +6128,30 @@ merge writes to scratch space before copying back, so a `NaN` or a raising `comp
 leaves every item in the list. The same sort now takes about 0.1 seconds, and
 `conformance/run/sort-long-stable` covers stability past one run and a failure mid-merge.
 
+## 2026-10-28: Subfolder files are checked with their project
+
+Reviewing the sharing-code work found that the language server loaded a document with
+`Project.load(path)`, which makes a file part of a project only when its own folder holds
+`main.em`. A file in a project's subfolder, such as `plants/catalog.em` or a copied library's
+`geometry/measure.em`, was therefore checked alone in the editor, and every name it used from
+the rest of the project was "not defined": very likely QA item B5. The server now loads the
+enclosing project (the one `Project` already finds, to explain a lone file's errors) and checks
+the file inside it. The command line is unchanged: `emerald run plants/catalog.em` still runs
+that file alone, with the hint pointing at the project's `main.em`. Paths are compared with
+either separator, since a Windows URI uses `/` and a joined path uses `\`.
+
+## 2026-10-28: The Windows test stall's cause
+
+The user's session on a Windows machine found the stall's cause outside Emerald: Zig 0.16.0's
+Windows process spawning creates each child's pipe ends inheritable and calls `CreateProcessW`
+with inherit-all and no lock, so a test binary started at the same moment as a sibling can
+inherit the sibling's stdout pipe. The finished binary's stdout then stays open until the sibling
+exits, and the build runner's 60-second response timer fails the step though every test passed.
+Zig 0.17.0's `process_spawn_mutex` fixes it. The session reproduced it with no Emerald code: the
+slow binary's inherited pipe count rose with each stall. Its guess that ReleaseSafe stays clear
+did not hold: PR #50's Windows ReleaseSafe job stalled the same way that day, so both Windows
+jobs now run serially until the 0.17 upgrade, and roadmap item 9 becomes confirming the fix then.
+
 ## 2026-10-28: Zig 0.17.0, ported
 
 The upgrade plan was accepted and ported on `claude/zig-0.17` against 0.17.0. It needed far less
