@@ -9147,7 +9147,7 @@ fn callMapTransform(
 /// when an item is itself a collection or object.
 fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List, name: []const u8, arguments: []const Value) Error!Value {
     const items = list.items.items;
-    const Method = enum { @"empty?", @"contains?", chain, chunks, windows, pairs, take, drop, reverse, unique, zip, sum, average, min, max, sort, shuffle, random };
+    const Method = enum { @"empty?", @"contains?", chain, chunks, windows, pairs, take, drop, reverse, unique, zip, sum, average, min, max, sort, shuffle, random, join };
     return switch (std.meta.stringToEnum(Method, name).?) {
         .@"empty?" => .initBool(items.len == 0),
         .@"contains?" => blk: {
@@ -9290,6 +9290,16 @@ fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List,
             break :blk value;
         },
         .sum => self.sumList(span, list),
+        .join => blk: {
+            const separator = if (arguments.len == 1) arguments[0].data.string.bytes else "";
+            var joined: std.ArrayList(u8) = .empty;
+            errdefer joined.deinit(self.gpa);
+            for (items, 0..) |item, index| {
+                if (index > 0) try joined.appendSlice(self.gpa, separator);
+                try joined.appendSlice(self.gpa, item.data.string.bytes);
+            }
+            break :blk self.ownedText(try joined.toOwnedSlice(self.gpa));
+        },
         .average => averageList(list),
         .min, .max => self.listExtreme(span, list, std.mem.eql(u8, name, "min")),
         .sort => blk: {
@@ -10012,6 +10022,7 @@ fn intMethod(self: *Interpreter, span: Source.Span, value: i64, name: []const u8
         lcm,
         factorial,
         to_float,
+        to_character,
     };
 
     return switch (std.meta.stringToEnum(Method, name).?) {
@@ -10051,6 +10062,25 @@ fn intMethod(self: *Interpreter, span: Source.Span, value: i64, name: []const u8
         .lcm => self.integerLcm(span, value, arguments[0].data.int),
         .factorial => self.integerFactorial(span, value),
         .to_float => .initFloat(@floatFromInt(value)),
+        .to_character => blk: {
+            const problem: ?[]const u8 = if (value < 0)
+                "it is negative"
+            else if (value > 0x10FFFF)
+                "it is past 1114111, the largest code point"
+            else if (value >= 0xD800 and value <= 0xDFFF)
+                "55296 to 57343 are surrogates, which only UTF-16 uses, in pairs"
+            else
+                null;
+            if (problem) |why| return self.raiseFmt(
+                span,
+                "{d} is not a character's code point: {s}",
+                .{ value, why },
+                "Pass a code point such as one from `code_points()`: 0 to 1114111, leaving out 55296 to 57343.",
+            );
+            var buffer: [4]u8 = undefined;
+            const length = std.unicode.utf8Encode(@intCast(value), &buffer) catch unreachable;
+            break :blk self.heap.copyText(buffer[0..length]);
+        },
     };
 }
 
@@ -10474,6 +10504,12 @@ fn stringMethod(self: *Interpreter, span: Source.Span, bytes: []const u8, name: 
         split,
         partition,
         lines,
+        words,
+        @"letter?",
+        @"digit?",
+        @"whitespace?",
+        @"upper?",
+        @"lower?",
         chars,
         code_points,
         bytes,
@@ -10490,6 +10526,11 @@ fn stringMethod(self: *Interpreter, span: Source.Span, bytes: []const u8, name: 
     return switch (std.meta.stringToEnum(Method, name).?) {
         .@"empty?" => .initBool(bytes.len == 0),
         .@"blank?" => .initBool(strings.isBlank(bytes)),
+        .@"letter?" => .initBool(strings.everyCharacter(bytes, .letter)),
+        .@"digit?" => .initBool(strings.everyCharacter(bytes, .digit)),
+        .@"whitespace?" => .initBool(strings.everyCharacter(bytes, .whitespace)),
+        .@"upper?" => .initBool(strings.everyCharacter(bytes, .upper)),
+        .@"lower?" => .initBool(strings.everyCharacter(bytes, .lower)),
         .@"contains?" => .initBool(try strings.contains(gpa, bytes, arguments[0].data.string.bytes)),
         .@"starts_with?" => .initBool(try strings.startsWith(gpa, bytes, arguments[0].data.string.bytes)),
         .@"ends_with?" => .initBool(try strings.endsWith(gpa, bytes, arguments[0].data.string.bytes)),
@@ -10576,6 +10617,7 @@ fn stringMethod(self: *Interpreter, span: Source.Span, bytes: []const u8, name: 
             break :blk self.stringTuple(parts);
         },
         .lines => self.stringList(try strings.lines(gpa, bytes)),
+        .words => self.stringList(try strings.words(gpa, bytes)),
         .chars => blk: {
             const pieces = try strings.characters(gpa, bytes);
             defer gpa.free(pieces);

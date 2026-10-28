@@ -1,0 +1,16 @@
+diagnostics/list-join.em:1:14: `join` needs a List of Strings, but this is List[Int]
+  print([1, 2].join(", "))
+               ^^^^
+Turn each item into text first, as in `items.map { item => "#{item}" }.join(", ")`.
+diagnostics/list-join.em:2:18: this is Int, but `join` needs a String to put between the items
+  print(["a"].join(1))
+                   ^
+Pass the separator as text, as in `join(", ")`, or nothing to join them directly.
+diagnostics/list-join.em:3:18: `join` takes 0 or 1 arguments, but this call passes 2
+  print(["a", "b"].join(", ", "and"))
+                   ^^^^
+Match the number of arguments to what the method needs.
+diagnostics/list-join.em:5:19: `join` needs a List of Strings, but this is List[String?]
+  print(maybe_names.join(", "))
+                    ^^^^
+Turn each item into text first, as in `items.map { item => "#{item}" }.join(", ")`.

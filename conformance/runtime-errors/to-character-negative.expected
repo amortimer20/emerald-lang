@@ -1,0 +1,4 @@
+runtime-errors/to-character-negative.em:3:8: -1 is not a character's code point: it is negative
+  print((-1).to_character())
+         ^^^^^^^^^^^^^^^^^^
+Pass a code point such as one from `code_points()`: 0 to 1114111, leaving out 55296 to 57343.

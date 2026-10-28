@@ -203,6 +203,14 @@
       "insertTextFormat": 2
     },
     {
+      "label": "join",
+      "kind": 2,
+      "detail": "join(separator: String = \"\"): String",
+      "documentation": "The Strings run together, with the separator between each pair.",
+      "insertText": "join($0)",
+      "insertTextFormat": 2
+    },
+    {
       "label": "last",
       "kind": 10,
       "detail": "last: String?",

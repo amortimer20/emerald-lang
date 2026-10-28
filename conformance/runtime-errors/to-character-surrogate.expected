@@ -1,0 +1,4 @@
+runtime-errors/to-character-surrogate.em:3:7: 55296 is not a character's code point: 55296 to 57343 are surrogates, which only UTF-16 uses, in pairs
+  print(55296.to_character())
+        ^^^^^^^^^^^^^^^^^^^^
+Pass a code point such as one from `code_points()`: 0 to 1114111, leaving out 55296 to 57343.

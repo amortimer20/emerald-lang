@@ -147,6 +147,14 @@
       "insertTextFormat": 1
     },
     {
+      "label": "to_character",
+      "kind": 2,
+      "detail": "to_character(): String",
+      "documentation": "The character this number is the code point of, as a one-character String.",
+      "insertText": "to_character()",
+      "insertTextFormat": 1
+    },
+    {
       "label": "to_float",
       "kind": 2,
       "detail": "to_float(): Float",

@@ -1472,7 +1472,7 @@ natural applicability and exact return-type review:
 - transformation: `map`, `filter`, `reject`, `flat_map`, `filter_map`;
 - portions: `take`, `drop`, `take_while`, `drop_while`;
 - grouping: `group_by`, `partition`, `frequencies`;
-- aggregation: `reduce`, `sum`, `average`, `min`, `max`, `min_by`, `max_by`, `min_max`;
+- aggregation: `reduce`, `sum`, `average`, `min`, `max`, `min_by`, `max_by`, `min_max`, `join`;
 - combining and shapes: `zip`, `chain`, `chunks`, `windows`, `pairs`;
 - ordering: `sort`, `sort_by`, `reverse`, `shuffle`;
 - uniqueness: `unique`, `unique_by`;
@@ -1602,6 +1602,12 @@ type and visits items from left to right. An empty numeric List returns its addi
 Float accumulation follows Emerald's ordinary IEEE-754 arithmetic, including `Infinity` and
 `NaN`. Other List element types receive a correction toward mapping to numbers first.
 
+`join(separator = "")` is a List operation for `List[String]` only: it runs the items together
+with the separator between each pair, and an empty List joins to `""`. Any other element type,
+an optional `String` included, gets a correction toward `map` first, because joining through a
+value's display form would make the result depend on `Textual` (15.1) without the program
+saying so.
+
 `average()` is currently a List operation for `List[Int]` and `List[Float]`. It returns `Float?`:
 `nothing` for an empty List, otherwise the arithmetic mean after each Int has widened as it
 would for an ordinary Float operation. This keeps a fractional Int-list result visible, such
@@ -1698,11 +1704,12 @@ The accepted vocabulary should be normalized to full descriptive names:
 - size and conversion: `count`, `empty?`, `chars`, `code_points`, `bytes`, `to_string`;
 - casing: `upper`, `lower`, `capitalize`;
 - whitespace: `trim`, `trim_start`, `trim_end`, `blank?`;
+- character tests: `letter?`, `digit?`, `whitespace?`, `upper?`, `lower?`;
 - search: `contains?`, `starts_with?`, `ends_with?`, `index_of`;
 - editing by result: `replace`, `insert_at`, `substring`, `reverse`, `repeat`,
   `remove_prefix`, `remove_suffix`, `collapse_repeats`;
 - layout: `pad_start`, `pad_end`, `pad_center`;
-- decomposition: `split`, `lines`;
+- decomposition: `split`, `lines`, `words`;
 - structural helpers: `partition`;
 - parsing families: `to_int`, `to_int_or`, `to_int_maybe`, and corresponding float
   forms.
@@ -1721,6 +1728,18 @@ start and `count` is a valid index that appends. A negative index or one beyond 
 is an error. `remove_prefix(prefix)` and `remove_suffix(suffix)` each return the original
 string unchanged when it does not match. Their match is canonical, as it is for equality,
 and a successful removal preserves the receiver's remaining original bytes.
+
+`words()` splits on runs of `White_Space` and keeps no empty pieces, so leading, trailing,
+and doubled whitespace adds nothing; `split(" ")` keeps them, which is why the two are
+different names rather than `split()` with a default.
+
+The character tests (the user, 2026-10-28; `stdlib-additions-design-plan.md`) are each false
+for an empty string and otherwise ask about every grapheme, which passes when its first code
+point does. `letter?()` reads Unicode's `Alphabetic`; `digit?()` accepts only ASCII `0` to
+`9`, the digits `to_int` reads, so the two never disagree; `whitespace?()` reads
+`White_Space`, as `trim` does. `upper?()` and `lower?()` ignore graphemes without case and
+need at least one with case, so `"A1".upper?()` is true and `"1".upper?()` is false. Emerald
+has no character type, so these live on `String` and are asked of `chars()`'s items.
 
 `collapse_repeats()` replaces each run of adjacent canonically equal graphemes with its
 first grapheme. `partition(separator)` returns a three-part tuple of the text before the
@@ -1790,7 +1809,8 @@ abs, clamp, between?, zero?, positive?, negative?, to_string
 `Int` additionally supports:
 
 ```text
-even?, odd?, multiple_of?, digits, gcd, lcm, factorial, times, up_to, down_to, to_float
+even?, odd?, multiple_of?, digits, gcd, lcm, factorial, times, up_to, down_to, to_float,
+to_character
 ```
 
 `Float` additionally supports:
@@ -1810,6 +1830,10 @@ left-to-right order in which the number is written, and `0.digits()` is `[0]`.
 but a zero divisor is an error. Factorial accepts zero and positive integers, with
 `0.factorial()` equal to `1`. An absolute value, GCD, LCM, or factorial that cannot fit in
 the signed 64-bit `Int` range raises a runtime error rather than wrapping.
+
+`to_character()` is `code_points()`'s inverse: the one-character `String` whose code point the
+number is. A number that is not a Unicode scalar value (negative, past 1114111, or a surrogate
+from 55296 to 57343) raises, with the reason, rather than producing a replacement character.
 
 `times`, `up_to`, and `down_to` are the counting forms described in 6.4. `up_to` and
 `down_to` produce ordinary `Range` values without a block and run that Range immediately
@@ -1882,7 +1906,7 @@ historical implementation.
 | Family | Recovered rewrite decisions |
 | --- | --- |
 | `String` | The complete vocabulary in 9.2, including logical `pad_start`/`pad_end`, optional `index_of`, and the three-policy parsing families |
-| `Int` | `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `even?`, `odd?`, `multiple_of?`, `digits`, `gcd`, `lcm`, `factorial`, `times`, `up_to`, `down_to`, `to_float`, `to_string` |
+| `Int` | `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `even?`, `odd?`, `multiple_of?`, `digits`, `gcd`, `lcm`, `factorial`, `times`, `up_to`, `down_to`, `to_float`, `to_character`, `to_string` |
 | `Float` | `abs`, `clamp`, `between?`, `zero?`, `positive?`, `negative?`, `floor`, `ceil`, `round`, `round_to`, `truncate`, `finite?`, `infinite?`, `nan?`, `to_int`, `to_string` |
 | `List` | `append`, `insert`, `remove`, `remove_all`, `remove_at`, `remove_first`, `remove_last`, `clear`, plus applicable rich collection operations |
 | `Dictionary` | bracket lookup and assignment, `contains_key?`, `contains_value?`, `keys`, `values`, `entries`, `remove`, `merge`, `map_keys`, `map_values`, plus applicable rich collection operations |

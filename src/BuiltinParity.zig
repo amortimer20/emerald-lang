@@ -152,6 +152,9 @@ fn appendProbe(builder: *Builder, member: Builtins.Member, signature: Builtins.S
     try builder.add("const pair = (1, \"a\")\nconst point = ProbeStruct(1)\nconst object = ProbeClass(1)\nconst shade = ProbeEnum.red\n");
     // to_dictionary is defined only for a list of pairs.
     if (std.mem.eql(u8, member.name, "to_dictionary")) try builder.add("var pairs = [(\"a\", 2.5)]\n");
+    // join is defined only for a list of strings.
+    const joins = Builtins.sameOwner(member.owner, "List") and std.mem.eql(u8, member.name, "join");
+    if (joins) try builder.add("var words = [\"a\", \"b\"]\n");
     const in_group = Builtins.sameOwner(member.owner, "Task") or Builtins.sameOwner(member.owner, "TaskGroup");
     if (in_group) try builder.add("Tasks.run { tasks =>\nvar task = tasks.start { => 2 }\n");
     const statement = member.kind == .statement;
@@ -159,7 +162,7 @@ fn appendProbe(builder: *Builder, member: Builtins.Member, signature: Builtins.S
     if (!statement) try builder.add("print(");
     const start: u32 = @intCast(builder.text.items.len);
     if (member.owner != null) {
-        try builder.add(if (std.mem.eql(u8, member.name, "to_dictionary")) "pairs" else receiver(member));
+        try builder.add(if (std.mem.eql(u8, member.name, "to_dictionary")) "pairs" else if (joins) "words" else receiver(member));
         try builder.add(".");
     }
     try builder.add(member.name);

@@ -829,6 +829,9 @@ pub const list_methods = std.StaticStringMap(ListMethod).initComptime(.{
     .{ "shuffle", ListMethod{ .parameters = &.{}, .result = .list, .mutates = false } },
     .{ "shuffle!", ListMethod{ .parameters = &.{}, .result = .nothing, .mutates = true } },
     .{ "random", ListMethod{ .parameters = &.{}, .result = .element, .mutates = false } },
+    // Only a `List[String]` joins, and its separator is optional; the checker
+    // handles both before this table's generic parameter check runs.
+    .{ "join", ListMethod{ .parameters = &.{}, .result = .element, .mutates = false } },
 });
 
 /// What a `String` method takes and gives. Section 9.2's vocabulary, less what
@@ -871,6 +874,12 @@ pub const string_methods = std.StaticStringMap(StringMethod).initComptime(.{
     .{ "pad_center", StringMethod{ .parameters = &.{ .int, .string }, .optional = 1, .result = .string } },
     .{ "split", StringMethod{ .parameters = &.{.string}, .result = .strings } },
     .{ "lines", StringMethod{ .parameters = &.{}, .result = .strings } },
+    .{ "words", StringMethod{ .parameters = &.{}, .result = .strings } },
+    .{ "letter?", StringMethod{ .parameters = &.{}, .result = .bool } },
+    .{ "digit?", StringMethod{ .parameters = &.{}, .result = .bool } },
+    .{ "whitespace?", StringMethod{ .parameters = &.{}, .result = .bool } },
+    .{ "upper?", StringMethod{ .parameters = &.{}, .result = .bool } },
+    .{ "lower?", StringMethod{ .parameters = &.{}, .result = .bool } },
     .{ "chars", StringMethod{ .parameters = &.{}, .result = .strings } },
     .{ "code_points", StringMethod{ .parameters = &.{}, .result = .ints } },
     .{ "bytes", StringMethod{ .parameters = &.{}, .result = .ints } },
@@ -909,6 +918,7 @@ pub const int_methods = std.StaticStringMap(IntMethod).initComptime(.{
     .{ "lcm", IntMethod{ .parameters = 1, .result = .int } },
     .{ "factorial", IntMethod{ .parameters = 0, .result = .int } },
     .{ "to_float", IntMethod{ .parameters = 0, .result = .float } },
+    .{ "to_character", IntMethod{ .parameters = 0, .result = .string } },
 });
 
 /// Section 9.3's methods on a `Float`. An `Int` is accepted for a `.float`

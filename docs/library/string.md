@@ -37,6 +37,26 @@ A read-only property (no parentheses): the number of graphemes.
 `empty?()` is true only for `""`. `blank?()` is also true for a string of nothing but
 Unicode whitespace.
 
+## Character tests
+
+## letter?() -> Bool
+
+## digit?() -> Bool
+
+## whitespace?() -> Bool
+
+## upper?() -> Bool
+
+## lower?() -> Bool
+
+Each is `false` for `""` and otherwise asks about every character (grapheme), which passes
+when its first code point does, so `"e\u{301}".letter?()` is `true`. `letter?()` reads
+Unicode's `Alphabetic` (`"é"`, `"ß"`, and `"日"` are letters); `digit?()` accepts only `0` to
+`9`, the digits `to_int` reads; `whitespace?()` reads `White_Space`, as `blank?()` does.
+`upper?()` and `lower?()` ignore characters without case but need at least one with case:
+`"A1".upper?()` is `true`, `"1".upper?()` is `false`. Ask them of `chars()`'s items to test
+one character at a time: `password.chars().any? { character => character.digit?() }`.
+
 ## chars() -> List[String]
 
 ## code_points() -> List[Int]
@@ -168,8 +188,13 @@ leftover fill character at the end: `"hi".pad_center(5, "-")` is `"-hi--"`.
 
 ## lines() -> List[String]
 
+## words() -> List[String]
+
 `lines()` omits line endings: a line ends at `\n`, a `\r` immediately before one belongs to
 the ending, and a trailing line ending does not start an empty final line.
+
+`words()` splits on runs of Unicode whitespace and keeps no empty pieces:
+`"  the  quick ".words()` is `["the", "quick"]`, where `split(" ")` would keep the `""`s.
 
 **Raises**, for `split`, when `separator` is `""` (use `chars()` to split into characters).
 

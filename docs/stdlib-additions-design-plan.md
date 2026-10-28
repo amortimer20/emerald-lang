@@ -1,6 +1,7 @@
 # Standard-library additions: design plan
 
-Status: proposed, 2026-10-28, for the user's decision. It covers the twelve gaps the user accepted
+Status: accepted by the user, 2026-10-28 ("Accept, build slice 1"). Slice 1 (text) is built on
+`claude/stdlib-text`; slices 2 and 3 wait. It covers the twelve gaps the user accepted
 as "in" from [`stdlib-audit.md`](stdlib-audit.md) the same day. Nothing here is built.
 
 Each addition is small, and each closes something a first-course program hits in its first weeks.
@@ -91,7 +92,8 @@ print(shift("y", 3)) # b
   Several numbers become text with `codes.map { code => code.to_character() }.join()`, which item 1
   makes possible.
 - A number that is not a Unicode scalar value raises a `RuntimeError` saying why: negative, past
-  `0x10FFFF`, or a surrogate (`0xD800` to `0xDFFF`). This matches `String.repeat` raising for a
+  1114111, or a surrogate (55296 to 57343). The message uses decimal, since Emerald has no
+  hexadecimal literals for a reader to compare with. This matches `String.repeat` raising for a
   negative count. There is no `_maybe` form; nothing has asked for one.
 - *Rejected:* `to_string` (it already gives `"65"`); `chr` (an abbreviation);
   `String.from_code_points` (no `String` namespace, see item 1).

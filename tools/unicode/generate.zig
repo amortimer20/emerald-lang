@@ -106,6 +106,11 @@ pub fn main(init: std.process.Init) !void {
     try writeRanges(arena, out, "xid_continue", core, "XID_Continue");
     try writeRanges(arena, out, "white_space", properties, "White_Space");
 
+    // String's character tests (9.2): `letter?()`, `upper?()`, and `lower?()`.
+    try writeRanges(arena, out, "alphabetic", core, "Alphabetic");
+    try writeRanges(arena, out, "uppercase", core, "Uppercase");
+    try writeRanges(arena, out, "lowercase", core, "Lowercase");
+
     // Regular expressions' \w (UTS #18, Annex C): Alphabetic, every Mark,
     // Decimal_Number, Connector_Punctuation, and Join_Control, as one table.
     var word: std.ArrayList(Range) = .empty;
