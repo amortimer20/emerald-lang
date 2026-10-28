@@ -281,7 +281,7 @@ Open work:
     conformance test.
   - **With the Zig 0.17 upgrade** (roadmap item 8), remove both `-j1` flags and run the parallel
     Windows suite repeatedly to confirm. The throwaway branch `claude/windows-stall-experiment`
-    can be deleted when the user chooses.
+    was deleted (2026-10-28, at `8043db7`).
 - **Editor intelligence**, below: done, with two remaining gaps.
 
 **Editor intelligence** (the user's go-ahead, 2026-09-28; built by Codex, reviewed by
