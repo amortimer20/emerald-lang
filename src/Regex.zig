@@ -1035,6 +1035,17 @@ fn expectRefused(pattern: []const u8, position: usize, fragment: []const u8) !vo
     }
 }
 
+/// `text` written `times` times over, at compile time: Zig 0.17 dropped the
+/// array repetition operator these tests used.
+fn repeated(comptime text: []const u8, comptime times: usize) *const [text.len * times]u8 {
+    const result = comptime built: {
+        var out: [text.len * times]u8 = undefined;
+        for (0..times) |index| @memcpy(out[index * text.len ..][0..text.len], text);
+        break :built out;
+    };
+    return &result;
+}
+
 test "literals, sets, and shorthands" {
     try expectFind("cat", "concatenate", &.{"cat"});
     try expectFind("dog", "concatenate", null);
@@ -1159,7 +1170,7 @@ test "a matcher runs again from where the last match ended" {
     var program = try compile(testing.allocator, "(\\w)\\w*", .{}, &problem);
     defer program.deinit();
     // Long enough that one run resets its scratch space along the way.
-    const subject = "é" ++ "a" ** 300 ++ " be\u{301}e, x";
+    const subject = "é" ++ repeated("a", 300) ++ " be\u{301}e, x";
     const text = try Text.init(testing.allocator, subject);
     defer text.deinit(testing.allocator);
     const slots = try testing.allocator.alloc(usize, program.slotCount());

@@ -61,7 +61,7 @@ fn emit(writer: *std.Io.Writer, value: anytype) std.Io.Writer.Error!void {
         .bool => try writer.writeAll(if (value) "true" else "false"),
         .int => try writer.print("{d}", .{value}),
         // Exact, whatever the value: its bits, not a decimal rendering.
-        .float => try writer.print("@bitCast(@as(u{d}, 0x{x}))", .{ @bitSizeOf(T), @as(std.meta.Int(.unsigned, @bitSizeOf(T)), @bitCast(value)) }),
+        .float => try writer.print("@bitCast(@as(u{d}, 0x{x}))", .{ @bitSizeOf(T), @as(@Int(.unsigned, @bitSizeOf(T)), @bitCast(value)) }),
         .@"enum" => try writer.print(".{f}", .{std.zig.fmtIdP(@tagName(value))}),
         .void => try writer.writeAll("{}"),
         .optional => if (value) |inner| try emit(writer, inner) else try writer.writeAll("null"),
@@ -86,19 +86,19 @@ fn emit(writer: *std.Io.Writer, value: anytype) std.Io.Writer.Error!void {
         },
         .@"struct" => |info| {
             try writer.writeAll(".{");
-            inline for (info.fields, 0..) |field, index| {
+            inline for (info.field_names, 0..) |name, index| {
                 if (index > 0) try writer.writeAll(",");
-                try writer.print(".{f}=", .{std.zig.fmtIdP(field.name)});
-                try emit(writer, @field(value, field.name));
+                try writer.print(".{f}=", .{std.zig.fmtIdP(name)});
+                try emit(writer, @field(value, name));
             }
             try writer.writeAll("}");
         },
         .@"union" => |info| {
             const tag = std.meta.activeTag(value);
-            inline for (info.fields) |field| {
-                if (std.mem.eql(u8, field.name, @tagName(tag))) {
-                    try writer.print(".{{.{f}=", .{std.zig.fmtIdP(field.name)});
-                    try emit(writer, @field(value, field.name));
+            inline for (info.field_names) |name| {
+                if (std.mem.eql(u8, name, @tagName(tag))) {
+                    try writer.print(".{{.{f}=", .{std.zig.fmtIdP(name)});
+                    try emit(writer, @field(value, name));
                     try writer.writeAll("}");
                     return;
                 }

@@ -450,17 +450,17 @@ pub const Session = struct {
 
         fn read(interpreter: *Interpreter) Declarations {
             var result: Declarations = undefined;
-            inline for (std.meta.fields(Declarations)) |field| @field(result, field.name) = @field(interpreter, field.name);
+            inline for (comptime std.meta.fieldNames(Declarations)) |name| @field(result, name) = @field(interpreter, name);
             return result;
         }
 
         fn install(self: Declarations, interpreter: *Interpreter) void {
-            inline for (std.meta.fields(Declarations)) |field| @field(interpreter, field.name) = @field(self, field.name);
+            inline for (comptime std.meta.fieldNames(Declarations)) |name| @field(interpreter, name) = @field(self, name);
         }
 
         fn snapshot(self: Declarations, arena: std.mem.Allocator) !Declarations {
             var result: Declarations = undefined;
-            inline for (std.meta.fields(Declarations)) |field| @field(result, field.name) = try @field(self, field.name).clone(arena);
+            inline for (comptime std.meta.fieldNames(Declarations)) |name| @field(result, name) = try @field(self, name).clone(arena);
             // Rollback can release a failed type initializer's error. Its
             // archived view is another holder, just like the active table.
             var setups = result.type_setups.valueIterator();
@@ -2753,13 +2753,21 @@ fn setUpType(self: *Interpreter, type_key: []const u8, member: ?[]const u8, span
     }
 
     setup.state = .running;
-    errdefer |setup_error| {
+    // A failed setup remembers why, so a later reach reports the same error.
+    self.runTypeSetup(setup, type_key, span) catch |setup_error| {
         setup.state = .failed;
         if (setup_error == error.Raised) {
             setup.failed_value = if (self.task.state.raised_value) |value| Heap.retain(value) else null;
             setup.failed_diagnostic = self.task.state.failure;
         }
-    }
+        return setup_error;
+    };
+    setup.state = .done;
+}
+
+/// `setUpType`'s work once the setup is running: each type-level field's
+/// value, in declaration order, in the declaring file's scope.
+fn runTypeSetup(self: *Interpreter, setup: *TypeSetup, type_key: []const u8, span: Source.Span) Error!void {
     try self.task.state.call_stack.append(self.gpa, .{
         .function = setup.frame_name,
         .call_span = span,
@@ -2791,7 +2799,6 @@ fn setUpType(self: *Interpreter, type_key: []const u8, member: ?[]const u8, span
             return error.OutOfMemory;
         };
     }
-    setup.state = .done;
 }
 
 fn reachFile(self: *Interpreter, key: []const u8, span: Source.Span) Error!void {
@@ -6396,7 +6403,7 @@ const JsonBuilder = struct {
     span: Source.Span,
     descriptor: *const Value.StructType,
     fields: JsonFields,
-    kinds: [std.meta.fields(Json.Kind).len]Value,
+    kinds: [std.meta.fieldNames(Json.Kind).len]Value,
     empty_text: Value,
     empty_items: Value,
     empty_entries: Value,
@@ -6446,7 +6453,7 @@ const JsonBuilder = struct {
             interpreter.gpa.free(fields);
         };
         const at = self.fields;
-        fields[at.kind] = Heap.retain(self.kinds[@intFromEnum(json.kind)]);
+        fields[at.kind] = Heap.retain(self.kinds[@backingInt(json.kind)]);
         fields[at.bool] = .initBool(json.bool_value);
         fields[at.number] = .initFloat(json.float_value);
         fields[at.whole] = .initBool(json.is_integer);
@@ -6795,7 +6802,7 @@ fn raiseJson(self: *Interpreter, span: Source.Span, message: []const u8) Error {
 
 fn jsonFromValue(arena: std.mem.Allocator, at: JsonFields, value: Value) std.mem.Allocator.Error!Json.Value {
     const fields = value.data.struct_value.fields;
-    const kind: Json.Kind = @enumFromInt(fields[at.kind].data.struct_value.variant);
+    const kind: Json.Kind = @fromBackingInt(@intCast(fields[at.kind].data.struct_value.variant));
     return switch (kind) {
         .null => .initNull(),
         .bool => .initBool(fields[at.bool].data.bool),

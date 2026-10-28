@@ -397,7 +397,7 @@ fn hashInto(gpa: std.mem.Allocator, value: Value, hasher: *std.hash.Wyhash, hash
         .struct_value => .struct_value,
         .list, .map, .closure => .unhashable,
     };
-    hasher.update(&.{@intFromEnum(tag)});
+    hasher.update(&.{@backingInt(tag)});
 
     switch (value.data) {
         .nothing => {},

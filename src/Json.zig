@@ -859,6 +859,17 @@ fn expectWritten(value: Value, options: WriteOptions, expected: []const u8) !voi
     try testing.expectEqualStrings(expected, out.written());
 }
 
+/// `text` written `times` times over, at compile time: Zig 0.17 dropped the
+/// array repetition operator these tests used.
+fn repeated(comptime text: []const u8, comptime times: usize) *const [text.len * times]u8 {
+    const result = comptime built: {
+        var out: [text.len * times]u8 = undefined;
+        for (0..times) |index| @memcpy(out[index * text.len ..][0..text.len], text);
+        break :built out;
+    };
+    return &result;
+}
+
 test "every kind of scalar" {
     var document = try expectParses("[null, true, false, \"hi\", 42, -3.5, 1e2]");
     defer document.deinit();
@@ -891,8 +902,8 @@ test "objects keep their keys in the order they were written" {
 }
 
 test "a deeply nested list parses without recursing through Zig's call stack" {
-    const opens = "[" ** max_depth;
-    const closes = "]" ** max_depth;
+    const opens = repeated("[", max_depth);
+    const closes = repeated("]", max_depth);
     var document = try expectParses(opens ++ closes);
     defer document.deinit();
     var at = document.root;
@@ -990,7 +1001,7 @@ test "text after the root value is refused" {
 }
 
 test "nesting past the depth limit is refused" {
-    const opens = "[" ** (max_depth + 1);
+    const opens = repeated("[", max_depth + 1);
     try expectRefused(opens, 1, max_depth + 1, "this document is nested more than 512 levels deep");
 }
 
@@ -1070,7 +1081,7 @@ test "a string ending in a backslash is unterminated" {
 }
 
 test "a message too long for its buffer is cut at a character boundary" {
-    const key = "\u{E9}" ** 300;
+    const key = repeated("\u{E9}", 300);
     var problem: Problem = .{};
     try testing.expectError(error.InvalidJson, parse(testing.allocator, "{\"" ++ key ++ "\":1,\"" ++ key ++ "\":2}", &problem));
     try testing.expect(std.unicode.utf8ValidateSlice(problem.message()));

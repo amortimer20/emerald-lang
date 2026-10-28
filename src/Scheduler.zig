@@ -20,8 +20,8 @@ pub const SharedAllocator = struct {
 
     fn PoolSet() type {
         var types: [9]type = undefined;
-        for (&types, 0..) |*item, index| item.* = std.heap.MemoryPoolAligned([16 << index]u8, .fromByteUnits(16));
-        return std.meta.Tuple(&types);
+        for (&types, 0..) |*item, index| item.* = std.heap.memory_pool.Aligned([16 << index]u8, .fromByteUnits(16));
+        return @Tuple(&types);
     }
 
     fn poolSize(len: usize, alignment: std.mem.Alignment) ?usize {

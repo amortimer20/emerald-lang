@@ -9,7 +9,7 @@ authoritative if it has become stale.
 
 ## Toolchain and commands
 
-Zig `0.16.0` is pinned in both `mise.toml` and `toolchain/zig-version.txt`. Confirm the
+Zig `0.17.0` is pinned in both `mise.toml` and `toolchain/zig-version.txt`. Confirm the
 selected compiler and its required APIs before changing Zig code:
 
 ```bash

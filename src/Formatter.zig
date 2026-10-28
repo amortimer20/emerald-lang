@@ -1102,7 +1102,7 @@ const Printer = struct {
     /// operator, the left side of a right-associative one).
     fn printOperand(self: *Printer, expr: *const Ast.Expression, min_level: Level, strict: bool) PrintError!void {
         const level = self.levelOf(expr);
-        const needs_parens = @intFromEnum(level) < @intFromEnum(min_level) or (strict and level == min_level);
+        const needs_parens = @backingInt(level) < @backingInt(min_level) or (strict and level == min_level);
         if (needs_parens) {
             try self.write("(");
             try self.printExpr(expr);

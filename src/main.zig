@@ -54,7 +54,7 @@ const Command = enum { check, run, @"test", format, repl, lsp, explain, help };
 /// made a loop that declares a local 100 times slower than one that does not.
 /// Leak checking stays in Debug builds, where the tests run.
 fn runtimeAllocator(init: std.process.Init) std.mem.Allocator {
-    return if (builtin.mode == .Debug) init.gpa else std.heap.smp_allocator;
+    return if (builtin.mode == .debug) init.gpa else std.heap.smp_allocator;
 }
 
 pub fn main(init: std.process.Init) !u8 {
@@ -302,14 +302,14 @@ fn resolveColor(io: std.Io, environ_map: *const std.process.Environ.Map, flag: ?
 
 fn printGlobalHelp(io: std.Io) !u8 {
     try writeAll(io, .stdout, global_help);
-    return @intFromEnum(ExitCode.success);
+    return @backingInt(ExitCode.success);
 }
 
 fn printVersion(io: std.Io) !u8 {
     var buffer: [128]u8 = undefined;
     const text = std.fmt.bufPrint(&buffer, "Emerald {s}\n", .{emerald.build_version}) catch "Emerald\n";
     try writeAll(io, .stdout, text);
-    return @intFromEnum(ExitCode.success);
+    return @backingInt(ExitCode.success);
 }
 
 fn executeHelp(io: std.Io, topics: []const []const u8) !u8 {
@@ -381,7 +381,7 @@ fn printCommandHelp(io: std.Io, command: Command) !u8 {
         ,
     };
     try writeAll(io, .stdout, text);
-    return @intFromEnum(ExitCode.success);
+    return @backingInt(ExitCode.success);
 }
 
 fn executeExplain(io: std.Io, arguments: []const []const u8) !u8 {
@@ -395,7 +395,7 @@ fn executeExplain(io: std.Io, arguments: []const []const u8) !u8 {
         .{ code.text(), explanation.title, explanation.example, explanation.correction },
     ) catch "Emerald could not prepare this explanation.\n";
     try writeAll(io, .stdout, text);
-    return @intFromEnum(ExitCode.success);
+    return @backingInt(ExitCode.success);
 }
 
 fn unknownExplanation(io: std.Io, code: []const u8) !u8 {
@@ -406,7 +406,7 @@ fn unknownExplanation(io: std.Io, code: []const u8) !u8 {
         .{code},
     ) catch "emerald: this is not an explained diagnostic code\nRun `emerald help explain` for usage.\n";
     try writeAll(io, .stderr, message);
-    return @intFromEnum(ExitCode.invalid_usage);
+    return @backingInt(ExitCode.invalid_usage);
 }
 
 fn unknownCommand(io: std.Io, name: []const u8) !u8 {
@@ -414,7 +414,7 @@ fn unknownCommand(io: std.Io, name: []const u8) !u8 {
     const message = std.fmt.bufPrint(&buffer, "emerald: unknown command `{s}`\nRun `emerald help` to see available commands.\n", .{name}) catch
         "emerald: unknown command\nRun `emerald help` to see available commands.\n";
     try writeAll(io, .stderr, message);
-    return @intFromEnum(ExitCode.invalid_usage);
+    return @backingInt(ExitCode.invalid_usage);
 }
 
 fn commandMisuse(io: std.Io, command: ?Command, detail: []const u8) !u8 {
@@ -426,7 +426,7 @@ fn commandMisuse(io: std.Io, command: ?Command, detail: []const u8) !u8 {
         std.fmt.bufPrint(&buffer, "emerald: {s}\nRun `emerald help` to see available commands.\n", .{detail}) catch
             "emerald: invalid command usage\nRun `emerald help` to see available commands.\n";
     try writeAll(io, .stderr, message);
-    return @intFromEnum(ExitCode.invalid_usage);
+    return @backingInt(ExitCode.invalid_usage);
 }
 
 fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u8, program_arguments: []const []const u8, terminal: Terminal, environment: std.process.Environ, local_zone: TimeZone.Local) !u8 {
@@ -439,7 +439,7 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
             err,
         }) catch "emerald: cannot read the requested file\n";
         try writeAll(io, .stderr, message);
-        return @intFromEnum(ExitCode.missing_input);
+        return @backingInt(ExitCode.missing_input);
     };
     defer project.deinit(gpa);
 
@@ -490,13 +490,13 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
     var warned = false;
     if (report.diagnostics.len != 0) {
         try writeDiagnostics(gpa, io, sources, report.diagnostics);
-        if (emerald.Diagnostic.anyErrors(report.diagnostics)) return @intFromEnum(ExitCode.source_diagnostics);
+        if (emerald.Diagnostic.anyErrors(report.diagnostics)) return @backingInt(ExitCode.source_diagnostics);
         warned = true;
     }
 
     if (report.failure) |failure| {
         try writeDiagnostics(gpa, io, sources, &.{failure});
-        return @intFromEnum(ExitCode.runtime_error);
+        return @backingInt(ExitCode.runtime_error);
     }
 
     if (report.exit_code) |code| return code;
@@ -510,7 +510,7 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
             else
                 try std.fmt.bufPrint(&buffer, "{d} tests, {d} failed.\n", .{ report.test_count, report.test_failures.len });
             try writeAll(io, .stdout, summary);
-            return @intFromEnum(ExitCode.test_failures);
+            return @backingInt(ExitCode.test_failures);
         }
         var buffer: [128]u8 = undefined;
         const summary = if (report.test_count == 1)
@@ -520,9 +520,9 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
         try writeAll(io, .stdout, summary);
     }
 
-    if (warned) return @intFromEnum(ExitCode.source_diagnostics);
+    if (warned) return @backingInt(ExitCode.source_diagnostics);
     if (command == .check) try writeAll(io, .stdout, "No problems found.\n");
-    return @intFromEnum(ExitCode.success);
+    return @backingInt(ExitCode.success);
 }
 
 /// `emerald format` and `emerald format --check` (18.3). Formatting is
@@ -537,7 +537,7 @@ fn executeFormat(gpa: std.mem.Allocator, io: std.Io, path: []const u8, check_onl
         const message = std.fmt.bufPrint(&buffer, "emerald: cannot read '{s}': {t}\n", .{ path, err }) catch
             "emerald: cannot read the requested file\n";
         try writeAll(io, .stderr, message);
-        return @intFromEnum(ExitCode.missing_input);
+        return @backingInt(ExitCode.missing_input);
     };
     defer project.deinit(gpa);
 
@@ -549,7 +549,7 @@ fn executeFormat(gpa: std.mem.Allocator, io: std.Io, path: []const u8, check_onl
 
     if (report.diagnostics.len != 0) {
         try writeDiagnostics(gpa, io, sources, report.diagnostics);
-        return @intFromEnum(ExitCode.source_diagnostics);
+        return @backingInt(ExitCode.source_diagnostics);
     }
 
     var changed_count: usize = 0;
@@ -568,7 +568,7 @@ fn executeFormat(gpa: std.mem.Allocator, io: std.Io, path: []const u8, check_onl
             const message = std.fmt.bufPrint(&buffer, "emerald: cannot write '{s}': {t}\n", .{ file.source.path, err }) catch
                 "emerald: cannot write the formatted file\n";
             try writeAll(io, .stderr, message);
-            return @intFromEnum(ExitCode.internal_failure);
+            return @backingInt(ExitCode.internal_failure);
         };
     }
 
@@ -577,7 +577,7 @@ fn executeFormat(gpa: std.mem.Allocator, io: std.Io, path: []const u8, check_onl
         const message = std.fmt.bufPrint(&buffer, "Run `emerald format {s}` to apply these changes.\n", .{path}) catch
             "Run `emerald format <file.em>` to apply these changes.\n";
         try writeAll(io, .stdout, message);
-        return @intFromEnum(ExitCode.source_diagnostics);
+        return @backingInt(ExitCode.source_diagnostics);
     }
     if (!check_only and changed_count != 0) {
         var buffer: [128]u8 = undefined;
@@ -587,7 +587,7 @@ fn executeFormat(gpa: std.mem.Allocator, io: std.Io, path: []const u8, check_onl
             std.fmt.bufPrint(&buffer, "Formatted {d} files.\n", .{changed_count}) catch "Formatted files.\n";
         try writeAll(io, .stdout, message);
     }
-    return @intFromEnum(ExitCode.success);
+    return @backingInt(ExitCode.success);
 }
 
 /// A failure of Emerald itself rather than of the program, which section 18.1
@@ -619,7 +619,7 @@ fn executeRepl(gpa: std.mem.Allocator, io: std.Io, environment: std.process.Envi
         error.WriteFailed => return internalFailure(io, error.WriteFailed),
         error.ReadFailed => {
             try writeAll(io, .stderr, "emerald: could not read from the terminal\n");
-            return @intFromEnum(ExitCode.internal_failure);
+            return @backingInt(ExitCode.internal_failure);
         },
         error.StackUnavailable => return internalFailure(io, error.StackUnavailable),
     };
@@ -639,14 +639,14 @@ fn executeLsp(gpa: std.mem.Allocator, io: std.Io) !u8 {
         error.WriteFailed => return internalFailure(io, error.WriteFailed),
         error.ReadFailed => {
             try writeAll(io, .stderr, "emerald: could not read from the client\n");
-            return @intFromEnum(ExitCode.internal_failure);
+            return @backingInt(ExitCode.internal_failure);
         },
         error.MissingContentLength => {
             try writeAll(io, .stderr, "emerald: the client's message was not framed correctly\n");
-            return @intFromEnum(ExitCode.internal_failure);
+            return @backingInt(ExitCode.internal_failure);
         },
     };
-    return @intFromEnum(ExitCode.success);
+    return @backingInt(ExitCode.success);
 }
 
 fn internalFailure(io: std.Io, err: emerald.Error) !u8 {
@@ -656,7 +656,7 @@ fn internalFailure(io: std.Io, err: emerald.Error) !u8 {
         error.WriteFailed => "emerald: could not write the program's output\n",
     };
     try writeAll(io, .stderr, message);
-    return @intFromEnum(ExitCode.internal_failure);
+    return @backingInt(ExitCode.internal_failure);
 }
 
 fn writeDiagnostics(

@@ -20,14 +20,14 @@ pub fn build(b: *std.Build) void {
     const front_module = b.createModule(.{
         .root_source_file = b.path("src/front.zig"),
         .target = b.graph.host,
-        .optimize = .Debug,
+        .optimize = .debug,
     });
     const prelude_ast_tool = b.addExecutable(.{
         .name = "prelude-ast",
         .root_module = b.createModule(.{
             .root_source_file = b.path("tools/prelude_ast.zig"),
             .target = b.graph.host,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "front", .module = front_module }},
         }),
     });
@@ -44,14 +44,16 @@ pub fn build(b: *std.Build) void {
     // default User-Agent, just as the executable prints it for --version.
     emerald_module.addOptions("version_options", version_options);
 
-    // The conformance suite reads Emerald files at test time, so it needs to be
-    // told where they are rather than depending on the working directory.
+    // The conformance suite reads Emerald files at test time, from these
+    // directories relative to the repository root, where its run step starts.
+    // Zig 0.17 no longer accepts a directory as an option path, so they are
+    // plain strings, and the run step always runs (see `run_conformance`).
     const test_options = b.addOptions();
-    test_options.addOptionPath("conformance_dir", b.path("conformance"));
+    test_options.addOption([]const u8, "conformance_dir", "conformance");
     // The house-style checks also read the examples and the documentation.
-    test_options.addOptionPath("examples_dir", b.path("examples"));
-    test_options.addOptionPath("docs_dir", b.path("docs"));
-    test_options.addOptionPath("benchmarks_dir", b.path("benchmarks"));
+    test_options.addOption([]const u8, "examples_dir", "examples");
+    test_options.addOption([]const u8, "docs_dir", "docs");
+    test_options.addOption([]const u8, "benchmarks_dir", "benchmarks");
 
     const conformance_module = b.createModule(.{
         .root_source_file = b.path("src/conformance.zig"),
@@ -75,7 +77,7 @@ pub fn build(b: *std.Build) void {
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| run_cmd.addArgs(args);
+    run_cmd.addPassthruArgs();
     const run_step = b.step("run", "Run the emerald executable");
     run_step.dependOn(&run_cmd.step);
 
@@ -98,6 +100,10 @@ pub fn build(b: *std.Build) void {
         .root_module = conformance_module,
     });
     const run_conformance = b.addRunArtifact(conformance_tests);
+    // The suite reads its cases at run time, which Zig cannot see as inputs,
+    // so an edited `.expected` file must not leave a cached pass in place.
+    run_conformance.setCwd(b.path("."));
+    run_conformance.has_side_effects = true;
 
     // `Repl.zig` is `main.zig`'s sibling, not `emerald_module`'s, so its own
     // tests (the completeness heuristic) need their own module: `zig build
@@ -155,7 +161,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_unicode_check = b.addRunArtifact(unicode_check);
-    if (b.args) |args| run_unicode_check.addArgs(args);
+    run_unicode_check.addPassthruArgs();
     b.step("unicode-conformance", "Check the Unicode tables against a full database download").dependOn(&run_unicode_check.step);
 
     // `zig build json-conformance -- <test_parsing directory>` checks the
@@ -171,7 +177,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_json_check = b.addRunArtifact(json_check);
-    if (b.args) |args| run_json_check.addArgs(args);
+    run_json_check.addPassthruArgs();
     b.step("json-conformance", "Check the JSON parser against JSONTestSuite").dependOn(&run_json_check.step);
 
     // A deterministic, bounded frontend campaign. It deliberately is not a
@@ -187,7 +193,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_fuzz = b.addRunArtifact(fuzz);
-    if (b.args) |args| run_fuzz.addArgs(args);
+    run_fuzz.addPassthruArgs();
     b.step("fuzz", "Run deterministic bounded execution fuzz cases").dependOn(&run_fuzz.step);
 
     // This is deliberately separate from `test`: it contacts public HTTPS

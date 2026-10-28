@@ -400,9 +400,10 @@ compiler), or the compiler depends on it.
    (the mode names became `debug`, `safe`, `fast`, `small`). 0.17 requires macOS 15 or later; the user
    decided (2026-10-28) that Intel Macs are not supported, so releases stay Apple silicon only
    and state macOS 15 as the minimum. The plan is
-   [`zig-0.17-upgrade-plan.md`](zig-0.17-upgrade-plan.md) (proposed 2026-10-28): build and test on
-   0.17.0 now on a branch, merge when 0.17.1 ships unless 0.17.0's `Run`-step regression proves
-   not to touch Emerald's build. 0.17's WebAssembly backend
+   [`zig-0.17-upgrade-plan.md`](zig-0.17-upgrade-plan.md), accepted 2026-10-28 and **ported on
+   `claude/zig-0.17` against 0.17.0**: both suites pass, the release targets cross-build, and the
+   benchmarks show nothing slower. 0.17.0's build regression (a directory option path) was worked
+   around. Left before merge: CI, the parallel Windows runs without `-j1`, and a release dry run. 0.17's WebAssembly backend
    passes all behavior tests, which helps the playground (item 6). Zig is now the permanent
    implementation language (2026-10-11), so this and later upgrades are routine maintenance.
 9. **The real cause of the Windows Debug CI stall** (see "Intermittent Windows Debug test stall"),

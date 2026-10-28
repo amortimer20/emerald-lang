@@ -413,7 +413,11 @@ pub fn conformanceReply(gpa: std.mem.Allocator, io: std.Io, path: []const u8, ma
     defer text.deinit(gpa);
     try text.appendSlice(gpa, marked[0..at]);
     try text.appendSlice(gpa, marked[at + marker.len ..]);
-    const absolute = try std.fs.path.resolve(gpa, &.{path});
+    // Zig 0.17's `resolve` no longer adds the working directory, so a
+    // relative case path is made absolute here, as a URI needs.
+    const working = try std.Io.Dir.cwd().realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(working);
+    const absolute = try std.fs.path.resolve(gpa, &.{ working, path });
     defer gpa.free(absolute);
     const uri = try pathToUri(gpa, absolute);
     defer gpa.free(uri);

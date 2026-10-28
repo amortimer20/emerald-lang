@@ -6127,3 +6127,16 @@ merges them in rounds of doubling width, still stable, still allowing a comparis
 merge writes to scratch space before copying back, so a `NaN` or a raising `compare` partway
 leaves every item in the list. The same sort now takes about 0.1 seconds, and
 `conformance/run/sort-long-stable` covers stability past one run and a failure mid-merge.
+
+## 2026-10-28: Zig 0.17.0, ported
+
+The upgrade plan was accepted and ported on `claude/zig-0.17` against 0.17.0. It needed far less
+than the counts suggested: 0.17.0 still accepts `allocPrint` and `-Doptimize=ReleaseSafe`, and its
+own `zig fmt` rewrites `@intFromEnum`. The real changes were the build script (`addPassthruArgs`,
+and directories passed as plain strings, since 0.17.0 rejects a directory option path), reflection
+(`fieldNames`, `@Int`, `@Tuple`), two removed language features (`errdefer`'s capture and `**`),
+and `path.resolve` no longer adding the working directory. Every `@bitCast` is a same-size integer
+or float conversion, and seeded output is unchanged. Both suites pass, the three release targets
+cross-build, and the benchmarks show nothing slower and `json`, `regex`, and `pipeline` 28 to 39%
+faster. The plan's "Settled while building" section has the details; CI, the parallel Windows
+runs, and a release dry run come next.

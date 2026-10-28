@@ -236,8 +236,8 @@ pub const Kind = enum {
     /// text varies.
     /// The word a keyword is written with, or null for everything else.
     pub fn keyword(kind: Kind) ?[]const u8 {
-        return if (@intFromEnum(kind) >= @intFromEnum(Kind.keyword_and) and
-            @intFromEnum(kind) <= @intFromEnum(Kind.keyword_with))
+        return if (@backingInt(kind) >= @backingInt(Kind.keyword_and) and
+            @backingInt(kind) <= @backingInt(Kind.keyword_with))
             kind.lexeme()
         else
             null;
