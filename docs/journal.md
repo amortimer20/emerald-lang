@@ -6112,6 +6112,22 @@ the reader to move code into the file it is already in. The user also placed Odi
 idea: built-in libraries are the one channel for native code, and a design plan for curated
 `Graphics`, `Game`, and `Audio` on raylib is roadmap item 11, decided before the compiler.
 
+## 2026-10-28: The benchmark suite, and a quadratic sort
+
+Roadmap item 7 adds `benchmarks/`: thirteen deterministic programs, one per part of the
+interpreter, sized to about half a second each in ReleaseSafe, with `tools/benchmark.py`
+modeled on `tools/startup-benchmark.py` (two binaries alternate, so machine drift affects both
+alike). Every run checks the program's output against its `.expected` file, so a fast wrong
+answer never counts. `zig build test` keeps the programs formatted but never times them.
+
+Sizing the suite found the first real result: `sort`, `sort!`, and `sort_by` were a stable
+insertion sort, quadratic in comparisons. Sorting 60,000 shuffled numbers took 6.9 seconds
+(0.01 for the same numbers already in order). The replacement insertion-sorts runs of 16 and
+merges them in rounds of doubling width, still stable, still allowing a comparison to raise: a
+merge writes to scratch space before copying back, so a `NaN` or a raising `compare` partway
+leaves every item in the list. The same sort now takes about 0.1 seconds, and
+`conformance/run/sort-long-stable` covers stability past one run and a failure mid-merge.
+
 ## 2026-10-28: Subfolder files are checked with their project
 
 Reviewing the sharing-code work found that the language server loaded a document with

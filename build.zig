@@ -51,6 +51,7 @@ pub fn build(b: *std.Build) void {
     // The house-style checks also read the examples and the documentation.
     test_options.addOptionPath("examples_dir", b.path("examples"));
     test_options.addOptionPath("docs_dir", b.path("docs"));
+    test_options.addOptionPath("benchmarks_dir", b.path("benchmarks"));
 
     const conformance_module = b.createModule(.{
         .root_source_file = b.path("src/conformance.zig"),

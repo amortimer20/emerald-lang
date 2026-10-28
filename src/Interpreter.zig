@@ -9613,14 +9613,76 @@ fn orderListItems(self: *Interpreter, span: Source.Span, kind: Value.Kind, left:
     };
 }
 
-/// A stable insertion sort for `sort`, `sort!`, and `sort_by`, whose
-/// comparisons may themselves fail — a `NaN` float, or a user
-/// `Ordered.compare` that raises. `keys`, when given, is reordered in lock
-/// step with `items`, so `sort_by`'s already-computed keys stay lined up with
-/// the items they came from; without one, `items` is compared directly.
-/// Insertion sort is stable, so items whose keys tie keep their input order,
-/// matching every other List traversal (8.6).
+/// A stable sort for `sort`, `sort!`, and `sort_by`, whose comparisons may
+/// themselves fail — a `NaN` float, or a user `Ordered.compare` that raises.
+/// `keys`, when given, is reordered in lock step with `items`, so `sort_by`'s
+/// already-computed keys stay lined up with the items they came from; without
+/// one, `items` is compared directly. It is stable, so items whose keys tie
+/// keep their input order, matching every other List traversal (8.6).
+///
+/// Short runs are insertion-sorted, then merged in rounds of doubling width,
+/// so a long list costs O(n log n) comparisons rather than insertion sort's
+/// O(n²). Values only move, never gain or lose a reference, and a merge
+/// writes to scratch space before copying back, so a comparison that fails
+/// partway leaves `items` a complete permutation of what it held.
 fn sortItemsByKeys(
+    self: *Interpreter,
+    span: Source.Span,
+    kind: Value.Kind,
+    items: []Value,
+    keys: ?[]Value,
+    extreme: ExtremeKind,
+) Error!void {
+    const run_length: usize = 16;
+    var start: usize = 0;
+    while (start < items.len) : (start += run_length) {
+        const end = @min(start + run_length, items.len);
+        try self.insertionSort(span, kind, items[start..end], if (keys) |k| k[start..end] else null, extreme);
+    }
+    if (items.len <= run_length) return;
+
+    const scratch = try self.gpa.alloc(Value, items.len);
+    defer self.gpa.free(scratch);
+    const key_scratch: ?[]Value = if (keys != null) try self.gpa.alloc(Value, items.len) else null;
+    defer if (key_scratch) |spare| self.gpa.free(spare);
+
+    var width: usize = run_length;
+    while (width < items.len) : (width *= 2) {
+        var left: usize = 0;
+        while (left + width < items.len) : (left += 2 * width) {
+            const middle = left + width;
+            const right = @min(left + 2 * width, items.len);
+            var a = left;
+            var b = middle;
+            var out = left;
+            while (a < middle and b < right) : (out += 1) {
+                const first = if (keys) |k| k[a] else items[a];
+                const second = if (keys) |k| k[b] else items[b];
+                // Take from the right half only when it is strictly smaller,
+                // so equal keys keep their order.
+                const from = if (try self.orderListItems(span, kind, first, second, extreme) == .gt) &b else &a;
+                scratch[out] = items[from.*];
+                if (keys) |k| key_scratch.?[out] = k[from.*];
+                from.* += 1;
+            }
+            for (a..middle) |index| {
+                scratch[out] = items[index];
+                if (keys) |k| key_scratch.?[out] = k[index];
+                out += 1;
+            }
+            for (b..right) |index| {
+                scratch[out] = items[index];
+                if (keys) |k| key_scratch.?[out] = k[index];
+                out += 1;
+            }
+            @memcpy(items[left..right], scratch[left..right]);
+            if (keys) |k| @memcpy(k[left..right], key_scratch.?[left..right]);
+        }
+    }
+}
+
+/// The stable insertion sort `sortItemsByKeys` runs on each short run.
+fn insertionSort(
     self: *Interpreter,
     span: Source.Span,
     kind: Value.Kind,

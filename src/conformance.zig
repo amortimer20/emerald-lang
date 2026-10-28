@@ -229,6 +229,7 @@ test "else, catch, and finally start their own lines" {
     const places = [_]Place{
         .{ .path = build_options.conformance_dir, .extension = ".em" },
         .{ .path = build_options.examples_dir, .extension = ".em" },
+        .{ .path = build_options.benchmarks_dir, .extension = ".em" },
         .{ .path = build_options.docs_dir, .extension = ".md" },
     };
 
@@ -338,33 +339,40 @@ test "formatted run programs still parse" {
 }
 
 // Examples are what a reader copies, so each must already be exactly as the
-// formatter writes it.
-test "examples are formatted" {
+// formatter writes it. The benchmarks are read as models too, and are held to
+// the same rule.
+test "examples and benchmarks are formatted" {
     const gpa = testing.allocator;
 
     var threaded: std.Io.Threaded = .init(gpa, .{});
     defer threaded.deinit();
     const io = threaded.io();
 
-    var dir = try std.Io.Dir.cwd().openDir(io, build_options.examples_dir, .{ .iterate = true });
-    defer dir.close(io);
-    var walker = try dir.walk(gpa);
-    defer walker.deinit();
-
+    const Place = struct { path: []const u8, name: []const u8 };
+    const places = [_]Place{
+        .{ .path = build_options.examples_dir, .name = "examples" },
+        .{ .path = build_options.benchmarks_dir, .name = "benchmarks" },
+    };
     var problems: usize = 0;
-    while (try walker.next(io)) |entry| {
-        if (entry.kind != .file or !std.mem.endsWith(u8, entry.path, ".em")) continue;
-        const text = try dir.readFileAlloc(io, entry.path, gpa, .limited(Source.max_bytes));
-        defer gpa.free(text);
-        var source = try Source.init(gpa, entry.path, text);
-        defer source.deinit(gpa);
-        var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
-        const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
-        var report = try emerald.formatProject(gpa, &project);
-        defer report.deinit();
-        if (report.diagnostics.len != 0 or !std.mem.eql(u8, report.files[0].text, text)) {
-            std.debug.print("\nexamples/{s}: not formatted; run `emerald format` on it\n", .{entry.path});
-            problems += 1;
+    for (places) |place| {
+        var dir = try std.Io.Dir.cwd().openDir(io, place.path, .{ .iterate = true });
+        defer dir.close(io);
+        var walker = try dir.walk(gpa);
+        defer walker.deinit();
+        while (try walker.next(io)) |entry| {
+            if (entry.kind != .file or !std.mem.endsWith(u8, entry.path, ".em")) continue;
+            const text = try dir.readFileAlloc(io, entry.path, gpa, .limited(Source.max_bytes));
+            defer gpa.free(text);
+            var source = try Source.init(gpa, entry.path, text);
+            defer source.deinit(gpa);
+            var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+            const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+            var report = try emerald.formatProject(gpa, &project);
+            defer report.deinit();
+            if (report.diagnostics.len != 0 or !std.mem.eql(u8, report.files[0].text, text)) {
+                std.debug.print("\n{s}/{s}: not formatted; run `emerald format` on it\n", .{ place.name, entry.path });
+                problems += 1;
+            }
         }
     }
     if (problems != 0) return error.StyleFailed;
