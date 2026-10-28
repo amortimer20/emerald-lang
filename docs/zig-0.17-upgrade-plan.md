@@ -141,5 +141,14 @@ what it deprecates. Following "the smallest fix 0.17 accepts":
   Windows PE binaries. The benchmarks, 0.16 against 0.17 alternating, show no program slower beyond
   noise (the largest, 1.04) and several faster: `json` 0.61, `regex` 0.70, `pipeline` 0.72,
   `sorting` 0.81 of the 0.16 time.
-- **Still to do before merge:** CI on all platforms; the parallel Windows suites, without `-j1`,
-  20 times each; a `release.yml` dry run; the install scripts against those assets.
+- **CI and the stall (item 9):** two memory tests failed on Linux and Windows. Probed in Docker,
+  neither was a leak: the first measured run peaks 435 KB below every later one, and a program's
+  peak sits at one of two levels about 250 KB apart, by program rather than by work. The tests now
+  compare warmed-up long runs (a loop at 20,000 against 80,000 iterations, within 32 KB; calls at
+  2,047 against 131,071, within 512 KB). Then 20 dispatched CI runs passed every job, 140 of 140,
+  including the Windows Debug and ReleaseSafe suites in parallel with no `-j1`: 20 of 20 each,
+  where the parallel Debug suite on 0.16 stalled about one run in two. The stall is gone.
+- **Release:** a `release.yml` dry run built all three assets; the macOS arm64 and Linux x86-64
+  ones match their checksums and run Emerald programs (Linux under emulation). The install scripts
+  fetch only published releases, so they are checked at the first real one; the Windows asset was
+  not run here.

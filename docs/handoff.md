@@ -407,10 +407,12 @@ compiler), or the compiler depends on it.
    [`zig-0.17-upgrade-plan.md`](zig-0.17-upgrade-plan.md), accepted 2026-10-28 and **ported on
    `claude/zig-0.17` against 0.17.0**: both suites pass, the release targets cross-build, and the
    benchmarks show nothing slower. 0.17.0's build regression (a directory option path) was worked
-   around. Left before merge: CI, the parallel Windows runs without `-j1`, and a release dry run. 0.17's WebAssembly backend
+   around. CI is green, 20 dispatched runs passed all 140 jobs (the parallel Windows suites, no
+   `-j1`, 20 of 20 each, so item 9 is confirmed), and a release dry run built all three assets.
+   It waits only for the user's choice: merge on 0.17.0, or wait for 0.17.1. 0.17's WebAssembly backend
    passes all behavior tests, which helps the playground (item 6). Zig is now the permanent
    implementation language (2026-10-11), so this and later upgrades are routine maintenance.
-9. **Confirm the Windows CI stall is gone after the Zig 0.17 upgrade** (see "Windows test
+9. **Confirmed on `claude/zig-0.17` (2026-10-28): the Windows CI stall is gone on Zig 0.17** (see "Windows test
    stall"). The cause is found: a Zig 0.16.0 handle-inheritance race in Windows process spawning,
    fixed in 0.17.0. With item 8, remove the `-j1` flags and run the parallel Windows suite
    repeatedly, so CI is trustworthy when the compiler starts depending on it.
