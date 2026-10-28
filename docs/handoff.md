@@ -213,8 +213,8 @@ slices 1 to 3: `@deprecated("message")` and its warning, the editor's strike-thr
 completion, and the native-member path). Nothing native is deprecated yet,
 so `Checker.deprecated_natives` is empty; the path was checked by hand with a temporary entry.
 Assigning to a deprecated field and naming one as a constructor argument do not warn yet (16.1).
-The website's Annotations page still lists four annotations; add `@deprecated` to it with the
-0.8.0 pages. From the QA pass, B4 is done: every page was read at 375px in both themes, and the three
+The website's Annotations page teaches `@deprecated` (emerald-website `1b48065`), describing
+0.8.0 ahead of its release. From the QA pass, B4 is done: every page was read at 375px in both themes, and the three
 that scrolled sideways (Console, JSON, Instant) were fixed (emerald-website `e43e535`). B5
 (the red "not defined" editor errors) waits on the user's report of where they appeared;
 the flaky-test cause is settled (the exact-work test). The Zig 0.17 upgrade waits for 0.17.1.
