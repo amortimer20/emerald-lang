@@ -1,7 +1,8 @@
 # Standard-library audit
 
-Status: **audit for the user's decisions** (roadmap item 4, 2026-10-28). Nothing here is built or
-promised. Each gap is sorted into **in** (before 1.0), **later** (after 1.0, or when a program asks),
+Status: **accepted as listed** by the user, 2026-10-28 (roadmap item 4): the twelve "in" rows,
+and the rest later or out. The "in" set's design is
+[`stdlib-additions-design-plan.md`](stdlib-additions-design-plan.md). Each gap is sorted into **in** (before 1.0), **later** (after 1.0, or when a program asks),
 or **out** (deliberately not planned), against rewrite-context 15.1's five tests:
 
 1. it replaces awkward syntax or an error-prone pattern;
