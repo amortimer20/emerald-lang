@@ -10,7 +10,7 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/amortimer20/emerald-lang/main/install.ps1 | iex
 ```
 
-macOS (Apple silicon) and Linux (x86-64):
+macOS (Apple silicon, macOS 15 or later) and Linux (x86-64):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/amortimer20/emerald-lang/main/install.sh | sh
@@ -104,6 +104,8 @@ Twelve small additions a first program reaches for:
 - `Stack[Int]()` and similar now explain that types in brackets are written where a value is kept, never where it is built.
 
 ## Upgrading from 0.7.0
+
+- **Macs need macOS 15 or later.** Emerald is now built with Zig 0.17, whose Mac programs need macOS 15 Sequoia or later; every Mac with Apple silicon can run it. Intel Macs are not supported, as before. The installer checks both and says so.
 
 - Brackets after a type, function, or method name are now real syntax rather than an error. No program that ran on 0.7.0 used them.
 - A method of your own named `compare`, `equals`, or `hash` keeps its name and wins over the new built-in ones, as before.
