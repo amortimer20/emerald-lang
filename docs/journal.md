@@ -6127,3 +6127,15 @@ merges them in rounds of doubling width, still stable, still allowing a comparis
 merge writes to scratch space before copying back, so a `NaN` or a raising `compare` partway
 leaves every item in the list. The same sort now takes about 0.1 seconds, and
 `conformance/run/sort-long-stable` covers stability past one run and a failure mid-merge.
+
+## 2026-10-28: Subfolder files are checked with their project
+
+Reviewing the sharing-code work found that the language server loaded a document with
+`Project.load(path)`, which makes a file part of a project only when its own folder holds
+`main.em`. A file in a project's subfolder, such as `plants/catalog.em` or a copied library's
+`geometry/measure.em`, was therefore checked alone in the editor, and every name it used from
+the rest of the project was "not defined": very likely QA item B5. The server now loads the
+enclosing project (the one `Project` already finds, to explain a lone file's errors) and checks
+the file inside it. The command line is unchanged: `emerald run plants/catalog.em` still runs
+that file alone, with the hint pointing at the project's `main.em`. Paths are compared with
+either separator, since a Windows URI uses `/` and a joined path uses `\`.
