@@ -2032,7 +2032,11 @@ test "section 15.6's Console.clear clears a terminal and leaves other output alo
         var report = try run(testing.allocator, &source, .{ .out = &out.writer, .in = &no_input, .color = !terminal, .terminal = terminal });
         defer report.deinit();
         try testing.expect(report.ok());
-        try testing.expectEqualStrings(if (terminal) "1\n\x1b[2J\x1b[H2\n" else "1\n2\n", out.written());
+        // On Windows, clearing first asks the process's real console for
+        // virtual-terminal mode. A test run has no console, so it declines
+        // and nothing is cleared, as it would be for any console that refuses.
+        const clears = terminal and @import("builtin").os.tag != .windows;
+        try testing.expectEqualStrings(if (clears) "1\n\x1b[2J\x1b[H2\n" else "1\n2\n", out.written());
     }
 }
 
