@@ -256,35 +256,35 @@ What changed between 0.6.0 and 0.7.0 is in [`release-notes-0.7.0.md`](release-no
 list this handoff kept for it is in the journal (2026-10-27).
 
 Open work:
-- **Intermittent Windows Debug test stall (worked around in CI; cause still open).** The Zig test
-  runner on Windows Debug stops responding for about a minute ("test runner failed to respond
-  for 1m...") while test binaries run. Seen in CI at `3f7d694` (run 37003741611, `emerald-repl`) and
-  `4035a57` (run 37055293101, `emerald-test`): about 2 of 20 Windows Debug jobs since 2026-10-01,
-  against 0 of 38 before. **What the experiments showed** (throwaway branch
-  `claude/windows-stall-experiment`; delete it when finished), all on Windows Debug, nothing
-  retried and no timeout widened:
-  - The Windows stack-reservation change (item 15) is not the cause: repeated runs stalled in 29 of
-    60 iterations as merged and 32 of 60 with the interpreter's threads back on `std.Thread.spawn`
-    (run 37057757591). Repetition raises the rate to about one in two.
-  - Failures are always the same message, in three binaries (`emerald-repl` 28, `emerald-lsp` 19,
-    `emerald-test` 14; never `emerald-conformance`). It is a hang, not a slow test: on Linux
-    `emerald-lsp` runs all 35 tests in 1 second and `emerald-repl` all 9 in 6.
-  - It is not in Emerald's code on its own: the `emerald-lsp` and `emerald-repl` binaries run
-    directly 320 times, with default stdin and with stdin held open by a pipe, never hung (run
-    37065921721). So the scheduler's stdin reader is cleared.
-  - It needs the test binaries to run at once: through the build runner, `zig build test-lsp` alone
-    (120 runs) and `test-repl` alone (80) never stalled, and the full suite with `-j1` (20 runs) never
-    stalled, against 61 of 120 for the normal parallel run (run 37066707311).
-  - **Workaround in `ci.yml`:** the Windows Debug job runs `zig build test -j1`. Serial runs took
-    66 to 155 seconds, the same as parallel, so it costs nothing. Remove the flag once the cause is
-    fixed. Windows ReleaseSafe has not stalled in this evidence and is unchanged.
-  - **First, upgrade to Zig 0.17** (roadmap item 8): it replaces the build runner, so rerun the
-    parallel Windows Debug suite on 0.17 before investigating further; the stall may not survive.
-  - **Next, to find the cause:** run the parallel suite without `emerald-conformance` (a step
-    for unit, REPL, and LSP only), and with `-j2`. A stall without conformance points at the
-    runner handling several test processes on Windows (probably a Zig 0.16.0 bug to report upstream
-    with the logs); a clean run points at something conformance does, such as the fixed-name
-    directories its programs create in the working directory or the memory its programs use.
+- **Windows test stall (cause found; worked around in CI until Zig 0.17).** The step fails with
+  "test runner failed to respond for 1m..." although every test passed. **Cause** (found by the
+  user's session on a Windows machine, 2026-10-28): a bug in Zig 0.16.0's Windows process
+  spawning, not in Emerald. `processSpawnWindows` in `lib/std/Io/Threaded.zig` creates the child's
+  stdin, stdout, and stderr pipe ends inheritable and calls `CreateProcessW` with inherit-all, with
+  no lock and no handle list. When the build runner starts two test binaries at once from
+  different threads, the second can inherit the first's stdout pipe; the first finishes and
+  exits, but its stdout stays open until the sibling exits, and the runner's 60-second response
+  timer (`std/Build/Step/Run.zig`) expires first. Zig 0.17.0 adds `process_spawn_mutex` around the
+  whole Windows spawn, which fixes it; ziglang/zig#30727 (explicit handle lists) is still open, and
+  nothing needs reporting upstream.
+  - It explains every observation: it needs binaries running at once (`-j1` and single-binary
+    runs never stalled); Linux and macOS create pipes closed on spawn; the victims are the quick
+    binaries (`emerald-repl`, `emerald-lsp`, `emerald-test`) whose pipes the long-running
+    `emerald-conformance` holds; binaries run directly never hung; and the experiment branch's
+    reruns started every step together, which is why its rate (about one in two) was higher.
+  - Reproduced with no Emerald code: six quick test binaries and one sleeping 90 seconds, on Zig
+    0.16.0. The slow binary's pipe handles rose from its baseline of 6 (also under `-j1`) to 8 to
+    20 as one to four quick binaries stalled.
+  - It is not Windows Debug only: Windows ReleaseSafe stalled the same way on PR #50
+    (`emerald-lsp`, 2026-10-28), so both Windows jobs now run `zig build test -j1`. Serial Debug
+    runs took the same time as parallel ones. The onset around 2026-10-01 is probably the suite
+    growing until conformance outlived the quick binaries by more than 60 seconds; not verified.
+  - `--test-timeout` is no better stopgap: the runner uses the larger of it and 60 seconds as the
+    response limit, but it also caps every single test, so it would have to exceed the longest
+    conformance test.
+  - **With the Zig 0.17 upgrade** (roadmap item 8), remove both `-j1` flags and run the parallel
+    Windows suite repeatedly to confirm. The throwaway branch `claude/windows-stall-experiment`
+    was deleted (2026-10-28, at `8043db7`).
 - **Editor intelligence**, below: done, with two remaining gaps.
 
 **Editor intelligence** (the user's go-ahead, 2026-09-28; built by Codex, reviewed by
@@ -394,8 +394,8 @@ compiler), or the compiler depends on it.
    numbers took 6.9 seconds. They are now a stable merge of insertion-sorted runs, and the same
    sort takes about 0.1 seconds.
 8. **Upgrade to Zig 0.17, once 0.17.1 is out** (the user, 2026-10-03). 0.17.0 has known regressions,
-   one in `Run` steps, which the build uses heavily. 0.17 also replaces the build runner, which the
-   Windows stall happens under, so upgrade before investigating the stall. Scope counted on
+   one in `Run` steps, which the build uses heavily. 0.17.0 also fixes the Windows stall's cause (item 9),
+   so the upgrade removes the CI `-j1` workaround. Scope counted on
    origin/main: about 240 `allocPrint` calls (moved to `Allocator.print()`), 8 `@bitCast` uses to
    review by hand (it now reinterprets logical bits; the one real risk), 30 deprecated
    `@intFromEnum`/`@enumFromInt`, `build.zig` (the configurer/maker split, `addPassthruArgs()` for
@@ -409,8 +409,10 @@ compiler), or the compiler depends on it.
    not to touch Emerald's build. 0.17's WebAssembly backend
    passes all behavior tests, which helps the playground (item 6). Zig is now the permanent
    implementation language (2026-10-11), so this and later upgrades are routine maintenance.
-9. **The real cause of the Windows Debug CI stall** (see "Intermittent Windows Debug test stall"),
-   so CI is trustworthy when the compiler starts depending on it.
+9. **Confirm the Windows CI stall is gone after the Zig 0.17 upgrade** (see "Windows test
+   stall"). The cause is found: a Zig 0.16.0 handle-inheritance race in Windows process spawning,
+   fixed in 0.17.0. With item 8, remove the `-j1` flags and run the parallel Windows suite
+   repeatedly, so CI is trustworthy when the compiler starts depending on it.
 10. **A whole-codebase review, last in the phase**, so its findings hold and it strengthens the
    conformance suite that is the compiler's contract. Method agreed 2026-10-03: a finding counts only
    as a failing test or reproducing program, never "this looks wrong"; first measure (kcov

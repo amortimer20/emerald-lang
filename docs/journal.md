@@ -6139,3 +6139,15 @@ enclosing project (the one `Project` already finds, to explain a lone file's err
 the file inside it. The command line is unchanged: `emerald run plants/catalog.em` still runs
 that file alone, with the hint pointing at the project's `main.em`. Paths are compared with
 either separator, since a Windows URI uses `/` and a joined path uses `\`.
+
+## 2026-10-28: The Windows test stall's cause
+
+The user's session on a Windows machine found the stall's cause outside Emerald: Zig 0.16.0's
+Windows process spawning creates each child's pipe ends inheritable and calls `CreateProcessW`
+with inherit-all and no lock, so a test binary started at the same moment as a sibling can
+inherit the sibling's stdout pipe. The finished binary's stdout then stays open until the sibling
+exits, and the build runner's 60-second response timer fails the step though every test passed.
+Zig 0.17.0's `process_spawn_mutex` fixes it. The session reproduced it with no Emerald code: the
+slow binary's inherited pipe count rose with each stall. Its guess that ReleaseSafe stays clear
+did not hold: PR #50's Windows ReleaseSafe job stalled the same way that day, so both Windows
+jobs now run serially until the 0.17 upgrade, and roadmap item 9 becomes confirming the fix then.
