@@ -6078,3 +6078,15 @@ does. `append_all` reads its argument before the receiver is made unique, so app
 itself appends what it held before the call. The fractions come from the generators `random` and
 `next` already use. Familiar names (`extend`, `concat`, `push_all`, `index`, `indexOf`) point
 to the new ones.
+
+## 2026-10-28: Library additions, slice 3: the program's surroundings
+
+`Program.environment(name)` reads one environment variable as `String?`, read-only, raising
+`EncodingError` for a value that is not UTF-8; rewrite-context 15.10 now says Emerald code
+cannot *alter* environment variables. `print_error` joins the prelude as `print` for standard
+error. The CLI and REPL now give the interpreter a standard-error stream and resolve its color
+by its own terminal check; because Console styles a string when it is built, from standard
+output's policy, `print_error` can only take styling out (standard output styled, standard
+error redirected), not add it. `Console.clear()` clears only when standard output is a
+terminal (and `TERM` is not `dumb`), turning on Windows' virtual-terminal mode the first time.
+The plan's "Settled while building" section records these choices.

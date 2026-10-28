@@ -523,8 +523,17 @@ pub const Streams = struct {
     /// Whether this execution emits Console's ANSI SGR styling. The default
     /// keeps every existing caller deterministic until policy resolution.
     color: bool = false,
-    /// Private host configuration for libraries such as Http. Programs retain
-    /// no way to enumerate or read environment variables themselves.
+    /// Where `print_error` writes. Null sends it to `out`, in order with
+    /// everything else.
+    err: ?*std.Io.Writer = null,
+    /// Whether standard error takes Console's styling, by its own terminal
+    /// check. Read only when `err` is given.
+    error_color: bool = false,
+    /// Whether `out` is a terminal that `Console.clear` may clear.
+    terminal: bool = false,
+    /// The host environment. A program reads one variable at a time with
+    /// `Program.environment` and cannot enumerate or change them; Http reads
+    /// its proxy settings privately.
     environment: std.process.Environ = .empty,
     /// Section 15.8's `TimeZone.local`. UTC unless the caller resolves the
     /// machine's own zone, so every other caller stays deterministic.
@@ -895,6 +904,7 @@ fn analyze(
         running.io,
         running.arguments,
         running.color,
+        .{ .err = running.err, .error_color = running.error_color, .terminal = running.terminal },
         running.standard_input,
         running.environment,
         running.local_zone,
@@ -1972,6 +1982,62 @@ test "section 14.1's Program.arguments carries the program's own CLI arguments" 
     defer report.deinit();
     try testing.expect(report.ok());
     try testing.expectEqualStrings("[\"one\", \"two\"] 2\n", out.written());
+}
+
+test "section 15.10's Program.environment reads a set variable and refuses one that is not UTF-8" {
+    // A fixed environment block exists only off Windows, where the process's
+    // own environment is the only one there is.
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const entries = [_:null]?[*:0]const u8{ "GREETING=hello there", "EMPTY=", "BAD=\xff" };
+    const environment: std.process.Environ = .{ .block = .{ .slice = &entries } };
+    var source = try Source.init(testing.allocator, "test.em", "print(Program.environment(\"GREETING\"), Program.environment(\"EMPTY\") == \"\", Program.environment(\"MISSING\"))\nprint(Program.environment(\"BAD\"))\n");
+    defer source.deinit(testing.allocator);
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    var no_input: std.Io.Reader = .fixed("");
+    var report = try run(testing.allocator, &source, .{ .out = &out.writer, .in = &no_input, .environment = environment });
+    defer report.deinit();
+    try testing.expectEqualStrings("hello there true nothing\n", out.written());
+    const failure = report.failure orelse return error.TestExpectedFailure;
+    try testing.expect(std.mem.endsWith(u8, failure.message, "the environment variable `BAD` is not valid UTF-8 text"));
+}
+
+test "section 15.2's print_error writes to its own stream, after what print already wrote" {
+    var source = try Source.init(testing.allocator, "test.em", "print(\"one\")\nprint_error(\"oops\", 2)\nprint(Console.red(\"two\"))\nprint_error(Console.red(\"three\"))\n");
+    defer source.deinit(testing.allocator);
+    // Standard error styled as standard output is keeps the styling; one that
+    // is not a terminal loses the styling standard output's policy added.
+    for ([_]bool{ true, false }) |error_color| {
+        var out: std.Io.Writer.Allocating = .init(testing.allocator);
+        defer out.deinit();
+        var err: std.Io.Writer.Allocating = .init(testing.allocator);
+        defer err.deinit();
+        var no_input: std.Io.Reader = .fixed("");
+        var report = try run(testing.allocator, &source, .{ .out = &out.writer, .in = &no_input, .color = true, .err = &err.writer, .error_color = error_color });
+        defer report.deinit();
+        try testing.expect(report.ok());
+        try testing.expectEqualStrings("one\n\x1b[31mtwo\x1b[39m\n", out.written());
+        try testing.expectEqualStrings(if (error_color) "oops 2\n\x1b[31mthree\x1b[39m\n" else "oops 2\nthree\n", err.written());
+    }
+}
+
+test "section 15.6's Console.clear clears a terminal and leaves other output alone" {
+    var source = try Source.init(testing.allocator, "test.em", "print(1)\nConsole.clear()\nprint(2)\n");
+    defer source.deinit(testing.allocator);
+    for ([_]bool{ true, false }) |terminal| {
+        var out: std.Io.Writer.Allocating = .init(testing.allocator);
+        defer out.deinit();
+        var no_input: std.Io.Reader = .fixed("");
+        // Color does not decide it, either way.
+        var report = try run(testing.allocator, &source, .{ .out = &out.writer, .in = &no_input, .color = !terminal, .terminal = terminal });
+        defer report.deinit();
+        try testing.expect(report.ok());
+        // On Windows, clearing first asks the process's real console for
+        // virtual-terminal mode. A test run has no console, so it declines
+        // and nothing is cleared, as it would be for any console that refuses.
+        const clears = terminal and @import("builtin").os.tag != .windows;
+        try testing.expectEqualStrings(if (clears) "1\n\x1b[2J\x1b[H2\n" else "1\n2\n", out.written());
+    }
 }
 
 test "Program.arguments is empty by default, and each read is independent" {

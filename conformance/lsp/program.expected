@@ -11,6 +11,14 @@
       "insertTextFormat": 1
     },
     {
+      "label": "environment",
+      "kind": 2,
+      "detail": "environment(name: String): String?",
+      "documentation": "The value of the environment variable called `name`, or `nothing` when it is not set.",
+      "insertText": "environment($0)",
+      "insertTextFormat": 2
+    },
+    {
       "label": "sleep",
       "kind": 2,
       "detail": "sleep(duration: Duration): Nothing",

@@ -13,6 +13,9 @@ const Interpreter = emerald.Interpreter;
 pub const Options = struct {
     io: std.Io = std.Io.Threaded.global_single_threaded.io(),
     standard_input: bool = false,
+    /// `print_error`'s stream and styling, and whether `Console.clear` may
+    /// clear. By default standard error joins `out`.
+    console: Interpreter.ConsoleStreams = .{},
 };
 const stack_size: usize = if (@sizeOf(usize) >= 8) 1024 * 1024 * 1024 else 32 * 1024 * 1024;
 pub const Error = emerald.Error || error{ReadFailed};
@@ -48,6 +51,9 @@ fn newRuntime(gpa: std.mem.Allocator, syntax: *emerald.SessionSyntax, input: *st
     // Borrow during construction, then transfer ownership only on success.
     const runtime = try Interpreter.Session.init(gpa, emerald.sessionAnalysis(analysis), out, input, options.io, &.{}, color, options.standard_input, environment, local_zone, Interpreter.StackLimit.here(stack_size));
     runtime.current = emerald.ownedSessionAnalysis(analysis);
+    runtime.interpreter.err = options.console.err;
+    runtime.interpreter.error_color = options.console.error_color;
+    runtime.interpreter.terminal = options.console.terminal;
     runtime.shareInput(reader);
     return runtime;
 }

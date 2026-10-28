@@ -222,6 +222,10 @@ class Console {
     ## The text with the styling Console added taken out, so it can be compared, measured, or saved as plain text, whether or not styling is on.
     func Console.plain(text: String): String { return text }
 
+    # Native: writes the terminal's clear-screen sequence when output is a terminal.
+    ## Clears the terminal and puts the cursor at the top left. Output to a file or a pipe is left alone.
+    func Console.clear() {}
+
     func Console._layer(text: String, open: Int, close: Int): String {
         const opened = "\u{1B}[#{open}m"
         const closed = "\u{1B}[#{close}m"

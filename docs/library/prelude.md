@@ -2,7 +2,7 @@
 
 The prelude functions are visible bare in every file, with no import. A file's own
 declaration of the same name replaces the prelude's for that file (15.2). This page covers
-`print`, `write`, `input`, `input_maybe`, `random`, `random_fraction`, and `exit`. `assert` is documented with
+`print`, `write`, `print_error`, `input`, `input_maybe`, `random`, `random_fraction`, and `exit`. `assert` is documented with
 errors and tests, since its behavior belongs beside `raise`/`catch` rather than beside these
 seven; the prelude's comparison trait (`Ordered`), its equality traits
 ([`Equatable`/`Hashable`](../language/objects-and-traits.md#custom-equality-and-hashing)),
@@ -23,6 +23,28 @@ written, so a `to_string()` that raises leaves no partial output. `print` append
 newline; `write` does not, so repeated `write` calls build one line. There is no separator customization; interpolation is the way to build deliberate
 prose around a value. See [`examples/greeter.em`](../../examples/greeter.em) and
 [`examples/blocks.em`](../../examples/blocks.em) (which uses `write` inside a loop).
+
+## print_error(...values) -> Nothing
+
+`print`, for standard error: the same arguments, the same display, and a line break at the
+end. Use it for messages about what went wrong, so they stay out of output that is redirected
+to a file or piped to another program.
+
+```emerald
+const file_name = Program.arguments.first.or("scores.txt")
+if not File.exists?(file_name) {
+    print_error("No file named #{file_name}")
+    exit(1)
+}
+```
+
+What the program printed before it reaches the terminal first. Console styling follows
+[the color policy](console.md#the-color-policy), decided by standard error's own terminal
+check, with one limit: a styled string is built from standard output's policy, before anyone
+knows where it goes. So `print_error(Console.red("Error"))` is red on a terminal and plain
+in a log file (`emerald run game.em 2> errors.log`), but when standard output is redirected
+and standard error is not, the string was built plain and stays plain. There is no
+`write_error`. See [`conformance/run/print-error.em`](../../conformance/run/print-error.em).
 
 ## input() -> String
 

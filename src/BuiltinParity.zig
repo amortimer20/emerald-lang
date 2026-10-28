@@ -328,7 +328,7 @@ pub fn checkNames() !void {
         .{ .owner = "Bytes", .kind = .type_method, .names = &.{ "from_list", "from_hex", "from_hex_maybe" } },
         .{ .owner = "Math", .kind = .type_method, .names = Type.math_functions.keys() },
         .{ .owner = "Math", .kind = .type_property, .names = &.{ "pi", "e" } },
-        .{ .owner = "Program", .kind = .type_method, .names = &.{"sleep"} },
+        .{ .owner = "Program", .kind = .type_method, .names = &.{ "sleep", "environment" } },
         .{ .owner = "Program", .kind = .type_property, .names = &.{"arguments"} },
         .{ .owner = "Task", .kind = .method, .names = &Checker.task_methods },
         .{ .owner = "TaskGroup", .kind = .method, .names = &Checker.task_group_methods },

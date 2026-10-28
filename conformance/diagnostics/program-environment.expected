@@ -1,0 +1,16 @@
+diagnostics/program-environment.em:3:21: this is Int, but `Program.environment` needs the variable's name as a String
+  Program.environment(42)
+                      ^^
+Pass the name as text, as in `Program.environment("HOME")`.
+diagnostics/program-environment.em:4:1: `Program.environment` takes 1 argument, but this call passes 0
+  Program.environment()
+  ^^^^^^^^^^^^^^^^^^^
+Pass the variable's name, as in `Program.environment("HOME")`.
+diagnostics/program-environment.em:5:14: `Program.environment` is a built-in function, so it has to be called
+  const read = Program.environment
+               ^^^^^^^^^^^^^^^^^^^
+Call it with the variable's name, as in `Program.environment("HOME")`.
+diagnostics/program-environment.em:6:22: this is String?, but `home` was declared as String
+  const home: String = Program.environment("HOME")
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Give the declaration the type of its value, or convert the value to match.

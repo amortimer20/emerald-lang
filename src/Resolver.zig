@@ -265,7 +265,7 @@ pub const Resolved = struct {
 
 /// Section 15.2's prelude. These are callable without qualification and are not
 /// declared by any program, so they live in a scope of their own.
-pub const prelude = [_][]const u8{ "print", "write", "input", "input_maybe", "random", "random_fraction", "exit" };
+pub const prelude = [_][]const u8{ "print", "write", "print_error", "input", "input_maybe", "random", "random_fraction", "exit" };
 
 /// The namespace of the declarations written in `prelude.em`, such as section
 /// 11.5's `Ordered`: `Emerald`, implicitly imported into every file. Its public
@@ -288,6 +288,8 @@ pub const math_e_key = math_prefix ++ "e";
 pub const program_arguments_key = "Program.arguments";
 /// Section 15.8's `Program.sleep(duration)`: pauses the program.
 pub const program_sleep_key = "Program.sleep";
+/// `Program.environment(name)`: one environment variable, read-only (15.10).
+pub const program_environment_key = "Program.environment";
 
 pub fn mathFunction(key: []const u8) ?Type.MathFunction {
     const prefix = math_prefix;
@@ -2810,17 +2812,18 @@ fn qualify(self: *Resolver, expression: *const Ast.Expression) Error!Qualified {
     return .reported;
 }
 
-/// `Program.arguments`, `Program.sleep`, `Math.pi`, `Math.e`, and `Math`'s functions: null when
+/// `Program.arguments`, `Program.sleep`, `Program.environment`, `Math.pi`, `Math.e`, and `Math`'s functions: null when
 /// `namespace` is neither built-in namespace.
 fn qualifyBuiltinNamespace(self: *Resolver, span: Source.Span, namespace: []const u8, member: []const u8) Error!?Qualified {
     if (std.mem.eql(u8, namespace, "Program")) {
         if (std.mem.eql(u8, member, "arguments")) return .{ .key = program_arguments_key };
         if (std.mem.eql(u8, member, "sleep")) return .{ .key = program_sleep_key };
+        if (std.mem.eql(u8, member, "environment")) return .{ .key = program_environment_key };
         try self.reportWithHelpFmt(
             span,
             "`Program` has no type-level member named `{s}`",
             .{member},
-            "Its members are `Program.arguments` and `Program.sleep`.",
+            "Its members are `Program.arguments`, `Program.environment`, and `Program.sleep`.",
             .{},
         );
         return .reported;

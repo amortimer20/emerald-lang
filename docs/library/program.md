@@ -1,7 +1,7 @@
 # Program
 
-`Program` is a built-in namespace about the running program itself: its arguments, and a way
-to pause it. A project that declares its own `Program` namespace keeps ownership of that
+`Program` is a built-in namespace about the running program itself: its arguments, its
+environment variables, and a way to pause it. A project that declares its own `Program` namespace keeps ownership of that
 name, and the built-in one steps aside.
 
 Run [`conformance/run/program-arguments.em`](../../conformance/run/program-arguments.em) for
@@ -23,6 +23,27 @@ REPL, or the LSP) it is always `[]`, since there is no program invocation to tak
 
 `Program.arguments()` is a checking-time error: it is a constant, not a method, and takes no
 parentheses.
+
+## Program.environment(name: String) -> String?
+
+The value of the environment variable called `name`, or `nothing` when it is not set. A
+variable set to the empty string gives `""`, not `nothing`.
+
+```emerald
+const key = Program.environment("WEATHER_KEY").or("")
+if key.blank?() {
+    print_error("Set WEATHER_KEY to your API key first.")
+    exit(1)
+}
+```
+
+It only reads: a program cannot set, remove, or list environment variables. An empty name,
+or one containing `=`, names no variable and gives `nothing`. On Windows, names are matched
+ignoring case, as Windows itself does. `emerald run`, `emerald test`, and `emerald repl` read
+the real environment; the conformance suite gives a program none, so every variable is unset
+there. See [`conformance/run/program-environment.em`](../../conformance/run/program-environment.em).
+
+**Raises** `EncodingError` when the variable's value is not UTF-8 text.
 
 ## Program.sleep(duration: Duration) -> Nothing
 

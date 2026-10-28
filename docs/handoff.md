@@ -357,9 +357,9 @@ compiler), or the compiler depends on it.
    `to_character`) is built on `claude/stdlib-text`. Its website pages are drafted in the
    emerald-website working tree, to commit after the PR merges. Slice 2 (lists and numbers:
    `List.index_of`, `List.repeat`, `List.append_all`, `Math.max`/`Math.min`, `random_fraction`,
-   `Random.next_fraction`) is built on `claude/stdlib-lists`, stacked on slice 1, not pushed; its
-   website pages (List, Math, Random, the prelude's `random`) are not drafted yet. Slice 3 waits.
-   Then a design plan, and
+   `Random.next_fraction`) is on `claude/stdlib-lists`, and slice 3 (`Program.environment`,
+   `print_error`, `Console.clear`) on `claude/stdlib-program`, stacked on slice 2. Their website
+   pages are not written yet. Then a design plan, and
    slices as for the earlier libraries. Networking (sockets; an HTTP server is a candidate slice) is
    one of the gaps and goes last; tasks already give each connection its own task. **A web
    framework is not planned** (the user, 2026-10-11: "my plans have changed"): no routing,
