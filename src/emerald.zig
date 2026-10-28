@@ -3343,6 +3343,7 @@ test "memory stays flat however many times a loop runs" {
     var buffer: [256]u8 = undefined;
     const few = try peakMemory(try std.fmt.bufPrint(&buffer, program, .{3}));
     const many = try peakMemory(try std.fmt.bufPrint(&buffer, program, .{20_000}));
+    if (many >= few + 16 * 1024) std.debug.print("peak memory: {d} bytes for 3 iterations, {d} for 20,000\n", .{ few, many });
     try testing.expect(many < few + 16 * 1024);
 }
 
