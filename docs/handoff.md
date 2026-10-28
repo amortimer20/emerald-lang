@@ -283,9 +283,8 @@ Open work:
     response limit, but it also caps every single test, so it would have to exceed the longest
     conformance test.
   - **With the Zig 0.17 upgrade** (roadmap item 8; `claude/zig-0.17` removes both `-j1` flags),
-    run the parallel
-    Windows suite repeatedly to confirm. The throwaway branch `claude/windows-stall-experiment`
-    was deleted (2026-10-28, at `8043db7`).
+    run the parallel Windows suite repeatedly to confirm. The throwaway branch
+    `claude/windows-stall-experiment` was deleted (2026-10-28, at `8043db7`).
 - **Editor intelligence**, below: done, with two remaining gaps.
 
 **Editor intelligence** (the user's go-ahead, 2026-09-28; built by Codex, reviewed by
