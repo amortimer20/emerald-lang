@@ -2835,9 +2835,27 @@ names so search, rename, and diagnostics remain direct.
 
 ### 14.4 Packages and foreign code
 
-External packages and a package manager are deferred until there is a stable language and
-runtime. A future `emerald.toml` appears only when a project needs configuration,
-dependencies, distribution metadata, or nondefault warning policy.
+Emerald has no package manager, and none is planned (the user, 2026-10-28, after Odin's
+approach). Code is shared by copying it: a library is one directory, named for its namespace,
+copied into the project's root, where 14.2 makes it a namespace with nothing to configure.
+Its version is whatever was copied, and updating it is copying again. Knowing exactly what a
+program depends on is worth more than automating it, a beginner can explain a folder, and a
+school machine needs no network or install rights to use one.
+
+A library follows three rules, each forced by 14.2's paths, which start at the project root:
+
+- **It refers to itself by its own name.** Inside `geometry/`, a file writes
+  `Geometry.Shapes.Square`, not `Shapes.Square`, so the paths hold once it is copied to the root.
+  Two libraries with the same top-level name cannot both be copied in without editing one.
+- **It has no top-level code.** Only the entry file runs its top level, so a `main.em` inside
+  the library is an error ("this would never run"). Its demo and tests live outside it.
+- **Its own repository is a project that contains it.** Run from inside `geometry/`, the
+  library is the root and `Geometry` does not exist. Its repository holds `geometry/` beside a
+  `main.em` that demonstrates it; a user copies only `geometry/`.
+
+The language's own libraries, the platform family of 15.6 included, ship with Emerald rather
+than as libraries to copy, so one installation is enough. `emerald.toml` holds settings, never
+dependencies.
 
 C compatibility belongs behind explicit library bindings. Foreign values do not weaken
 Emerald's static rules, optional rules, ownership model, or naming diagnostics. The C ABI
@@ -3139,7 +3157,7 @@ as Ruby's.
 - **Small utilities** are done (15.12): `Base64`, SHA-256/HMAC-SHA256 digests, and hex on
   `Bytes`.
 
-**Worth doing before too long, still needing no concurrency or package manager:**
+**Worth doing before too long, still needing no concurrency:**
 
 - Nothing currently. A concrete program should earn the next library slice.
 
@@ -3160,9 +3178,8 @@ as Ruby's.
 
 - Structured tasks and channels are implemented (15.13). Multicore execution, detached
   tasks, and broader concurrency primitives still require their own design pass (21).
-- Anything that would want its own release cadence rather than living in this repository —
-  the parked platform libraries (15.6) chief among them — waits on a package manager, itself
-  undesigned (21).
+- The parked platform libraries (15.6) ship with Emerald when they come, since there is no
+  package manager to release them separately (14.4); what they wait on is native bindings (21).
 
 ### 15.8 Dates and times
 
@@ -3701,7 +3718,7 @@ it is a standard-input/output protocol endpoint for editors, not an interactive 
 workflow. `emerald help lsp` documents its optional `--stdio` spelling.
 
 `emerald new` is not implemented; it reports an unknown command and exits `64`. It belongs with
-`build`, `debug`, and package `add` (18.1.1) as later tooling, not the settled command set.
+`build` and `debug` (18.1.1) as later tooling, not the settled command set.
 
 `emerald --version` prints the version embedded in the binary. Development builds currently
 print `Emerald 0.7.0-dev`; release automation derives a release build's value from its `vX.Y.Z`
@@ -3751,7 +3768,7 @@ changing operations, optional results, callbacks, and value-dependent runtime fa
 Runnable examples link to repository examples or conformance programs; documentation tooling
 eventually verifies those links and examples automatically.
 
-`build`, `debug`, package `add`, and a distribution command are later tooling. Names should
+`build`, `debug`, and a distribution command are later tooling. Names should
 describe user goals in full words.
 
 Commands use stable nonzero exit codes for source errors, runtime errors, test failures,
@@ -3766,8 +3783,8 @@ emerald new guessing_game
 ```
 
 creates a directory with a readable `main.em` and no mandatory manifest. A manifest named
-`emerald.toml` appears only when configuration, dependencies, distribution, or warning
-policy requires it. Build configuration is data, not executable Emerald code. Its first
+`emerald.toml` appears only when configuration, distribution, or warning policy requires
+it; dependencies are copied in, never listed (14.4). Build configuration is data, not executable Emerald code. Its first
 real key, `brace_style` (3.4), exists for exactly that reason: a project reads it once, and
 everything else it might eventually hold remains open.
 
@@ -4103,7 +4120,6 @@ The following are deliberately outside the initial implementation:
 - `protected` and type-level visibility controls;
 - algebraic pattern matching beyond section 12's whole-choice `case` match;
 - general user-defined `Iterable` and `for` integration;
-- a package registry and package manager;
 - multicore/parallel execution, detached tasks, channel `select`, and wider concurrency APIs;
 - user-defined macros and advanced annotations;
 - runtime metaprogramming;
@@ -4405,6 +4421,7 @@ recorded in their normative sections:
 | Naming matched data (6.3, 12) | By position, one new read-only name or `_` each, in the arm only; a name that is another position's label is an error | Positional names keep the match as short as the declaration. Allowing any name keeps a clash with an outer local avoidable, and refusing a swapped label catches the one positional mistake whose types still check. Selecting by choice rather than `==` keeps coverage explainable without a pattern language. |
 | Saving an enum that carries data (12, 15.9, 15.11) | JSON, CSV, and typed table rows refuse it at checking, by its static type | A choice name cannot hold the data, so encoding would lose it and decoding could not build it. A saved format needs its own small design: tags, data names, and compatibility. |
 | Checking literal regex patterns (15.4) | When `Regex(...)`'s pattern is a string literal, the checker compiles it with the runtime's own code and reports a mistake at the character inside the literal | Principle 4 of the regex plan: an error is caught before the program runs, and the LSP shows it while typing, with no chance of the checker and runtime disagreeing. |
+| Sharing code (14.4) | No package manager, now or later: a library is a directory named for its namespace, copied into the project's root, referring to itself by that name, with no top-level code; the language's own libraries ship with Emerald | After Odin (the user, 2026-10-28): knowing what a program depends on is worth more than automating it, and a package manager is surface that cannot be taken back (principle 7). 14.2 already makes a copied directory a namespace, so nothing new is needed; a beginner can explain a folder, and a school machine needs no network or install rights. The cost is manual updating, transitive dependencies included, and editing a library when two share a top-level name. Libraries that bind C wait on 14.4's foreign-code design either way. |
 
 ## 23. Consistency rules for future work
 
@@ -4465,7 +4482,7 @@ for working Emerald programs, implementation measurements, or a dedicated design
   small, closed set of style axes (à la rustfmt/gofmt) — those are different tools with
   different guarantees, and the answer changes what "sensible defaults, but developer
   control" is allowed to mean here;
-- project templates and the eventual build, distribution, and package commands;
+- project templates and the eventual build and distribution commands;
 - generated documentation and its searchable reference interface;
 - serialization more broadly (beyond JSON and CSV, both recorded in 15.7) and filesystem
   encoding policy remain open. 15.7 records the rest of the standard-library backlog: regular
@@ -4483,8 +4500,8 @@ for working Emerald programs, implementation measurements, or a dedicated design
   `Game`, are parked rather than on the roadmap: a full-screen terminal library needs
   raw-mode input and a redraw loop Emerald does not have, and the other three need native
   platform bindings (rendering, audio devices) with no extension mechanism to plug them in,
-  and would likely want their own repos and release cadence once a package manager exists to
-  depend on them. Revisit any of these only once that infrastructure exists, or a concrete
+  and would ship with Emerald rather than separately, since there is no package manager
+  (14.4). Revisit any of these only once that infrastructure exists, or a concrete
   beginner program makes an earlier case;
 - multicore execution and wider concurrency APIs beyond the structured tasks of 15.13.
 

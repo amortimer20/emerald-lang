@@ -71,6 +71,19 @@ func describe(download: Download): String {
 
 A choice is built like a struct, by position or by name. Values compare and print with their data, can be dictionary keys when every choice's data can be, and a `case` that misses a choice says which. JSON, CSV, and typed `Console.table` rows refuse an enum that carries data, since a choice's name cannot hold it; convert it first. `examples/enum-data.em` shows more.
 
+## Retiring things with `@deprecated`
+
+Mark a function, type, field, method, property, or enum choice with `@deprecated` and say what to use instead:
+
+```emerald
+@deprecated("Use `total` instead.")
+func sum_all(items: List[Int]): Int {
+    return total(items)
+}
+```
+
+Every use then warns, with your message as the correction, and Visual Studio Code strikes it through. Code inside the deprecated declaration itself doesn't warn. Warnings still make `emerald check` exit with status 1.
+
 ## New methods
 
 - `compare`, `equals`, and `hash` on `Int`, `Float`, and `String`, and `equals` and `hash` on `Bool`. They give exactly what `<`, `==`, and a dictionary already give, as methods, so a generic function can call them. `compare` answers `-1`, `0`, or `1`, and on a `Float` it raises for NaN, as `hash` does.
@@ -78,6 +91,7 @@ A choice is built like a struct, by position or by name. Values compare and prin
 ## Fixes and care
 
 - A set of a type declared later in the file, holding a list, was wrongly accepted. It is refused, as it always should have been.
+- Renaming a struct field, an enum choice's data, or a parameter in the editor now also renames it where a call names it, as in `Point(x: 1)`. Renaming an enum choice's data was refused before.
 - `Stack[Int]()` and similar now explain that types in brackets are written where a value is kept, never where it is built.
 
 ## Upgrading from 0.7.0

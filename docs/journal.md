@@ -6042,3 +6042,16 @@ label. The language server now matches each label by name in what the call reach
 fields, or its custom constructor's parameters; a choice's data items; a function or method's
 parameters), so find references, rename, and go to definition all work from either end, and the
 refusal is gone.
+
+## 2026-10-28: No package manager
+
+The user removed the classroom pilot from the pre-1.0 list and replaced the package manager with
+Odin's approach: code is shared by copying a library's directory into a project, and nothing
+fetches, resolves, or versions it. Emerald already had what this needs, since 14.2 makes any
+directory a namespace. A probe against today's build settled three rules a library follows: it
+refers to itself by its own name (`Geometry.Shapes.Square`, because paths start at the project
+root), it has no top-level code (a library's own `main.em` is "this would never run"), and its
+repository is a project that contains it (run from inside, the library is the root and its own
+name does not exist). Rewrite-context 14.4 records the rules, 22 the decision, and the
+mentions of a future package manager in 15.7, 18, and 21 now say the language's own libraries
+ship with Emerald.

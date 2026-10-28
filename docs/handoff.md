@@ -208,13 +208,15 @@ rather than through checker fields, is done (PR #45, `claude/expected-type`). Th
 language with a path into elementary data structures (rewrite-context 1), the generics wall log
 is retired as a gate and now collects friction for the 1.0 review, the parenthesis-free header
 block is not for 1.0 (rewrite-context 7.4), and deprecation follows
-[`deprecation-design-plan.md`](deprecation-design-plan.md), now built on `claude/deprecation`
-(slices 1 to 3: `@deprecated("message")` and its warning, the editor's strike-through, hover, and
-completion, and the native-member path) and waiting on its PR. Nothing native is deprecated yet,
+[`deprecation-design-plan.md`](deprecation-design-plan.md), now built and merged (PR #47, `6428d6d`;
+slices 1 to 3: `@deprecated("message")` and its warning, the editor's strike-through, hover, and
+completion, and the native-member path). Nothing native is deprecated yet,
 so `Checker.deprecated_natives` is empty; the path was checked by hand with a temporary entry.
 Assigning to a deprecated field and naming one as a constructor argument do not warn yet (16.1).
-After it merges, add `@deprecated` to the website's Annotations page, whose table still says four. Still open from the QA pass: B4
-(reading the site) and B5 (reproducing the red "not defined" editor errors) were not reported;
+The website's Annotations page still lists four annotations; add `@deprecated` to it with the
+0.8.0 pages. From the QA pass, B4 is done: every page was read at 375px in both themes, and the three
+that scrolled sideways (Console, JSON, Instant) were fixed (emerald-website `e43e535`). B5
+(the red "not defined" editor errors) waits on the user's report of where they appeared;
 the flaky-test cause is settled (the exact-work test). The Zig 0.17 upgrade waits for 0.17.1.
 
 **Data-carrying enums are merged (PR #42, `8bdc35e`, 2026-10-16).**
@@ -229,7 +231,7 @@ rewrite-context 6.3 and 12 record the behavior. The website's Enums, Case, JSON,
 pages now teach it (emerald-website `882a878`), and the 0.8.0 release notes draft lists it and the
 `Set` fix.
 
-Named labels at call sites are references (`claude/rename-labels`): renaming a struct field,
+Named labels at call sites are references (PR #48, `556e0f3`): renaming a struct field,
 a choice's data item, or a parameter also renames `Point(x: 1)`, `Download.finished(path: p)`,
 and `area(width: 2)`, and definition and find references work from the label.
 
@@ -337,7 +339,7 @@ compiler), or the compiler depends on it.
    them (generics, for instance, decide whether code is copied per type or keeps types at run time).
    Also settle the parked small syntax ideas (the parenthesis-free header block) and **a
    deprecation story**: 1.0's compatibility promise needs a way to warn about and retire things.
-   Settled 2026-10-28; `@deprecated` is built on `claude/deprecation` (see "Current status").
+   Settled 2026-10-28; `@deprecated` is merged (PR #47; see "Current status").
 4. **Complete the initial standard library** (the user, 2026-10-11): 1.0 ships with it. It is not
    urgent, and networking is bundled into it. Done today: dates and times, regular expressions, JSON,
    an HTTP client, CSV, Base64 and digests, Console, files, and tasks and channels. Spec 15.7 lists
@@ -350,9 +352,14 @@ compiler), or the compiler depends on it.
    framework is not planned** (the user, 2026-10-11: "my plans have changed"): no routing,
    templates, static-file serving, or HTML escaping beyond what the audit finds a program needs.
    It sits before the compiler because a library added afterwards has to work on both backends.
-5. **The package manager**, optional in this phase (`emerald.toml` manifest, versions, resolution,
-   fetching, how `import` finds a package). Backend-neutral, since packages are Emerald source. Big
-   enough to move after the compiler if needed.
+5. **Sharing code without a package manager** (the user, 2026-10-28, after Odin's approach;
+   rewrite-context 14.4). There is no package manager, now or later: a library is a directory
+   named for its namespace, copied into a project's root. Settled and checked against today's
+   build: a library refers to itself by its own name (`Geometry.Shapes.Square`), has no top-level
+   code (a `main.em` inside it is "this would never run"), and lives in a repository that is a
+   project containing it. Left to do: a guide page on using someone else's library and writing
+   one, and an example library laid out that way. That error's help says "Move this into
+   `main.em`" even when the file is a library's `main.em`; it could say why instead.
 6. **A browser playground**: a WebAssembly build of today's interpreter, so students on school
    machines and Chromebooks can try Emerald without installing anything. Zig targets WebAssembly
    directly.
@@ -385,11 +392,9 @@ compiler), or the compiler depends on it.
    dedupes, ranks, and re-runs each reproduction; then fix batches with one commit per item, as the
    19-item batch was run. Skip style nits, the generated Unicode and time-zone tables, interpreter
    performance work, and rewriting working code.
-11. **A classroom pilot**, whenever the user has a class: students using Emerald show what to change
-    while the language can still change cheaply. Exercises and a starter curriculum go with it.
 
 Suggested order: 3 first (it needs the user's decisions) while 8 and 9 proceed; then 4 (the audit,
-then the slices, networking last), 6, 7, and optionally 5; 10 last. 11 whenever a class allows.
+then the slices, networking last), 5, 6, and 7; 10 last.
 
 ### The compiler
 
@@ -548,8 +553,8 @@ says it is time (the user wants it eventually, not now).
 Already in place: Console styling, tables, panels, and prompts (the console UI start), tasks and
 channels, HTTP client, JSON and CSV. Open questions for when this is planned, raised by Claude and
 not yet discussed:
-- **What ships in the standard library and what is a package.** The package manager (roadmap item
-  5) decides whether graphics, games, and GUI are built in or installable, and keeps the core small.
+- **What ships with Emerald.** With no package manager (roadmap item 5), graphics, games, and GUI
+  ship with Emerald when they come, so how large one installation grows is the question.
 - **The backend choice (roadmap item 12) shapes the rest.** Graphics, windows, and input come from
   the platform: the chosen backend decides which native libraries are easy to reach (Zig can call
   C libraries such as SDL directly), and whether Emerald runs the same on Windows, macOS, and Linux.
@@ -578,7 +583,7 @@ not yet discussed:
 - `Tui`, `Graphics`, `Gui`, `Audio`, and `Game`
   are parked rather than on the roadmap: a full-screen terminal library needs raw-mode input
   and a redraw loop, and the other three need native platform bindings with no extension
-  mechanism to plug them in and likely their own repos once a package manager exists.
+  mechanism to plug them in; when they come, they ship with Emerald (rewrite-context 14.4).
 - A generated diagnostic-code registry and reference page wait until the explainer catalog is
   large enough to justify their extra machinery.
 
