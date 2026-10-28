@@ -424,7 +424,11 @@ compiler), or the compiler depends on it.
    the language to the interpreter), report-first and time-boxed; one triage owner (Claude) who
    dedupes, ranks, and re-runs each reproduction; then fix batches with one commit per item, as the
    19-item batch was run. Skip style nits, the generated Unicode and time-zone tables, interpreter
-   performance work, and rewriting working code.
+   performance work, and rewriting working code. The plan is
+   [`codebase-review-plan.md`](codebase-review-plan.md) (accepted 2026-10-28): after items 8 and 6
+   merge; measure first (kcov in Docker, and a rule-by-rule coverage list); eight areas searched
+   by subagents; one triage pass brought to the user; fix batches; done when every finding is
+   settled and every rule has a case or a recorded reason.
 11. **The platform library family: shape and engine** (the user, 2026-10-28), a design plan
    decided before the compiler work, after Odin's `vendor:` collection (raylib, SDL). Built-in
    libraries are the one channel for native code: they ship inside Emerald and its release, while
