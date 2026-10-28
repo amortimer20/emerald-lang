@@ -6111,3 +6111,15 @@ copied library's demo, now says that only the project's own `main.em` runs inste
 the reader to move code into the file it is already in. The user also placed Odin's `vendor:`
 idea: built-in libraries are the one channel for native code, and a design plan for curated
 `Graphics`, `Game`, and `Audio` on raylib is roadmap item 11, decided before the compiler.
+
+## 2026-10-28: Subfolder files are checked with their project
+
+Reviewing the sharing-code work found that the language server loaded a document with
+`Project.load(path)`, which makes a file part of a project only when its own folder holds
+`main.em`. A file in a project's subfolder, such as `plants/catalog.em` or a copied library's
+`geometry/measure.em`, was therefore checked alone in the editor, and every name it used from
+the rest of the project was "not defined": very likely QA item B5. The server now loads the
+enclosing project (the one `Project` already finds, to explain a lone file's errors) and checks
+the file inside it. The command line is unchanged: `emerald run plants/catalog.em` still runs
+that file alone, with the hint pointing at the project's `main.em`. Paths are compared with
+either separator, since a Windows URI uses `/` and a joined path uses `\`.
