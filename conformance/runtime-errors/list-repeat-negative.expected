@@ -1,0 +1,4 @@
+runtime-errors/list-repeat-negative.em:3:7: a List cannot be repeated -2 times
+  print([1, 2].repeat(-2))
+        ^^^^^^^^^^^^^^^^^
+Repeat it 0 or more times; 0 gives an empty List.

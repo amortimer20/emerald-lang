@@ -499,6 +499,14 @@
       "insertTextFormat": 2
     },
     {
+      "label": "random_fraction",
+      "kind": 3,
+      "detail": "random_fraction(): Float",
+      "documentation": "A fraction chosen at random, from `0.0` up to but not including `1.0`.",
+      "insertText": "random_fraction()",
+      "insertTextFormat": 1
+    },
+    {
       "label": "saved",
       "kind": 6,
       "detail": "saved: String",

@@ -18,6 +18,12 @@ Chooses one `Int` from `range`, the seeded equivalent of the global `random(rang
 **Raises** a `RuntimeError` when `range` is empty (`` `next` cannot choose from an empty
 Range ``), the same rule as the global function.
 
+## next_fraction() -> Float
+
+A `Float` from `0.0` up to but not including `1.0`, the seeded equivalent of the global
+`random_fraction()`. It advances the same state as `next`, so a generator's fractions and
+whole numbers interleave repeatably.
+
 ## choose(list: List[T]) -> T?
 
 Chooses one element, `nothing` for an empty `List` — never a raised error, since an empty

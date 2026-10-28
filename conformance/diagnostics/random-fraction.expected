@@ -1,0 +1,16 @@
+diagnostics/random-fraction.em:3:6: warning: `random_fraction` hides Emerald's built-in `random_fraction`
+  func random_fraction(): Float {
+       ^^^^^^^^^^^^^^^
+A name the program declares always wins, so `random_fraction` here means this one. Write `Emerald.random_fraction` to reach the built-in, or choose a different name.
+diagnostics/random-fraction.em:7:7: `random_fraction` takes 0 arguments, but this call passes 1
+  print(Emerald.random_fraction(1))
+        ^^^^^^^^^^^^^^^^^^^^^^^
+Match the number of arguments to what the method needs.
+diagnostics/random-fraction.em:8:17: `next_fraction` takes 0 arguments, but this call passes 1
+  print(Random(1).next_fraction(2))
+                  ^^^^^^^^^^^^^
+Match the number of arguments to what the method needs.
+diagnostics/random-fraction.em:9:14: `Emerald.random_fraction` is built in, and built-in functions cannot be used as values
+  const pick = Emerald.random_fraction
+               ^^^^^^^^^^^^^^^^^^^^^^^
+Call it with parentheses, as in `Emerald.random_fraction()`, or wrap it in a lambda such as `{ => Emerald.random_fraction() }`.

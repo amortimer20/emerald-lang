@@ -1,0 +1,4 @@
+runtime-errors/math-max-nan.em:3:7: `Math.max` cannot compare NaN
+  print(Math.max(1, Float.nan))
+        ^^^^^^^^^^^^^^^^^^^^^^
+Check values with `nan?()` before choosing a minimum or maximum.
