@@ -6915,6 +6915,18 @@ fn typeOfFunctionValue(self: *Checker, expression: *const Ast.Expression, refere
             reference.key
         else
             reference.display;
+        // `random_fraction` takes nothing, so its lambda takes nothing too.
+        const bare = Resolver.builtinFunctionName(reference.key) orelse reference.display;
+        if (std.mem.eql(u8, bare, "random_fraction")) {
+            try self.reportWithHelp(
+                expression.span,
+                "`{s}` is built in, and built-in functions cannot be used as values",
+                .{shown},
+                "Call it with parentheses, as in `{s}()`, or wrap it in a lambda such as `{{ => {s}() }}`.",
+                .{ shown, shown },
+            );
+            return .invalid;
+        }
         try self.reportWithHelp(
             expression.span,
             "`{s}` is built in, and built-in functions cannot be used as values",

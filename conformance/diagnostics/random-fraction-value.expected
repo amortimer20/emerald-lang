@@ -1,0 +1,4 @@
+diagnostics/random-fraction-value.em:3:14: `random_fraction` is built in, and built-in functions cannot be used as values
+  const roll = random_fraction
+               ^^^^^^^^^^^^^^^
+Call it with parentheses, as in `random_fraction()`, or wrap it in a lambda such as `{ => random_fraction() }`.
