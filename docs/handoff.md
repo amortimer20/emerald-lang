@@ -346,7 +346,11 @@ compiler), or the compiler depends on it.
    nothing further ("a concrete program should earn the next library slice"), so this starts with an
    audit rather than a build: compare the library with what beginner and intermediate programs
    expect in comparable languages (Python, Ruby, C#, Go), sort each gap into in, later, or
-   deliberately out under 15.1's tests, and bring the list to the user. Then a design plan, and
+   deliberately out under 15.1's tests, and bring the list to the user. **The audit is done**
+   ([`stdlib-audit.md`](stdlib-audit.md), 2026-10-28): twelve small gaps recommended in (joining
+   strings, character tests, code points to text, whitespace splitting, list `index_of`, repeated
+   lists, appending a list, two-value max and min, a random fraction, environment variables,
+   standard error, clearing the terminal), the rest later or out; it waits for the user's marks. Then a design plan, and
    slices as for the earlier libraries. Networking (sockets; an HTTP server is a candidate slice) is
    one of the gaps and goes last; tasks already give each connection its own task. **A web
    framework is not planned** (the user, 2026-10-11: "my plans have changed"): no routing,
