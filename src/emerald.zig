@@ -3348,7 +3348,7 @@ test "memory stays flat however many times a loop runs" {
     const shorter = try steadyPeak(try std.fmt.bufPrint(&buffer, program, .{20_000}));
     const longer = try steadyPeak(try std.fmt.bufPrint(&buffer, program, .{80_000}));
     // 60,000 more iterations: even two bytes kept for each would cost 120 KB.
-    try expectFlat(shorter, longer);
+    try expectFlat(shorter, longer, 32 * 1024);
 }
 
 // Section 6.2: the trailing `if`.
@@ -3727,9 +3727,9 @@ fn steadyPeak(text: []const u8) !usize {
     return lowest;
 }
 
-/// A longer run may peak at most 32 KB above a shorter one.
-fn expectFlat(shorter: usize, longer: usize) !void {
-    if (longer < shorter + 32 * 1024) return;
+/// A longer run may peak at most `margin` bytes above a shorter one.
+fn expectFlat(shorter: usize, longer: usize, margin: usize) !void {
+    if (longer < shorter + margin) return;
     std.debug.print("peak memory grew from {d} to {d} bytes\n", .{ shorter, longer });
     return error.TestUnexpectedResult;
 }
@@ -3746,9 +3746,13 @@ test "memory stays flat however many calls a program makes" {
     const program = "func calls(n: Int): Int {{\n    if n == 0 {{\n        return 1\n    }}\n    return calls(n - 1) + calls(n - 1)\n}}\nprint(calls({d}))\n";
     var buffer: [256]u8 = undefined;
     const shorter = try steadyPeak(try std.fmt.bufPrint(&buffer, program, .{10}));
-    const longer = try steadyPeak(try std.fmt.bufPrint(&buffer, program, .{14}));
-    // 32,767 calls against 2,047. Keeping a frame per call would cost megabytes.
-    try expectFlat(shorter, longer);
+    const longer = try steadyPeak(try std.fmt.bufPrint(&buffer, program, .{16}));
+    // 131,071 calls against 2,047. Under Zig 0.17 on Linux a program's peak
+    // sits at one of two levels about 250 KB apart, by program rather than by
+    // call count (calls(8) peaked above calls(17)), so the margin is wider
+    // than the loop test's; keeping even 4 bytes a call would still exceed it,
+    // and keeping a frame per call would cost megabytes.
+    try expectFlat(shorter, longer, 512 * 1024);
 }
 
 test "recursion and mutual recursion run when annotated" {
