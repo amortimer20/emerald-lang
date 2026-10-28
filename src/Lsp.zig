@@ -948,6 +948,10 @@ test "a file in a project's subfolder is checked with its whole project" {
     try testing.expect(loaded.project.files.len == 3);
     var report = try emerald.checkProject(gpa, &loaded.project);
     defer report.deinit();
+    for (report.diagnostics) |diagnostic| {
+        std.debug.print("unexpected diagnostic in {s}: {s}\n", .{ loaded.project.files[diagnostic.file].source.path, diagnostic.message });
+    }
+    for (loaded.project.files) |file| std.debug.print("loaded {s} (namespace `{s}`, entry {})\n", .{ file.source.path, file.namespace, file.entry });
     try testing.expectEqual(@as(usize, 0), report.diagnostics.len);
 }
 
