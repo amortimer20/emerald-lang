@@ -179,8 +179,10 @@ fn lspPosition(source: *const Source, offset: u32) Position {
 /// range — a client's position can be stale by one keystroke the moment a
 /// fast edit follows a request.
 fn offsetFromPosition(source: *const Source, position: Position) u32 {
-    const last_line = @as(u32, @intCast(source.line_starts.len));
-    const line = @min(position.line + 1, last_line);
+    // Clamped before the one-based shift, so even `line` 4294967295 cannot
+    // overflow: it lands on the last line, like any other line past the end.
+    const last_index = @as(u32, @intCast(source.line_starts.len - 1));
+    const line = @min(position.line, last_index) + 1;
     const line_start = source.line_starts[line - 1];
     const line_text = source.lineText(line);
 
@@ -4858,6 +4860,13 @@ test "offsetFromPosition is lspPosition's inverse, including astral scalars" {
     // than indexing out of range.
     try testing.expectEqual(@as(u32, 7), offsetFromPosition(&source, .{ .line = 1, .character = 0 }));
     try testing.expectEqual(@as(u32, 18), offsetFromPosition(&source, .{ .line = 1, .character = 999 }));
+    // Any line past the end clamps to the last (empty) one, up to the
+    // largest `u32` a client can send, and any character to its end.
+    const end: u32 = @intCast(source.text.len);
+    try testing.expectEqual(end, offsetFromPosition(&source, .{ .line = 2, .character = 0 }));
+    try testing.expectEqual(end, offsetFromPosition(&source, .{ .line = std.math.maxInt(u32), .character = 0 }));
+    try testing.expectEqual(end, offsetFromPosition(&source, .{ .line = std.math.maxInt(u32), .character = std.math.maxInt(u32) }));
+    try testing.expectEqual(@as(u32, 18), offsetFromPosition(&source, .{ .line = 1, .character = std.math.maxInt(u32) }));
 }
 
 test "uriToPath percent-decodes and strips a Windows drive letter's extra slash" {
