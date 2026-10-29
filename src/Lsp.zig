@@ -2450,13 +2450,7 @@ fn onReferences(server: *Server, gpa: std.mem.Allocator, uri: []const u8, positi
     // prelude has no URI an editor can open, so its declaration itself cannot
     // become a Location; its references below still can.
     if (include_declaration and target.file < loaded.project.files.len) try sites.append(gpa, target);
-    // `analysis.parsed` ends with the embedded prelude. It participates in
-    // resolution, but it has no project URI, so references report only the
-    // project's real source files.
-    if (!try collectParameterSites(gpa, &analysis, target, &sites)) for (analysis.parsed[0..loaded.project.files.len], 0..) |parsed, file_index| {
-        try collectReferencesInUsings(gpa, &analysis, target, @intCast(file_index), parsed.program.using, &sites);
-        try collectReferencesInStatements(gpa, &analysis, target, @intCast(file_index), parsed.program.statements, &sites);
-    };
+    try collectProjectSites(gpa, &analysis, loaded.project.files.len, target, &sites);
 
     var locations: std.ArrayList(Location) = .empty;
     defer {
@@ -2489,6 +2483,25 @@ fn parameterAt(analysis: *const emerald.Analysis, file: u32, offset: u32) ?*cons
 
 fn parameterTarget(parameter: *const Type.Parameter) Resolver.Target {
     return .{ .file = parameter.file, .span = .{ .start = parameter.start, .end = parameter.end } };
+}
+
+/// Every site find references reports for `target`, in the project's own
+/// files only. `analysis.parsed` ends with the embedded prelude, which takes
+/// part in resolution but has no URI: walking it could report a site past
+/// `project.files` (a prelude `String` annotation read as a user's
+/// `struct String`), which no caller can turn into a location or an edit.
+fn collectProjectSites(
+    gpa: std.mem.Allocator,
+    analysis: *const emerald.Analysis,
+    project_files: usize,
+    target: Resolver.Target,
+    sites: *std.ArrayList(Resolver.Target),
+) !void {
+    if (try collectParameterSites(gpa, analysis, target, sites)) return;
+    for (analysis.parsed[0..project_files], 0..) |parsed, file_index| {
+        try collectReferencesInUsings(gpa, analysis, target, @intCast(file_index), parsed.program.using, sites);
+        try collectReferencesInStatements(gpa, analysis, target, @intCast(file_index), parsed.program.statements, sites);
+    }
 }
 
 /// When `target` is a type parameter's name in its `[T]` list, adds every
@@ -2934,10 +2947,7 @@ fn onPrepareRename(server: *Server, gpa: std.mem.Allocator, uri: []const u8, pos
     var sites: std.ArrayList(Resolver.Target) = .empty;
     defer sites.deinit(gpa);
     try sites.append(gpa, target);
-    if (!try collectParameterSites(gpa, &analysis, target, &sites)) for (analysis.parsed, 0..) |parsed, file_index| {
-        try collectReferencesInUsings(gpa, &analysis, target, @intCast(file_index), parsed.program.using, &sites);
-        try collectReferencesInStatements(gpa, &analysis, target, @intCast(file_index), parsed.program.statements, &sites);
-    };
+    try collectProjectSites(gpa, &analysis, loaded.project.files.len, target, &sites);
 
     for (sites.items) |site| {
         if (site.file == loaded.index and offset >= site.span.start and offset <= site.span.end) {
@@ -2989,10 +2999,7 @@ fn onRename(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: 
     var sites: std.ArrayList(Resolver.Target) = .empty;
     defer sites.deinit(gpa);
     try sites.append(gpa, target);
-    if (!try collectParameterSites(gpa, &analysis, target, &sites)) for (analysis.parsed, 0..) |parsed, file_index| {
-        try collectReferencesInUsings(gpa, &analysis, target, @intCast(file_index), parsed.program.using, &sites);
-        try collectReferencesInStatements(gpa, &analysis, target, @intCast(file_index), parsed.program.statements, &sites);
-    };
+    try collectProjectSites(gpa, &analysis, loaded.project.files.len, target, &sites);
 
     var by_file: std.AutoArrayHashMapUnmanaged(u32, std.ArrayList(TextEdit)) = .empty;
     defer {
@@ -5474,6 +5481,40 @@ test "references returns project uses of an embedded prelude declaration" {
     const start = locations[0].object.get("range").?.object.get("start").?.object;
     try testing.expectEqual(@as(i64, 0), start.get("line").?.integer);
     try testing.expectEqual(@as(i64, 15), start.get("character").?.integer);
+}
+
+test "rename edits a declaration named like a built-in, not the prelude's uses of that name" {
+    const gpa = testing.allocator;
+    var server: Server = .{ .gpa = gpa, .io = std.Io.Threaded.global_single_threaded.io() };
+    defer server.deinit();
+    const cases = [_]struct { text: []const u8, position: Position }{
+        // The prelude writes `String` in its own annotations.
+        .{ .text = "struct String {\n}\n", .position = .{ .line = 0, .character = 7 } },
+        // ...and calls `print`.
+        .{ .text = "func print() {\n}\nprint()\n", .position = .{ .line = 0, .character = 5 } },
+    };
+    for (cases) |case| {
+        const uri = "untitled:rename-builtin-name.em";
+        try server.store(uri, case.text);
+        var out: std.Io.Writer.Allocating = .init(gpa);
+        defer out.deinit();
+        try onRename(&server, gpa, uri, case.position, "Renamed", .{ .integer = 1 }, &out.writer);
+        var reader: std.Io.Reader = .fixed(out.written());
+        var response = (try readMessage(gpa, &reader)).?;
+        defer response.deinit();
+        const changes = response.value.object.get("result").?.object.get("changes").?.object;
+        // Only the open document is edited, at each of its own sites.
+        try testing.expectEqual(@as(usize, 1), changes.count());
+        const edits = changes.get(uri).?.array.items;
+        try testing.expectEqual(std.mem.count(u8, case.text, if (case.position.character == 7) "String" else "print"), edits.len);
+
+        out.clearRetainingCapacity();
+        try onPrepareRename(&server, gpa, uri, case.position, .{ .integer = 2 }, &out.writer);
+        reader = .fixed(out.written());
+        var prepared = (try readMessage(gpa, &reader)).?;
+        defer prepared.deinit();
+        try testing.expect(prepared.value.object.get("result").? == .object);
+    }
 }
 
 test "isValidIdentifier accepts an ordinary name, a predicate name, and an accented one" {
