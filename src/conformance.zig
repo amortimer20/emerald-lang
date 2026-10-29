@@ -450,7 +450,19 @@ fn runCase(gpa: std.mem.Allocator, io: std.Io, root: std.Io.Dir, case: Case) !us
     defer if (http_base) |base| gpa.free(base);
     defer if (http_server) |server| server.deinit();
 
-    const actual = try produce(gpa, &project, sources, kind, input, if (http_base) |base| &.{base} else &.{}) orelse return 1;
+    // A run case may also name the process status it must end with, in a
+    // `.status` file beside it; without one, the status is not compared.
+    const status_path = try std.fmt.allocPrint(gpa, "{s}.status", .{case.stem});
+    defer gpa.free(status_path);
+    const expected_status: ?u8 = if (root.readFileAlloc(io, status_path, gpa, .limited(16))) |text| status: {
+        defer gpa.free(text);
+        break :status try std.fmt.parseInt(u8, std.mem.trim(u8, text, " \t\r\n"), 10);
+    } else |err| switch (err) {
+        error.FileNotFound => null,
+        else => |other| return other,
+    };
+
+    const actual = try produce(gpa, &project, sources, kind, input, if (http_base) |base| &.{base} else &.{}, expected_status) orelse return 1;
     defer gpa.free(actual);
 
     if (kind == .lexical) {
@@ -474,6 +486,7 @@ fn produce(
     kind: Kind,
     input: []const u8,
     arguments: []const []const u8,
+    expected_status: ?u8,
 ) !?[]u8 {
     const entry = &project.files[project.entry].source;
     switch (kind) {
@@ -530,6 +543,13 @@ fn produce(
                     );
                     return null;
                 }
+                if (expected_status) |want| if ((report.exit_code orelse 0) != want) {
+                    std.debug.print(
+                        "\n{s}: expected to end with status {d}, but it ended with {d}.\n",
+                        .{ entry.path, want, report.exit_code orelse 0 },
+                    );
+                    return null;
+                };
                 return try gpa.dupe(u8, out.written());
             }
 

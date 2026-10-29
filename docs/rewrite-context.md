@@ -3005,7 +3005,8 @@ with 14.2's warning.
 
 `exit()` ends the program successfully; `exit(code)` uses a process status from `0` through
 `255`. Other status values are diagnosed. `exit` unwinds pending `finally` blocks but is not
-caught as an error.
+caught as an error. The status belongs to the program: `exit(code)` inside a task ends the
+whole program with that code, as 15.13 describes.
 Reaching the end of the entry file exits successfully; an uncaught error uses a nonzero
 status.
 
@@ -3593,7 +3594,10 @@ syntax. Capacity zero is a FIFO rendezvous; positive capacity buffers up to that
 messages. `send(value: T)` waits for space or a receiver; `receive(): T?` waits for a
 message. `close()` is idempotent: buffered messages remain available, closed-and-empty
 receives return `nothing`, and sends not already committed raise RuntimeError with
-`cannot send to a closed channel`. Negative capacity raises RuntimeError with
+`cannot send to a closed channel`. A hand-off commits a message: once a send has
+been handed to a waiting receiver, that receiver gets the value even if it is cancelled
+before it resumes, and observes the cancellation at its next suspension point. Likewise a sender whose value a receiver took has
+sent it: that send returns normally, and the cancellation waits for the next suspension point. Negative capacity raises RuntimeError with
 `a channel capacity cannot be negative`. An optional item type is a checking error:
 `a channel's items can't be optional`, with help to wrap the value in a struct. Struct
 fields may be optional without confusing a message with closure. `for item in channel`
@@ -3601,15 +3605,23 @@ ends only when closed and empty. Transmitted collections and structs keep value 
 class instances and channels remain shared identities.
 
 `task.cancel()` requests cooperative cancellation at the next suspension point; cancelling
-a finished task does nothing. Cancellation raises `CancelledError`, which extends `Error`
+a finished task does nothing. A task cancelled before it first runs never runs its block; its `result()`
+raises CancelledError. Cancellation raises `CancelledError`, which extends `Error`
 directly, not RuntimeError. `finally` still runs, including cleanup that itself waits;
 cleanup and error draining are protected from cancellation. Normal implicit group joining
 remains interruptible, and cancelling a parent cancels and joins its nested children.
 A failing child cancels its siblings and the group's block, then the group joins all
 children and propagates its first failure once. An owner catching the failing child's
-`result()` observes that failure, so draining does not raise it again. Deliberately cancelled
+`result()` observes that failure, so draining does not raise it again. Only the owner's
+observation counts: a sibling that reads the failing child's `result()`, even in its cleanup,
+still leaves the group to raise that failure. Deliberately cancelled
 children alone do not make a group fail; their result calls still raise CancelledError.
-Program exit cancels and drains active children.
+Program exit cancels and drains active children. `exit` in any task, a child or the group's
+block, ends the whole program: every other live task, including one not yet run, unwinds as
+`exit` does at its next suspension point outside cleanup, so its `finally` blocks run and no
+`catch` sees a `CancelledError`. A child's exit is not a failure of its group. An exit while a group runs, including one in
+cleanup while a failing group drains, ends the program with its status ahead of any failure
+the group would otherwise propagate.
 
 Standard-input cancellation interrupts the task's wait immediately. One scheduler-owned
 reader keeps the in-flight read and delivers its eventual line to the next input call;

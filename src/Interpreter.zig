@@ -95,6 +95,8 @@ const TaskGroupRecord = struct {
     owner: *Scheduler.TaskState(TaskData),
     first_error: ?*TaskRecord = null,
     cancelling: bool = false,
+    /// `Interpreter.exit_count` when the group began.
+    exit_count: usize,
 };
 
 const ChannelWaiter = struct {
@@ -238,6 +240,8 @@ channels: std.AutoHashMapUnmanaged(i64, *ChannelRecord) = .empty,
 next_channel_id: i64 = 1,
 next_group_id: i64 = 1,
 next_completion_order: usize = 1,
+/// How many times `exit` has been called; a group that saw one ends with it.
+exit_count: usize = 0,
 live_tasks: usize = 0,
 facts: Resolver.Facts = .{},
 out: *std.Io.Writer,
@@ -750,7 +754,7 @@ pub const Session = struct {
                 interpreter.task.state.return_value = null;
                 return .complete;
             },
-            error.Exited => return .{ .exited = interpreter.task.state.exit_code orelse 0 },
+            error.Exited => return .{ .exited = interpreter.root_task.state.exit_code orelse 0 },
             error.Broke, error.Continued => unreachable,
             else => |other| return other,
         };
@@ -1052,7 +1056,7 @@ pub fn run(
                         interpreter.task.state.failure = null;
                         continue;
                     },
-                    error.Exited => return .{ .arena_state = arena_state, .shared_allocator = shared_allocator, .failure = null, .test_failures = failures.items, .test_count = count, .exit_code = interpreter.task.state.exit_code },
+                    error.Exited => return .{ .arena_state = arena_state, .shared_allocator = shared_allocator, .failure = null, .test_failures = failures.items, .test_count = count, .exit_code = interpreter.root_task.state.exit_code },
                     error.StepLimit => return .{ .arena_state = arena_state, .shared_allocator = shared_allocator, .failure = interpreter.task.state.failure, .test_failures = failures.items, .test_count = count },
                     error.Returned, error.Broke, error.Continued => unreachable,
                     else => |other| return other,
@@ -1077,7 +1081,7 @@ pub fn run(
     };
 
     const failure = interpreter.task.state.failure;
-    return .{ .arena_state = arena_state, .shared_allocator = shared_allocator, .failure = failure, .exit_code = interpreter.task.state.exit_code };
+    return .{ .arena_state = arena_state, .shared_allocator = shared_allocator, .failure = failure, .exit_code = interpreter.root_task.state.exit_code };
 }
 
 /// Completes a class's descriptor with what it inherits, its base classes'
@@ -1867,6 +1871,9 @@ const TaskData = struct {
     caught_failure: ?Diagnostic = null,
     failure: ?Diagnostic = null,
     exit_code: ?u8 = null,
+    /// Another task's `exit` is ending the program: every later suspension
+    /// point outside cleanup unwinds this task as `exit` does (15.2).
+    exit_requested: bool = false,
     stack: StackLimit = .{ .base = 0, .budget = 0 },
     steps_remaining: ?usize = null,
     step_limit: usize = 0,
@@ -4036,7 +4043,7 @@ fn callTasksRun(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call
     const body = try self.evaluate(call.arguments[0]);
     defer self.heap.release(body);
     const group = try self.gpa.create(TaskGroupRecord);
-    group.* = .{ .id = self.next_group_id, .owner = self.task };
+    group.* = .{ .id = self.next_group_id, .owner = self.task, .exit_count = self.exit_count };
     self.next_group_id += 1;
     self.task_groups.put(self.gpa, group.id, group) catch |err| {
         self.gpa.destroy(group);
@@ -4110,6 +4117,9 @@ fn callTasksRun(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call
     defer self.finishTaskGroup(group);
     _ = self.scheduler.takeCancellation(owner.state.job.?);
 
+    // An `exit` anywhere while this group ran ends the program, ahead of
+    // any failure the group would otherwise report (15.2).
+    if (self.exit_count != group.exit_count) return error.Exited;
     if (block_failed_first) {
         self.task.state.raised_value = block_raised;
         self.task.state.failure = block_failure;
@@ -4220,9 +4230,14 @@ fn taskMain(context: *anyopaque, job: *Scheduler.Runtime.Job) void {
     task.state.state.stack = StackLimit.here(Scheduler.Runtime.stack_size);
     self.activateTask(&task.state);
     const closure = task.block.data.closure;
-    const result = self.invokeClosure(task.span, closure, self.closureCallable(closure), &.{});
+    // A task cancelled before it first runs never runs its block (15.13).
+    const result = if (self.cancellationPoint(task.span)) |_|
+        self.invokeClosure(task.span, closure, self.closureCallable(closure), &.{})
+    else |err|
+        err;
     if (result) |value| task.result = value else |err| task.ended = err;
-    if (task.ended != null and !self.taskCancelled(task)) {
+    // An exit is not a failure: it has already asked every task to unwind.
+    if (task.ended != null and task.ended.? != error.Exited and !self.taskCancelled(task)) {
         if (task.group.?.first_error == null) {
             task.group.?.first_error = task;
             self.cancelGroup(task.group.?, task);
@@ -4251,7 +4266,11 @@ fn awaitTask(self: *Interpreter, span: Source.Span, task: *TaskRecord, for_resul
 }
 
 fn propagateTaskError(self: *Interpreter, task: *TaskRecord) Error {
-    task.observed_error = true;
+    // Only the group's owner observes a failure for the group (15.13); a
+    // sibling reading it leaves the group to propagate it.
+    if (task.group) |group| {
+        if (group.owner == self.task) task.observed_error = true;
+    } else task.observed_error = true;
     const err = task.ended.?;
     if (err == error.Raised) {
         self.task.state.raised_value = Heap.retain(task.state.state.raised_value.?);
@@ -4322,6 +4341,25 @@ fn requestCancellation(self: *Interpreter, job: *Scheduler.Runtime.Job, state: *
     }
 }
 
+/// `exit` ends the whole program, whichever task calls it (15.2). Every other
+/// live task, started or still queued, unwinds as `exit` does at its next
+/// suspension point outside cleanup: `finally` runs, `catch` does not. Tasks
+/// are woken in start order, then the root, as a failing group would.
+fn requestExit(self: *Interpreter) void {
+    self.exit_count += 1;
+    if (self.task_records.count() == 0) return;
+    for (1..@as(usize, @intCast(self.next_task_id))) |id| {
+        const task = self.task_records.get(@intCast(id)) orelse continue;
+        if (task.group == null or &task.state == self.task) continue;
+        task.state.state.exit_requested = true;
+        self.requestCancellation(&task.job, &task.state);
+    }
+    if (self.task != self.root_task) {
+        self.root_task.state.exit_requested = true;
+        self.requestCancellation(self.root_task.state.job.?, self.root_task);
+    }
+}
+
 fn cancelGroup(self: *Interpreter, group: *TaskGroupRecord, failed: ?*TaskRecord) void {
     group.cancelling = true;
     for (group.tasks.items) |task| if (task != failed) self.cancelTask(task);
@@ -4330,6 +4368,10 @@ fn cancelGroup(self: *Interpreter, group: *TaskGroupRecord, failed: ?*TaskRecord
 
 fn cancellationPoint(self: *Interpreter, span: Source.Span) Error!void {
     if (self.task.state.cancellation_mask != 0) return;
+    if (self.task.state.exit_requested) {
+        _ = self.scheduler.takeCancellation(self.task.state.job.?);
+        return error.Exited;
+    }
     if (!self.scheduler.takeCancellation(self.task.state.job.?)) return;
     if (self.task.state.raised_value) |value| self.heap.release(value);
     self.task.state.raised_value = try self.makeError(Resolver.preludeKey("CancelledError"), "this task was cancelled");
@@ -4542,13 +4584,17 @@ fn removeChannelWaiter(waiters: *std.ArrayList(*ChannelWaiter), waiter: *Channel
     };
 }
 
-fn waitChannel(self: *Interpreter, span: Source.Span, channel: *ChannelRecord, sending: bool) Error!void {
+/// A hand-off commits the message (15.13): once `waiter` is delivered, its
+/// send or receive succeeds, and a cancellation that arrived meanwhile stays
+/// pending for the task's next suspension point.
+fn waitChannel(self: *Interpreter, span: Source.Span, channel: *ChannelRecord, sending: bool, waiter: *const ChannelWaiter) Error!void {
     try self.cancellationPoint(span);
     const task = self.task;
     task.state.job.?.wait_site = .{ .file = task.state.file, .start = span.start };
     defer task.state.job.?.wait_site = null;
     const progressed = self.scheduler.parkChannel(task.state.job.?, .{ .id = channel.id, .sending = sending });
     self.activateTask(task);
+    if (waiter.delivered) return;
     try self.cancellationPoint(span);
     if (!progressed) return self.raiseDeadlock(span);
 }
@@ -4579,7 +4625,7 @@ fn sendChannel(self: *Interpreter, span: Source.Span, channel: *ChannelRecord, v
     defer if (waiter.value) |pending| self.heap.release(pending);
     try channel.senders.append(self.gpa, &waiter);
     defer removeChannelWaiter(&channel.senders, &waiter);
-    try self.waitChannel(span, channel, true);
+    try self.waitChannel(span, channel, true, &waiter);
     if (!waiter.delivered) return self.raise(span, "cannot send to a closed channel", "Send values before closing the channel.");
 }
 
@@ -4621,7 +4667,7 @@ fn receiveChannel(self: *Interpreter, span: Source.Span, channel: *ChannelRecord
     defer if (waiter.value) |pending| self.heap.release(pending);
     try channel.receivers.append(self.gpa, &waiter);
     defer removeChannelWaiter(&channel.receivers, &waiter);
-    try self.waitChannel(span, channel, false);
+    try self.waitChannel(span, channel, false, &waiter);
     const value = waiter.value;
     waiter.value = null;
     return value;
@@ -4772,7 +4818,10 @@ fn callBuiltin(self: *Interpreter, expression: *const Ast.Expression, call: Ast.
     if (std.mem.eql(u8, name, "exit")) {
         const code: i64 = if (call.arguments.len == 0) 0 else (try self.evaluate(call.arguments[0])).data.int;
         if (code < 0 or code > 255) return self.raiseFmt(expression.span, "`exit` cannot use status {d}", .{code}, "Pass a whole number from 0 through 255.");
-        self.task.state.exit_code = @intCast(code);
+        // The status belongs to the program, not to the task that asked:
+        // a child's `exit` ends the whole run (15.2, 15.13).
+        self.root_task.state.exit_code = @intCast(code);
+        self.requestExit();
         return error.Exited;
     }
     if (std.mem.eql(u8, name, "print_error")) return self.evaluatePrintError(call);
