@@ -1,7 +1,7 @@
 # Review triage
 
-2026-10-29. Claude's triage of the eight review areas (`codebase-review-plan.md`, section 5), for
-the user's decisions. Every reproduction was rerun on main at `d580f40` (Zig 0.17.0, macOS arm64):
+2026-10-29. Claude's triage of the eight review areas (`codebase-review-plan.md`, section 5).
+**The user accepted every recommendation, D1 to D8, and the proposed order (2026-10-29).** Every reproduction was rerun on main at `d580f40` (Zig 0.17.0, macOS arm64):
 the crashes and wrong answers below still reproduce. The allocation-failure crashes (area 1) and
 the language-server crashes (area 2) need their harnesses and were taken from their reports.
 
@@ -75,7 +75,7 @@ Error messages are part of the product (principle 8), and area 7's corpus is the
 
 ## D. Decisions for you
 
-Each has a recommendation; the "Decide" column is yours.
+Each recommendation was accepted by the user on 2026-10-29.
 
 | # | Question | Recommendation |
 | --- | --- | --- |
