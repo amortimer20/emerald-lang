@@ -3605,7 +3605,8 @@ ends only when closed and empty. Transmitted collections and structs keep value 
 class instances and channels remain shared identities.
 
 `task.cancel()` requests cooperative cancellation at the next suspension point; cancelling
-a finished task does nothing. Cancellation raises `CancelledError`, which extends `Error`
+a finished task does nothing. A task cancelled before it first runs never runs its block; its `result()`
+raises CancelledError. Cancellation raises `CancelledError`, which extends `Error`
 directly, not RuntimeError. `finally` still runs, including cleanup that itself waits;
 cleanup and error draining are protected from cancellation. Normal implicit group joining
 remains interruptible, and cancelling a parent cancels and joins its nested children.

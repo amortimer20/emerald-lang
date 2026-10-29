@@ -1,17 +1,21 @@
 Tasks.run { tasks =>
-    const failed = tasks.start { =>
-        raise RuntimeError("first failure")
-    }
     tasks.start { =>
-        tasks.start { =>
+        try {
+            Program.sleep(Duration(seconds: 60))
+        }
+        finally {
+            const late = tasks.start { => print("unexpected: late child ran") }
             try {
-                Program.sleep(Duration(seconds: 60))
+                late.result()
             }
-            finally {
-                print("late child cleanup")
+            catch error: CancelledError {
+                print("late child: #{error.message}")
             }
         }
+    }
+    const failed = tasks.start { =>
         Tasks.yield()
+        raise RuntimeError("first failure")
     }
     try {
         failed.result()

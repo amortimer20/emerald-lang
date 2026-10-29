@@ -4228,7 +4228,11 @@ fn taskMain(context: *anyopaque, job: *Scheduler.Runtime.Job) void {
     task.state.state.stack = StackLimit.here(Scheduler.Runtime.stack_size);
     self.activateTask(&task.state);
     const closure = task.block.data.closure;
-    const result = self.invokeClosure(task.span, closure, self.closureCallable(closure), &.{});
+    // A task cancelled before it first runs never runs its block (15.13).
+    const result = if (self.cancellationPoint(task.span)) |_|
+        self.invokeClosure(task.span, closure, self.closureCallable(closure), &.{})
+    else |err|
+        err;
     if (result) |value| task.result = value else |err| task.ended = err;
     // An exit is not a failure: it has already asked every task to unwind.
     if (task.ended != null and task.ended.? != error.Exited and !self.taskCancelled(task)) {
