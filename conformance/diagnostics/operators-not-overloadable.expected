@@ -1,0 +1,8 @@
+diagnostics/operators-not-overloadable.em:5:15: this is not an arithmetic operator annotation
+      @operator("//")
+                ^^^^
+Use one of `@operator("+")`, `@operator("-")`, `@operator("*")`, or `@operator("/")`.
+diagnostics/operators-not-overloadable.em:10:15: this is not an arithmetic operator annotation
+      @operator("**")
+                ^^^^
+Use one of `@operator("+")`, `@operator("-")`, `@operator("*")`, or `@operator("/")`.

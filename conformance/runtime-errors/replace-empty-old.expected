@@ -1,0 +1,4 @@
+runtime-errors/replace-empty-old.em:3:7: `replace` needs something to replace, but this is an empty String
+  print("abc".replace(old, "-"))
+        ^^^^^^^^^^^^^^^^^^^^^^^
+Pass the text to find as the first argument.

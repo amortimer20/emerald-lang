@@ -1,0 +1,12 @@
+diagnostics/json-encode-unsupported.em:9:19: this is Player, which `Json.encode` cannot write as JSON
+  print(Json.encode(Player()))
+                    ^^^^^^^^
+JSON can write strings, numbers, true or false, optional values, lists, string-keyed dictionaries, enums, dates and times, and structs made from those values.
+diagnostics/json-encode-unsupported.em:10:19: this is func(String): String, which `Json.encode` cannot write as JSON
+  print(Json.encode(shout))
+                    ^^^^^
+JSON can write strings, numbers, true or false, optional values, lists, string-keyed dictionaries, enums, dates and times, and structs made from those values.
+diagnostics/json-encode-unsupported.em:11:19: this is Bytes, which `Json.encode` cannot write as JSON
+  print(Json.encode(Bytes.from_list([1])))
+                    ^^^^^^^^^^^^^^^^^^^^
+JSON can write strings, numbers, true or false, optional values, lists, string-keyed dictionaries, enums, dates and times, and structs made from those values.

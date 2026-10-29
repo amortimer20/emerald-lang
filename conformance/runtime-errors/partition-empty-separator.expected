@@ -1,0 +1,4 @@
+runtime-errors/partition-empty-separator.em:3:7: `partition` needs a separator, but this is an empty String
+  print("a=b".partition(separator))
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+Pass the text to find as the separator.

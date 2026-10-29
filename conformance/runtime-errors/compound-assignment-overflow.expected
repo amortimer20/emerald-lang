@@ -1,0 +1,4 @@
+runtime-errors/compound-assignment-overflow.em:3:1: addition of 9223372036854775807 and 1 overflows Int
+  total += 1
+  ^^^^^^^^^^
+`Int` holds whole numbers from -9223372036854775808 through 9223372036854775807.

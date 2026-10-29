@@ -1,0 +1,4 @@
+diagnostics/arrow-lambda.em:2:29: expected `=>` after this lambda's parameters, found -
+  const double = { value: Int -> value * 2 }
+                              ^
+A lambda separates what it receives from what it does with `=>`, as in `{ number => number * 2 }`.

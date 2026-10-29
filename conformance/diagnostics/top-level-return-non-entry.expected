@@ -1,0 +1,4 @@
+diagnostics/top-level-return-non-entry/helpers/answer.em:5:1: this would never run
+  return
+  ^^^^^^
+Only the entry file runs its top level. Move this into `diagnostics/top-level-return-non-entry/main.em`, or into a function declared in this file.

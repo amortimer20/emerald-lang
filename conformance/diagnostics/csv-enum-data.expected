@@ -1,0 +1,8 @@
+diagnostics/csv-enum-data.em:12:18: field `shape` cannot be written as CSV, because Shape carries data
+  print(Csv.encode([Row(name: "a", shape: Shape.circle(radius: 1.0))]))
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Saving only the choice's name would lose its data. Convert it first, with a `case` that builds a plain struct or text.
+diagnostics/csv-enum-data.em:13:53: field `shape` cannot be read from CSV, because Shape carries data
+  const rows = Csv.decode("name,shape\na,circle", as: List[Row])
+                                                      ^^^^^^^^^
+A saved choice name has no data to build it from. Read plain values, then build the enum from them with a function.

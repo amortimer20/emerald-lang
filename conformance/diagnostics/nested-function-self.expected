@@ -1,0 +1,4 @@
+diagnostics/nested-function-self.em:8:20: a nested function cannot use `self` yet
+              return self.count
+                     ^^^^
+Read what the function needs into a local first, as in `const x = self.x`, and use that inside the function.

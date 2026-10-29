@@ -1,0 +1,4 @@
+diagnostics/hashable-class-key.em:20:20: Tag cannot be a dictionary key
+  const counts: Dict[Tag, Int] = []
+                     ^^^
+A key must be a number, a `Bool`, a `String`, an enum value, or a tuple or struct made only from valid key types. Lists, other mutable collections, and class objects cannot be keys.
