@@ -1,0 +1,1 @@
+[{"jsonrpc": "2.0", "id": 1, "method": "textDocument/hover", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": -1, "character": 0}}}, {"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover"}, {"jsonrpc": "2.0", "id": 3, "method": "textDocument/rename", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 0, "character": 4}}}]
