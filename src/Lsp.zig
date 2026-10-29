@@ -388,11 +388,37 @@ fn pathToUri(gpa: std.mem.Allocator, path: []const u8) ![]u8 {
 
 /// Runs until `exit` or a clean end of the input stream (the client closed
 /// its side of stdio).
+///
+/// The server runs on a thread with the same reserved stack `check`, `run`,
+/// `format` and the REPL use. Its walks over the syntax tree (references,
+/// definition, hover, rename) recurse once per level, like the checker's,
+/// and the parser accepts expressions `Parser.max_expression_depth` deep: on
+/// the calling thread's stack, whose size is the host's choice, a program
+/// that checks could overflow it. A reserved stack is mapped lazily, so the
+/// unused part costs address space only.
 pub fn run(gpa: std.mem.Allocator, io: std.Io, in: *std.Io.Reader, out: *std.Io.Writer) !void {
     var server: Server = .{ .gpa = gpa, .io = io, .builtins = try emerald.Builtins.load(gpa) };
     defer server.deinit();
-    try runMessages(&server, gpa, in, out);
+    const Work = struct {
+        server: *Server,
+        gpa: std.mem.Allocator,
+        in: *std.Io.Reader,
+        out: *std.Io.Writer,
+        result: RunError!void = {},
+
+        fn go(work: *@This()) void {
+            work.result = runMessages(work.server, work.gpa, work.in, work.out);
+        }
+    };
+    var work: Work = .{ .server = &server, .gpa = gpa, .in = in, .out = out };
+    // The calling thread only waits, so nothing is touched from two threads.
+    const thread = emerald.Scheduler.ReservedThread.spawn(stack_size, Work.go, .{&work}) catch return error.StackUnavailable;
+    thread.join();
+    return work.result;
 }
+
+const stack_size: usize = if (@sizeOf(usize) >= 8) 1024 * 1024 * 1024 else 32 * 1024 * 1024;
+const RunError = @typeInfo(@typeInfo(@TypeOf(runMessages)).@"fn".return_type.?).error_union.error_set;
 
 fn runMessages(server: *Server, gpa: std.mem.Allocator, in: *std.Io.Reader, out: *std.Io.Writer) !void {
     while (true) {
@@ -4760,6 +4786,54 @@ test "a framed message round-trips through reading and writing" {
 
     try testing.expectEqualStrings("ping", parsed.value.object.get("method").?.string);
     try testing.expectEqual(@as(i64, 7), parsed.value.object.get("id").?.integer);
+}
+
+test "the server answers on expressions as deep as the parser accepts" {
+    const gpa = testing.allocator;
+    const io = std.Io.Threaded.global_single_threaded.io();
+    // Thousands of nested unaries, then a use: references walk the whole
+    // initializer, and definition descends into it, one frame per level,
+    // which overflowed the calling thread's stack in a Debug build.
+    const depth = 9_000;
+    var text: std.ArrayList(u8) = .empty;
+    defer text.deinit(gpa);
+    try text.appendSlice(gpa, "var x = ");
+    try text.appendNTimes(gpa, '-', depth);
+    try text.appendSlice(gpa, "1\nprint(x)\n");
+    const uri = "untitled:deep-expression.em";
+    var requests: std.Io.Writer.Allocating = .init(gpa);
+    defer requests.deinit();
+    try writeMessage(gpa, &requests.writer, .{ .jsonrpc = "2.0", .id = 0, .method = "initialize", .params = .{} });
+    try writeMessage(gpa, &requests.writer, .{ .jsonrpc = "2.0", .method = "textDocument/didOpen", .params = .{
+        .textDocument = .{ .uri = uri, .languageId = "emerald", .version = 1, .text = text.items },
+    } });
+    try writeMessage(gpa, &requests.writer, .{ .jsonrpc = "2.0", .id = 1, .method = "textDocument/references", .params = .{
+        .textDocument = .{ .uri = uri },
+        .position = Position{ .line = 1, .character = 6 },
+        .context = .{ .includeDeclaration = true },
+    } });
+    try writeMessage(gpa, &requests.writer, .{ .jsonrpc = "2.0", .id = 2, .method = "textDocument/definition", .params = .{
+        .textDocument = .{ .uri = uri },
+        .position = Position{ .line = 0, .character = 8 + depth / 2 },
+    } });
+    try writeMessage(gpa, &requests.writer, .{ .jsonrpc = "2.0", .method = "exit" });
+    var reader: std.Io.Reader = .fixed(requests.written());
+    var responses: std.Io.Writer.Allocating = .init(gpa);
+    defer responses.deinit();
+    try run(gpa, io, &reader, &responses.writer);
+
+    reader = .fixed(responses.written());
+    var answered: [3]bool = @splat(false);
+    while (try readMessage(gpa, &reader)) |value| {
+        var parsed = value;
+        defer parsed.deinit();
+        const id = parsed.value.object.get("id") orelse continue;
+        try testing.expect(parsed.value.object.get("result") != null);
+        answered[@intCast(id.integer)] = true;
+        // The declaration and the one read.
+        if (id.integer == 1) try testing.expectEqual(@as(usize, 2), parsed.value.object.get("result").?.array.items.len);
+    }
+    try testing.expectEqual([3]bool{ true, true, true }, answered);
 }
 
 test "reading stops cleanly at the end of input" {

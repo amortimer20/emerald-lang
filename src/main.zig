@@ -637,6 +637,7 @@ fn executeLsp(gpa: std.mem.Allocator, io: std.Io) !u8 {
     Lsp.run(gpa, io, &in.interface, &out.interface) catch |err| switch (err) {
         error.OutOfMemory => return internalFailure(io, error.OutOfMemory),
         error.WriteFailed => return internalFailure(io, error.WriteFailed),
+        error.StackUnavailable => return internalFailure(io, error.StackUnavailable),
         error.ReadFailed => {
             try writeAll(io, .stderr, "emerald: could not read from the client\n");
             return @backingInt(ExitCode.internal_failure);
