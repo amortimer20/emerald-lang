@@ -1,0 +1,315 @@
+program	expected	stage	exit	line	place	message
+001-missing-close-brace-if	4	check	1	3	ok	this block is never closed
+002-missing-close-brace-func	3	check	1	2	ok	this block is never closed
+003-missing-close-paren-call	3	check	1	4	off	expected `)` to close this call, found a name
+004-extra-close-brace	6	check	1	6	ok	this `}` does not close anything
+005-mismatched-list-bracket	2	check	1	2	ok	expected `]` to close this list, found )
+006-missing-close-quote	2	check	1	2	ok	this string is never closed
+007-missing-close-quote-in-print	2	check	1	2	ok	this string is never closed
+008-nested-paren-imbalance	4	check	1	5	off	expected `)` to close this group, found a name
+009-missing-open-brace-if	3	check	1	3	ok	expected `{` to open a block, found the end of the line
+010-missing-open-brace-while	3	check	1	3	ok	expected `{` to open a block, found the end of the line
+011-python-colon-if	3	check	1	3	ok	expected `{` to open a block, found :
+012-python-colon-for	2	check	1	2	ok	expected `{` to open a block, found :
+013-python-colon-func	2	check	1	2	ok	this result is never used
+014-no-braces-indent-only	3	check	1	3	ok	expected `{` to open a block, found the end of the line
+015-one-line-if-no-braces	3	check	1	3	ok	expected `{` to open a block, found a name
+016-semicolons-everywhere	2	check	1	2	ok	Emerald does not use semicolons
+017-semicolon-after-if	3	check	1	3	ok	Emerald does not use semicolons
+018-semicolon-after-func-header	2	check	1	2	ok	Emerald does not use semicolons
+019-curly-quotes	2	check	1	2	ok	this character cannot be used in a name
+020-single-quotes	2	run	0	-	-	Ava
+021-slash-comment	2	check	1	2	ok	expected an expression, found //
+022-block-comment	2	check	1	2	ok	expected an expression, found /
+023-else-on-new-line-after-blank	7	check	1	7	ok	expected an expression, found else
+024-misleading-indent-after-if	4	run	0	-	-	low
+025-elif	6	check	1	6	ok	this result is never used
+026-elsif	6	check	1	6	ok	this result is never used
+027-elseif-one-word	6	check	1	6	ok	this result is never used
+028-else-if-without-condition-braces	9	check	1	9	ok	expected `{` to open a block, found (
+029-python-else-colon	6	check	1	6	ok	expected `{` to open a block, found :
+030-assign-in-if	3	check	1	3	ok	a condition compares values with `==`, not `=`
+031-assign-in-while	3	check	1	3	ok	a condition compares values with `==`, not `=`
+032-assign-in-ternary	3	check	1	3	ok	a condition compares values with `==`, not `=`
+033-double-equals-as-statement	3	check	1	3	ok	this result is never used
+034-and-ampersand	3	check	1	3	ok	`&&` is not an operator in Emerald
+035-or-pipes	3	check	1	3	ok	`||` is not an operator in Emerald
+036-single-ampersand	4	check	1	4	ok	this character does not belong here
+037-bang-not	3	check	1	3	ok	`!` is not an operator in Emerald
+038-arrow-ge	3	check	1	3	ok	expected `{` to open a block, found =>
+039-arrow-le	3	check	1	3	ok	a condition compares values with `==`, not `=`
+040-not-equal-diamond	3	check	1	3	ok	expected an expression, found >
+041-plus-plus	3	check	1	3	ok	`++` is not an operator in Emerald
+042-pre-plus-plus	3	check	1	3	ok	`++` is not an operator in Emerald
+043-minus-minus	3	check	1	3	ok	this result is never used
+044-equals-plus	3	check	1	3	ok	expected an expression, found +
+045-caret-power	3	check	1	3	ok	this character does not belong here
+046-or-shortcut-value	3	check	1	3	ok	a condition must be a Bool, but this is Int
+047-and-shortcut-compare	3	check	1	3	ok	expected an expression, found <
+048-not-precedence	3	run	0	-	-	not five
+049-ternary-question-colon	3	check	1	3	ok	`? :` is not a conditional operator in Emerald
+050-python-ternary	3	check	1	3	ok	a declaration cannot have a trailing `if`
+051-triple-equals	3	check	1	3	ok	expected an expression, found =
+052-modulo-word	3	check	1	3	ok	expected `)` to close this call, found a name
+053-let-binding	2	check	1	2	ok	this result is never used
+054-java-typed-decl	2	check	1	2	ok	this result is never used
+055-no-var-assign	2	check	1	2	ok	[E1001] `total` is not defined
+056-use-before-declare	2	check	1	2	ok	`score` is not declared until later in the file
+057-misspelled-variable	3	check	1	3	ok	[E1001] `totl` is not defined
+058-wrong-case-variable	3	check	1	3	ok	[E1001] `username` is not defined
+059-misspelled-function	2	check	1	2	ok	[E1001] `pritn` is not defined
+060-capital-print	2	check	1	2	ok	[E1001] `Print` is not defined
+061-misspelled-user-function	5	check	1	5	ok	[E1001] `calcualte_total` is not defined
+062-misspelled-keyword-func	2	check	1	2	ok	this result is never used
+063-misspelled-keyword-return	3	check	1	3	ok	this result is never used
+064-misspelled-keyword-while	3	check	1	3	ok	this result is never used
+065-const-reassign	3	check	1	3	ok	[E3001] `limit` cannot be reassigned
+066-const-compound	4	check	1	4	ok	[E3001] `count` cannot be reassigned
+067-const-list-append	3	check	1	3	ok	[E3001] `names` is a `const`, so its contents cannot change
+068-const-without-value	2	check	1	2	ok	`answer` is a `const`, so it needs a value where it is declared
+069-var-no-type-no-value	2	check	1	2	ok	expected `=` after `result`, found the end of the line
+070-read-before-assign-branch	7	check	1	7	ok	`grade` may not have been assigned
+071-redeclare-same-scope	3	check	1	3	ok	`count` is already declared
+072-shadow-in-loop-reset	4	check	1	4	ok	`total` is already declared
+073-shadow-param	3	check	1	3	ok	`n` is already declared
+074-keyword-as-name-class	2	check	1	2	ok	expected a name after `var`, found class
+075-keyword-as-name-in	2	check	1	2	ok	expected a name after `var`, found in
+076-keyword-as-param-name	5	check	1	5	ok	expected a parameter name, found when
+077-shadow-builtin-print	2	check	1	2	ok	warning: `print` hides Emerald's built-in `print`
+078-hyphen-in-name	2	check	1	2	ok	expected `=` after `first`, found -
+079-space-in-name	2	check	1	2	ok	expected `=` after `high`, found a name
+080-digit-start-name	2	check	1	2	ok	this is not a valid number
+081-string-plus-int	3	check	1	3	ok	`+` joins two Strings, but this is String and Int
+082-int-plus-string	3	check	1	3	ok	`+` joins two Strings, but this is Int and String
+083-input-as-number	3	check	1	3	ok	`+` joins two Strings, but this is String and Int
+084-input-compare-int	3	check	1	3	ok	String and Int cannot be compared
+085-string-equals-int	3	check	1	3	ok	String and Int cannot be compared
+086-python-int-call	3	check	1	3	ok	[E1001] `int` is not defined
+087-python-str-call	3	check	1	3	ok	[E1001] `str` is not defined
+088-java-to-string	3	check	1	3	ok	[E4001] Int has no method `toString`
+089-parse-int-js	2	check	1	2	ok	[E1001] `parseInt` is not defined
+090-to-int-runtime-bad	3	run	2	3	ok	"twelve" is not a whole number
+091-to-int-on-decimal	3	run	2	3	ok	"3.50" is not a whole number
+092-int-from-divide	4	check	1	4	ok	[E2001] this is Float, but `average` was declared as Int
+093-float-index	3	check	1	3	ok	an index must be an Int, but this is Float
+094-float-range-bound	3	check	1	3	ok	counting works with whole numbers, but this is Float
+095-float-to-int-param	5	check	1	5	ok	this is Float, but parameter `count` of `stars` needs Int
+096-int-annot-float-literal	2	check	1	2	ok	[E2001] this is Float, but `price` was declared as Int
+097-string-annot-int	2	check	1	2	ok	[E2001] this is Int, but `name` was declared as String
+098-int-annot-string	2	check	1	2	ok	[E2001] this is String, but `count` was declared as Int
+099-lowercase-type-int	2	check	1	2	ok	`int` is not a type
+100-lowercase-type-string	2	check	1	2	ok	`string` is not a type
+101-str-type-name	2	check	1	2	ok	`str` is not a type
+102-boolean-type-name	2	check	1	2	ok	`boolean` is not a type
+103-capital-true	2	check	1	2	ok	[E1001] `True` is not defined
+104-null-literal	2	check	1	2	ok	[E1001] `null` is not defined
+105-none-literal	2	check	1	2	ok	[E1001] `None` is not defined
+106-nil-literal	3	check	1	3	ok	[E1001] `nil` is not defined
+107-nothing-into-non-optional	2	check	1	2	ok	[E2001] this is Nothing, but `name` was declared as String
+108-string-times-int	2	check	1	2	ok	multiplication needs numbers, but this is String and Int
+109-string-index-assign	3	check	1	3	ok	a String cannot be changed in place
+110-char-single-quote-compare	3	run	0	-	-	starts with a
+111-string-minus	3	check	1	3	ok	subtraction needs numbers, but this is String and String
+112-int-overflow	4	run	2	4	ok	multiplication of 2432902008176640000 and 21 overflows Int
+113-divide-by-zero	4	run	2	4	ok	floor division by zero
+114-float-equality	3	run	0	-	-	not equal
+115-compound-divide-int	3	check	1	3	ok	`/` produces Float, which `half` cannot hold because it is Int
+116-percent-format	3	check	1	3	ok	remainder needs numbers, but this is String and String
+117-f-string	3	check	1	3	ok	expected `)` to close this call, found a string
+118-js-template	3	run	0	-	-	Hello ${name}
+119-python-braces-interp	3	run	0	-	-	Hello {name}
+120-unterminated-interp	3	check	1	3	ok	this `#{` is never closed
+121-bool-string-compare	3	check	1	3	ok	Bool and String cannot be compared
+122-int-truthiness	3	check	1	3	ok	a condition must be a Bool, but this is Int
+123-string-truthiness	3	check	1	3	ok	a condition must be a Bool, but this is String
+124-list-truthiness	3	check	1	3	ok	a condition must be a Bool, but this is List[Int]
+125-optional-truthiness	3	check	1	3	ok	a condition must be a Bool, but this is Int?
+126-missing-return	4	check	1	2	off	not every path in `square` returns a value
+127-missing-return-one-branch	9	check	1	2	off	not every path in `sign` returns a value
+128-implicit-last-expression	3	check	1	3	ok	this result is never used
+129-print-instead-of-return	5	check	1	5	ok	addition needs numbers, but this is Nothing and Int
+130-return-value-from-nothing	3	check	1	3	ok	this function returns Nothing, so `return` cannot produce a value
+131-return-wrong-type	3	check	1	3	ok	this is String, but the function returns Int
+132-result-into-wrong-type	5	check	1	5	ok	[E2001] this is String, but `n` was declared as Int
+133-too-few-args	5	check	1	5	ok	`area` takes 2 arguments, but this call passes 1
+134-too-many-args	5	check	1	5	ok	`greet` takes 1 argument, but this call passes 2
+135-wrong-arg-type	5	check	1	5	ok	this is String, but parameter `n` of `square` needs Int
+136-args-swapped	5	check	1	5	ok	this is Int, but parameter `word` of `repeat_word` needs String
+137-types-in-call	5	check	1	5	ok	[E1001] `Int` is not defined
+138-call-without-parens	5	check	1	5	ok	this result is never used
+139-method-without-parens	3	check	1	3	ok	`upper` is a method, so it needs parentheses
+140-property-with-parens	3	check	1	3	ok	`count` is a property, so it takes no parentheses
+141-param-no-type	2	check	1	2	ok	expected `:` and a type after `name`, found )
+142-param-type-first	2	check	1	2	ok	expected `:` and a type after `Int`, found a name
+143-arrow-return-type	2	check	1	2	ok	expected `{` to open a block, found -
+144-void-return-type	2	check	1	2	ok	`void` is not a type
+145-function-keyword	2	check	1	2	ok	this result is never used
+146-def-keyword-braces	2	check	1	2	ok	this result is never used
+147-fn-keyword	2	check	1	2	ok	this result is never used
+148-modify-parameter	5	check	1	5	ok	`n` cannot be reassigned
+149-append-to-parameter	3	check	1	3	ok	`scores` is a parameter, so a change to it would be lost when the function returns
+150-default-before-required	2	check	1	2	ok	`name` has no default, so it cannot follow `greeting`, which has one
+151-named-arg-typo	7	check	1	7	ok	`greet` has no parameter named `tims`
+152-python-kwarg-equals	5	check	1	5	ok	a named argument is written with `:`
+153-print-end-kwarg	2	check	1	2	ok	a named argument is written with `:`
+154-call-int-as-function	3	check	1	3	ok	`total` is Int, which is not a function
+155-return-in-top-level-value	3	check	1	3	ok	a top-level `return` cannot return a value
+156-recursion-no-base-case	4	run	2	4	ok	RecursionError: too much recursion calling `count_down`
+157-ignored-result-trim	3	run	0	-	-	[  Ava  ]
+158-ignored-result-sort	3	run	0	-	-	[30, 10, 20]
+159-ignored-result-upper	3	run	0	-	-	hello
+160-ignored-result-own-func	6	run	0	-	-	4
+161-print-nothing-result	5	run	0	-	-	Hello Ava
+162-func-after-use	-	run	0	-	-	8
+163-return-unreachable	4	check	1	4	ok	warning: this code can never run
+164-nested-func-def-in-if	2	check	1	2	ok	expected an expression, found func
+165-c-style-for	2	check	1	2	ok	Emerald does not use semicolons
+166-python-range	2	check	1	2	ok	[E1001] `range` is not defined
+167-python-range-two	2	check	1	2	ok	[E1001] `range` is not defined
+168-for-paren-in	3	check	1	3	ok	expected a name after `for`, found (
+169-for-of	3	check	1	3	ok	expected `in` after `name`, found a name
+170-foreach-keyword	3	check	1	3	ok	this result is never used
+171-for-over-int	3	check	1	3	ok	a `for` loop cannot visit Int
+172-off-by-one-inclusive	4	run	2	4	ok	index 3 is outside this list, which has 3 elements
+173-off-by-one-index	3	run	2	3	ok	index 3 is outside this list, which has 3 elements
+174-negative-index	3	run	2	3	ok	index -1 is outside this list, which has 3 elements
+175-countdown-range	2	check	1	2	ok	this range is empty, because ranges count upward
+176-one-based-index	4	run	2	4	ok	index 3 is outside this list, which has 3 elements
+177-infinite-while-no-increment	3	run	124	-	-	0
+178-infinite-while-true	3	check	1	6	off	warning: this code can never run
+179-infinite-wrong-direction	3	run	124	-	-	
+180-break-outside-loop	4	check	1	4	ok	`break` can only be used inside a loop
+181-continue-outside-loop	4	check	1	4	ok	`continue` can only be used inside a loop
+182-loop-var-reassign	4	check	1	4	ok	`i` cannot be reassigned
+183-modify-list-while-iterating	5	run	0	-	-	[1, 3]
+184-while-semicolon-body	3	check	1	3	ok	Emerald does not use semicolons
+185-do-while	3	check	1	4	off	expected `=>` after this lambda's parameters, found +=
+186-until-loop	3	check	1	3	ok	this result is never used
+187-unless	3	check	1	3	ok	this result is never used
+188-range-step-python	2	check	1	2	ok	[E1001] `range` is not defined
+189-while-assign-input	3	check	1	3	ok	a condition compares values with `==`, not `=`
+190-len-function	3	check	1	3	ok	[E1001] `len` is not defined
+191-length-property	3	check	1	3	ok	[E4001] List[String] has no property `length`
+192-size-method	3	check	1	3	ok	[E4001] List[String] has no method `size`
+193-string-length-method	3	check	1	3	ok	[E4001] String has no method `length`
+194-string-len	3	check	1	3	ok	[E1001] `len` is not defined
+195-push	3	check	1	3	ok	[E4001] List[String] has no method `push`
+196-add-method	3	check	1	3	ok	[E4001] List[String] has no method `add`
+197-misspelled-append	3	check	1	3	ok	[E4001] List[String] has no method `apend`
+198-pop	3	check	1	3	ok	[E4001] List[Int] has no method `pop`
+199-index-method	3	check	1	3	ok	[E4001] List[String] has no method `index`
+200-contains-no-question	3	check	1	3	ok	[E4001] List[String] has no method `contains`
+201-includes-js	3	check	1	3	ok	[E4001] List[String] has no method `includes`
+202-in-operator	3	check	1	3	ok	expected `{` to open a block, found in
+203-empty-no-question	3	check	1	3	ok	[E4001] List[String] has no method `empty`
+204-is-empty-java	3	check	1	3	ok	[E4001] List[String] has no method `isEmpty`
+205-empty-list-no-type	2	check	1	2	ok	an empty list needs a type
+206-mixed-list	2	check	1	2	ok	this is String, but the list holds Int
+207-list-plus-element	3	check	1	3	ok	addition needs numbers, but this is List[Int] and Int
+208-append-two	3	check	1	3	ok	`append` takes 1 argument, but this call passes 2
+209-append-list-to-list	3	check	1	3	ok	this is List[Int], but `append` needs Int
+210-append-wrong-type	3	check	1	3	ok	this is String, but `append` needs Int
+211-remove-by-index	3	check	1	3	ok	this is Int, but `remove` needs String
+212-sort-bang-print	3	run	0	-	-	nothing
+213-sum-function	3	check	1	3	ok	[E1001] `sum` is not defined
+214-max-function	4	check	1	4	ok	[E1001] `max` is not defined
+215-list-index-string	4	check	1	4	ok	an index must be an Int, but this is String
+216-empty-list-first-plus	3	check	1	3	ok	addition needs numbers, but this is Int? and Int
+217-list-of-list-index	3	check	1	3	ok	expected `]` to close this index, found ,
+218-join-on-separator	3	check	1	3	ok	[E4001] String has no method `join`
+219-split-no-arg	2	check	1	2	ok	`split` takes 1 argument, but this call passes 0
+220-list-sum-strings	5	check	1	5	ok	`+` joins two Strings, but this is Int and String
+221-dict-curly	2	check	1	2	ok	expected a lambda parameter, found a string
+222-dict-dot-access	3	check	1	3	ok	[E4001] Dict[String, Int] has no property `Ava`
+223-dict-lookup-arith	3	check	1	3	ok	addition needs numbers, but this is Int? and Int
+224-dict-get-python	3	check	1	3	ok	[E4001] Dict[String, Int] has no method `get`
+225-dict-empty-no-type	2	check	1	2	ok	expected a lambda parameter, found }
+226-dict-duplicate-key	2	check	1	2	ok	this key is already used above
+227-dict-for-two-names	3	check	1	3	ok	expected `in` after `name`, found ,
+228-dict-items-call	3	check	1	3	ok	[E4001] Dict[String, Int] has no method `items`
+229-dict-has-key	3	check	1	3	ok	[E4001] Dict[String, Int] has no method `containsKey`
+230-dict-count-plus-equals	4	run	2	4	ok	there is no entry for "a"
+231-maybe-plus-one	4	check	1	4	ok	addition needs numbers, but this is Int? and Int
+232-method-on-optional	4	check	1	4	ok	this is String?, so `upper` may not be there to use
+233-optional-chain-missing-second	9	check	1	9	ok	this is Address?, so `city` may not be there to use
+234-optional-chain-assign	6	check	1	6	ok	this is User?, so there may be nothing to assign into
+235-double-optional	2	check	1	2	ok	a type cannot be optional twice
+236-optional-compare-greater	3	check	1	3	ok	`>` needs numbers, but these are Int? values
+237-optional-to-param	6	check	1	6	ok	this is Int?, but parameter `n` of `square` needs Int
+238-optional-narrow-lost-reassign	5	check	1	5	ok	addition needs numbers, but this is Int? and Int
+239-optional-bang-unwrap	3	check	1	3	ok	[E1001] `n!` is not defined
+240-optional-or-wrong-type	3	check	1	3	ok	this is String, but the value it stands in for is Int
+241-elvis-operator	3	check	1	3	ok	`??` is not an operator in Emerald
+242-struct-missing-field	6	check	1	6	ok	`Point` takes 2 arguments, but this call passes 1
+243-new-keyword	6	check	1	6	ok	expected the end of the line, found a name
+244-ruby-dot-new	6	check	1	6	ok	`Point` has no type-level member named `new`
+245-field-no-type	3	check	1	3	ok	expected `:` and a type after `x`, found the end of the line
+246-ts-field-no-var	3	check	1	3	ok	`name` needs `var` or `const` in front
+247-method-no-self	7	check	1	7	ok	`width` is a member of `Rect`, so it is reached through `self`
+248-this-instead-of-self	7	check	1	7	ok	Emerald calls the current value `self`
+249-python-self-param	6	check	1	6	ok	`self` is not listed as a parameter
+250-python-init	5	run	0	-	-	Rex
+251-unknown-field	7	check	1	7	ok	Point has no field named `z`
+252-misspelled-field	6	check	1	6	ok	Pet has no field named `nmae`
+253-const-struct-field	7	check	1	7	ok	[E3001] `p` is a `const`, so its contents cannot change
+254-const-field-assign	6	check	1	6	ok	`title` is a `const` field of Book, so it cannot change
+255-struct-change-without-bang	9	check	1	9	ok	[E3001] `c` is a `const`, so its contents cannot change
+256-instance-method-on-type	8	check	1	8	ok	`speak` belongs to each `Dog` value, not to the type
+257-missing-override	8	check	1	8	ok	`speak` is already a method of `Animal`
+258-python-inherit-parens	5	check	1	5	ok	expected `{` after `Dog`, found (
+259-java-implements	5	check	1	5	ok	expected `{` after `Square`, found a name
+260-trait-member-missing	5	check	1	5	ok	`Square` does not supply `area`, which the trait `Shape` requires
+261-private-access	6	check	1	6	ok	`_balance` is private to `Account`
+262-construct-abstract	7	check	1	7	ok	`Shape` is abstract, so it cannot be constructed
+263-super-not-first	9	check	1	7	off	this constructor has to start with `super(...)`, because building `Animal` takes arguments
+264-struct-extends	5	check	1	5	ok	a struct cannot extend another type
+265-java-object-decl	5	check	1	5	ok	this result is never used
+266-method-outside-type	6	check	1	6	ok	`self` is only available inside a constructor or a method
+267-struct-equality-class	5	run	0	-	-	different
+268-struct-copy-surprise	7	run	0	-	-	1
+269-switch-statement	3	check	1	3	ok	this result is never used
+270-case-colon	4	check	1	4	ok	expected a block or `then` after what this arm matches, found :
+271-case-default	7	check	1	7	ok	expected `when` or `else` in this `case`, found a name
+272-enum-bare-value	5	check	1	5	ok	[E1001] `red` is not defined
+273-enum-misspelled	5	check	1	5	ok	`Color` has no value or type-level member named `gren`
+274-case-then-nonexhaustive	6	check	1	6	ok	this `case` gives no value for `Color.blue`
+275-case-statement-nonexhaustive	6	check	1	6	ok	warning: this `case` does not cover `Color.blue`
+276-enum-capital-value	5	check	1	5	ok	`Color` has no value or type-level member named `RED`
+277-case-when-string-vs-int	4	check	1	4	ok	`when` compares this with the subject by `==`, but String and Int cannot be compared
+278-throw-keyword	4	check	1	4	ok	this result is never used
+279-raise-string	4	check	1	4	ok	only an Error can be raised, but this is String
+280-except-keyword	6	check	1	2	off	`try` needs a `catch` or `finally`
+281-catch-js-parens	6	check	1	6	ok	expected a name after `catch`
+282-try-without-catch	2	check	1	2	ok	`try` needs a `catch` or `finally`
+283-catch-unknown-type	6	check	1	6	ok	`ValueError` is not a type
+284-error-subclass-no-extends	5	check	1	5	ok	only an Error can be raised, but this is BadScore
+285-assert-assign	3	check	1	3	ok	a condition compares values with `==`, not `=`
+286-assert-fails	3	run	2	3	ok	AssertionError: assertion failed: `total == 4`
+287-python-lambda	2	check	1	2	ok	expected the end of the line, found a name
+288-js-arrow-parens	3	check	1	3	ok	expected `)` to close this call, found =>
+289-ruby-block-pipes	3	check	1	3	ok	this character does not belong here
+290-ruby-do-end	3	check	1	3	ok	this character does not belong here
+291-kotlin-it	3	check	1	3	ok	expected `=>` after this lambda's parameters, found (
+292-break-in-each	4	check	1	4	ok	`break` can only be used inside a loop
+293-block-wrong-arity	3	check	1	3	ok	this lambda takes 2 values, but it will be given 1
+294-console-log	2	check	1	2	ok	[E1001] `console` is not defined
+295-system-out-println	2	check	1	2	ok	[E1001] `System` is not defined
+296-python2-print	2	check	1	2	ok	this result is never used
+297-printf	3	check	1	3	ok	[E1001] `printf` is not defined
+298-puts	2	check	1	2	ok	[E1001] `puts` is not defined
+299-to-upper-case	3	check	1	3	ok	[E4001] String has no method `toUpperCase`
+300-ruby-upcase	3	check	1	3	ok	[E4001] String has no property `upcase`
+301-string-contains-no-q	3	check	1	3	ok	[E4001] String has no method `contains`
+302-math-sqrt-lower	3	check	1	3	ok	[E1001] `math` is not defined
+303-sqrt-bare	3	check	1	3	ok	[E1001] `sqrt` is not defined
+304-python-random-randint	2	check	1	2	ok	`random` is built in, and built-in functions cannot be used as values
+305-type-function	3	check	1	3	ok	[E1001] `type` is not defined
+306-round-function	3	check	1	3	ok	[E1001] `round` is not defined
+307-input-int-python	2	check	1	2	ok	[E1001] `int` is not defined
+308-string-format-method	3	check	1	3	ok	[E4001] String has no method `format`
+309-char-at	3	check	1	3	ok	[E4001] String has no method `charAt`
+310-string-index-out-of-range	3	run	2	3	ok	index 2 is outside this String, which has 2 characters
+311-println-swift	2	check	1	2	ok	[E1001] `println` is not defined
+312-echo	2	check	1	2	ok	[E1001] `echo` is not defined
+313-control-greeter	-	run	0	-	-	What is your name? Hello, 21!
+314-control-loop	-	run	0	-	-	1
