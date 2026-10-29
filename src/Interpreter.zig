@@ -8740,9 +8740,12 @@ fn callGroupBy(
         const hash = try self.hashKey(expression.span, key);
         switch (try self.heap.locate(groups, hash, key, self.equatable(expression.span))) {
             .entry => |index| {
+                // A group grows past the one slot it was made with, so room
+                // is reserved before the item is added.
                 const group = groups.entries.items[index].value.data.list;
-                group.items.appendAssumeCapacity(Heap.retain(item));
                 self.heap.release(key);
+                try group.items.ensureUnusedCapacity(self.gpa, 1);
+                group.items.appendAssumeCapacity(Heap.retain(item));
             },
             .vacancy => {
                 const group = try self.heap.createList(list.element, 1);
