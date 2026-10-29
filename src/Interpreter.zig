@@ -4260,7 +4260,11 @@ fn awaitTask(self: *Interpreter, span: Source.Span, task: *TaskRecord, for_resul
 }
 
 fn propagateTaskError(self: *Interpreter, task: *TaskRecord) Error {
-    task.observed_error = true;
+    // Only the group's owner observes a failure for the group (15.13); a
+    // sibling reading it leaves the group to propagate it.
+    if (task.group) |group| {
+        if (group.owner == self.task) task.observed_error = true;
+    } else task.observed_error = true;
     const err = task.ended.?;
     if (err == error.Raised) {
         self.task.state.raised_value = Heap.retain(task.state.state.raised_value.?);

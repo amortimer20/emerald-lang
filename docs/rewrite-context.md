@@ -3611,7 +3611,9 @@ cleanup and error draining are protected from cancellation. Normal implicit grou
 remains interruptible, and cancelling a parent cancels and joins its nested children.
 A failing child cancels its siblings and the group's block, then the group joins all
 children and propagates its first failure once. An owner catching the failing child's
-`result()` observes that failure, so draining does not raise it again. Deliberately cancelled
+`result()` observes that failure, so draining does not raise it again. Only the owner's
+observation counts: a sibling that reads the failing child's `result()`, even in its cleanup,
+still leaves the group to raise that failure. Deliberately cancelled
 children alone do not make a group fail; their result calls still raise CancelledError.
 Program exit cancels and drains active children. `exit` in any task, a child or the group's
 block, ends the whole program: every other live task, including one not yet run, unwinds as
