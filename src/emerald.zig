@@ -2538,6 +2538,21 @@ test "section 14.1 gives only the entry file a top level that runs" {
         try testing.expect(std.mem.startsWith(u8, problem.help, "Only the project's own `main.em` runs its top level, so `geometry/main.em` never does."));
     }
 
+    // The project's own `main.em`, beside another entry chosen to run, is not
+    // a library's: it is told to move its code into the chosen entry.
+    {
+        var project = try buildProject(testing.allocator, &.{
+            .{ .path = "tool.em", .text = "print(1)\n" },
+            .{ .path = "main.em", .text = "print(2)\n" },
+        });
+        defer project.deinit(testing.allocator);
+        var report = try checkProject(testing.allocator, &project);
+        defer report.deinit();
+        const problem = report.diagnostics[0];
+        try testing.expectEqualStrings("this would never run", problem.message);
+        try testing.expect(std.mem.startsWith(u8, problem.help, "Only the entry file runs its top level. Move this into `tool.em`"));
+    }
+
     // And so a binding there has nowhere to be assigned but its declaration.
     try expectProjectProblem(&.{
         .{ .path = "main.em", .text = "print(Shapes.total)\n" },

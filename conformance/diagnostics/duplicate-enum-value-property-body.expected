@@ -1,0 +1,4 @@
+diagnostics/duplicate-enum-value-property-body.em:7:11: `b` is already a value of `E`
+      const b: E {
+            ^
+An enum's values share one set of names with its members, so that a name means one thing wherever it is written. Rename one.

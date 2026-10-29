@@ -1013,13 +1013,27 @@ fn hoistMember(self: *Resolver, name: []const u8, key: []const u8) Error!void {
     try same_name.value_ptr.append(self.arena, key);
 }
 
+/// Records that `caller` may call `callee`.
+fn noteCall(self: *Resolver, caller: []const u8, callee: []const u8) Error!void {
+    try self.addToSet(&self.facts.calls, caller, callee);
+}
+
+/// Adds `item` to `owner`'s set in `sets`. A function can lack a set of its
+/// own when it belongs to a declaration rejected as a duplicate, whose body is
+/// still walked for its other errors, so the set is made here when missing.
+fn addToSet(self: *Resolver, sets: *std.StringHashMapUnmanaged(NameSet), owner: []const u8, item: []const u8) Error!void {
+    const entry = try sets.getOrPut(self.arena, owner);
+    if (!entry.found_existing) entry.value_ptr.* = .empty;
+    try entry.value_ptr.put(self.arena, item, {});
+}
+
 /// Records, for section 7.1's capture check, that the function being walked
 /// may run every member named `name`: a method or getter by that name, or with
 /// `setter_suffix`, a setter.
 fn noteMemberCall(self: *Resolver, name: []const u8) Error!void {
     const caller = self.current_function orelse return;
     const keys = self.methods_named.get(name) orelse return;
-    for (keys.items) |key| try self.facts.calls.getPtr(caller).?.put(self.arena, key, {});
+    for (keys.items) |key| try self.noteCall(caller, key);
 }
 
 fn hoistModuleName(
@@ -1216,7 +1230,10 @@ fn joinPath(self: *Resolver, path: []const []const u8) Error![]const u8 {
 fn checkModuleFile(self: *Resolver, statements: []const Ast.Statement, path: []const u8) Error!void {
     // A `main.em` below the top is most often a copied library's own demo
     // (14.4), and "move this into `main.em`" would name the file it is in.
-    const nested_main = std.mem.eql(u8, std.fs.path.basename(path), "main.em");
+    // Only a `main.em` in a folder below the entry's own is one: the
+    // project's `main.em` beside another chosen entry is just not running.
+    const same_folder = std.mem.eql(u8, std.fs.path.dirname(path) orelse "", std.fs.path.dirname(self.entry_path) orelse "");
+    const nested_main = std.mem.eql(u8, std.fs.path.basename(path), "main.em") and !same_folder;
     for (statements) |statement| switch (statement.data) {
         .function_declaration, .struct_declaration => {},
         .destructuring => {},
@@ -1666,7 +1683,7 @@ fn noteRead(self: *Resolver, found: Found) Error!void {
         return;
     }
     const function = self.current_function orelse return;
-    try self.facts.module_reads.getPtr(function).?.put(self.arena, found.key, {});
+    try self.addToSet(&self.facts.module_reads, function, found.key);
 }
 
 fn walkStatements(self: *Resolver, statements: []const Ast.Statement) Error!void {
@@ -1974,7 +1991,7 @@ fn walkCallAfterCallee(self: *Resolver, call: Ast.Expression.Call) Error!void {
             const callee = call.callee.data.name;
             if (self.lookup(callee)) |found| {
                 if (found.scope == module_scope and isCallable(found.binding.kind)) {
-                    try self.facts.calls.getPtr(caller).?.put(self.arena, found.key, {});
+                    try self.noteCall(caller, found.key);
                 }
             }
         }
@@ -2468,7 +2485,7 @@ fn noteTypeMember(self: *Resolver, key: []const u8) Error!void {
     const type_key = self.facts.type_members.get(key) orelse return;
     const setup = try typeSetupKey(self.arena, type_key);
     if (std.mem.eql(u8, caller, setup)) return;
-    try self.facts.calls.getPtr(caller).?.put(self.arena, setup, {});
+    try self.noteCall(caller, setup);
 }
 
 /// `Vector2.origin` or `Player.count`: a member reached through its type.
@@ -2980,7 +2997,7 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
             try self.noteCapture(found, true);
             if (found.binding.function_key) |key| {
                 if (self.current_function) |caller| {
-                    try self.facts.calls.getPtr(caller).?.put(self.arena, key, {});
+                    try self.noteCall(caller, key);
                 }
                 try self.nested_uses.append(self.arena, .{
                     .expression = expression,
@@ -3066,13 +3083,13 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
                     try self.facts.qualified.put(self.arena, expression, key);
                     try self.noteTypeMember(key);
                     if (self.current_function) |caller| {
-                        if (self.facts.calls.contains(key)) try self.facts.calls.getPtr(caller).?.put(self.arena, key, {});
+                        if (self.facts.calls.contains(key)) try self.noteCall(caller, key);
                     }
                     if (self.scopes.items[module_scope].get(key)) |binding| {
                         try self.noteRead(.{ .binding = binding, .scope = module_scope, .key = key });
                         if (self.current_function) |caller| {
                             if (isCallable(binding.kind)) {
-                                try self.facts.calls.getPtr(caller).?.put(self.arena, key, {});
+                                try self.noteCall(caller, key);
                             }
                         }
                     }

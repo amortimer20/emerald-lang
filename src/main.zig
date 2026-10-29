@@ -479,8 +479,11 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
     var report = analysis catch |err| return internalFailure(io, err);
     defer report.deinit();
 
-    try out.interface.flush();
-    try error_out.interface.flush();
+    // Output still buffered when the program ends meets a closed pipe here,
+    // as `emerald run x.em | head` can: the same plain failure as one met
+    // mid-run, not a stack trace.
+    out.interface.flush() catch return internalFailure(io, error.WriteFailed);
+    error_out.interface.flush() catch return internalFailure(io, error.WriteFailed);
 
     // A warning (Diagnostic.Severity) does not stop checking or execution,
     // unlike an error, so it may sit alongside a normal, complete run: print

@@ -1514,10 +1514,12 @@ fn executeAssert(self: *Interpreter, assertion: Ast.Assert) Error!void {
     } else try self.condition(assertion.condition);
     if (holds) return;
 
+    // The text is copied before the value is released: an interpolated
+    // message is built fresh, and releasing it frees its bytes.
     const user_help = if (assertion.message) |message| blk: {
         const value = try self.evaluate(message);
         defer self.heap.release(value);
-        break :blk value.data.string.bytes;
+        break :blk try self.arena.dupe(u8, value.data.string.bytes);
     } else null;
     const help = if (user_help) |written|
         if (actual_help) |actual| try std.fmt.allocPrint(self.arena, "{s} {s}", .{ written, actual }) else written
@@ -8740,9 +8742,12 @@ fn callGroupBy(
         const hash = try self.hashKey(expression.span, key);
         switch (try self.heap.locate(groups, hash, key, self.equatable(expression.span))) {
             .entry => |index| {
+                // A group grows past the one slot it was made with, so room
+                // is reserved before the item is added.
                 const group = groups.entries.items[index].value.data.list;
-                group.items.appendAssumeCapacity(Heap.retain(item));
                 self.heap.release(key);
+                try group.items.ensureUnusedCapacity(self.gpa, 1);
+                group.items.appendAssumeCapacity(Heap.retain(item));
             },
             .vacancy => {
                 const group = try self.heap.createList(list.element, 1);
