@@ -1,0 +1,4 @@
+runtime-errors/assert-interpolated-message.em:5:8: AssertionError: assertion failed: `n == 4`
+  assert n == 4, "expected #{n} to be four"
+         ^^^^^^
+expected 3 to be four Left was 3; right was 4.
