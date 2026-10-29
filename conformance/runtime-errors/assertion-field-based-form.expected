@@ -1,0 +1,4 @@
+runtime-errors/assertion-field-based-form.em:15:8: AssertionError: assertion failed: `score == Score(points: 4)`
+  assert score == Score(points: 4), "the score should be four"
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+the score should be four Left was Score(points: 3); right was Score(points: 4).

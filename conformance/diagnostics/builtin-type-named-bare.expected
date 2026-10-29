@@ -1,0 +1,8 @@
+diagnostics/builtin-type-named-bare.em:3:27: this is Int, but `day` was declared as Date
+  const day: Emerald.Date = 3
+                            ^
+Give the declaration the type of its value, or convert the value to match.
+diagnostics/builtin-type-named-bare.em:4:24: this is String, but `zone` was declared as TimeZone
+  const zone: TimeZone = "UTC"
+                         ^^^^^
+Give the declaration the type of its value, or convert the value to match.

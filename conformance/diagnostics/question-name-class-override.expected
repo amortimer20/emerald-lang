@@ -1,0 +1,8 @@
+diagnostics/question-name-class-override.em:10:10: `on?` ends in `?`, so it must return Bool, but it returns String
+      func on?(): String {
+           ^^^
+Change its result to `Bool`, or remove `?` if it does not answer a yes-or-no question.
+diagnostics/question-name-class-override.em:10:17: `on?` gives String, but the `on?` of `Light` it overrides gives Bool
+      func on?(): String {
+                  ^^^^^^
+An override gives what it replaces, a subclass of a class it gives, or a value that is always there where it gives an optional. Write `: Bool`.

@@ -1,0 +1,4 @@
+diagnostics/setter-value-read-only.em:10:13: `value` cannot be reassigned
+              value = value + 1
+              ^^^^^
+Parameters are read-only. Assign it to a local variable first if you need a version that can change.

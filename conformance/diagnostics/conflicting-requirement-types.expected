@@ -1,0 +1,4 @@
+diagnostics/conflicting-requirement-types.em:10:8: `Counted` and `Measured` both have `size`, but they do not agree on it
+  struct Box with Counted, Measured {
+         ^^^
+`Box` can adopt both only if their `size` has the same kind and type. Rename it in one of them.

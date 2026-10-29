@@ -1,0 +1,16 @@
+diagnostics/bang-forms-on-const.em:4:1: `scores` is a `const`, so its contents cannot change
+  scores.sort!()
+  ^^^^^^
+Declare `scores` with `var` if it needs to change.
+diagnostics/bang-forms-on-const.em:5:1: `scores` is a `const`, so its contents cannot change
+  scores.reverse!()
+  ^^^^^^
+Declare `scores` with `var` if it needs to change.
+diagnostics/bang-forms-on-const.em:6:1: `scores` is a `const`, so its contents cannot change
+  scores.unique!()
+  ^^^^^^
+Declare `scores` with `var` if it needs to change.
+diagnostics/bang-forms-on-const.em:7:1: `scores` is a `const`, so its contents cannot change
+  scores.shuffle!()
+  ^^^^^^
+Declare `scores` with `var` if it needs to change.

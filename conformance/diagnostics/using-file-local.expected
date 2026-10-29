@@ -1,0 +1,4 @@
+diagnostics/using-file-local/tools/describe.em:2:15: `Circle` is not visible here
+      return "#{Circle(2)}"
+                ^^^^^^
+It is declared in `Shapes`. Write `Shapes.Circle`, or add `using Shapes` at the top of this file.

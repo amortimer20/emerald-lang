@@ -1,0 +1,8 @@
+diagnostics/case-arm-scope.em:14:15: `label` is not defined
+          print(label)
+                ^^^^^
+Check the spelling, or declare it before this line.
+diagnostics/case-arm-scope.em:17:7: `label` is not defined
+  print(label)
+        ^^^^^
+Check the spelling, or declare it before this line.

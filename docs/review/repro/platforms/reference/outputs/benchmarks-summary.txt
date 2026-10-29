@@ -1,0 +1,13 @@
+bench channels: matches
+bench fib: matches
+bench generics: matches
+bench json: matches
+bench life: matches
+bench nbody: matches
+bench pipeline: matches
+bench regex: matches
+bench shapes: matches
+bench sieve: matches
+bench sorting: matches
+bench strings: matches
+bench words: matches

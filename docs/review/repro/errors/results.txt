@@ -1,0 +1,1832 @@
+=== 001-missing-close-brace-if (mistake on line 4; check exit 1)
+001-missing-close-brace-if.em:3:16: this block is never closed
+  if score >= 50 {
+                 ^
+Add the closing `}` that ends it.
+
+=== 002-missing-close-brace-func (mistake on line 3; check exit 1)
+002-missing-close-brace-func.em:2:26: this block is never closed
+  func greet(name: String) {
+                           ^
+Add the closing `}` that ends it.
+
+=== 003-missing-close-paren-call (mistake on line 3; check exit 1)
+003-missing-close-paren-call.em:4:1: expected `)` to close this call, found a name
+  print("bye")
+  ^^^^^
+Add the closing parenthesis, or check for a missing comma between arguments.
+
+=== 004-extra-close-brace (mistake on line 6; check exit 1)
+004-extra-close-brace.em:6:1: this `}` does not close anything
+  }
+  ^
+Remove it, or look above for a block that is missing its opening `{`.
+
+=== 005-mismatched-list-bracket (mistake on line 2; check exit 1)
+005-mismatched-list-bracket.em:2:25: expected `]` to close this list, found )
+  var scores = [10, 20, 30)
+                          ^
+Separate the elements with commas and close the list with `]`.
+
+=== 006-missing-close-quote (mistake on line 2; check exit 1)
+006-missing-close-quote.em:2:12: this string is never closed
+  var name = "Ava
+             ^
+Close it with `"` before the line ends.
+
+=== 007-missing-close-quote-in-print (mistake on line 2; check exit 1)
+007-missing-close-quote-in-print.em:2:7: this string is never closed
+  print("Hello, world)
+        ^
+Close it with `"` before the line ends.
+
+=== 008-nested-paren-imbalance (mistake on line 4; check exit 1)
+008-nested-paren-imbalance.em:5:1: expected `)` to close this group, found a name
+  print(area)
+  ^^^^^
+Add the closing parenthesis.
+
+=== 009-missing-open-brace-if (mistake on line 3; check exit 1)
+009-missing-open-brace-if.em:3:9: expected `{` to open a block, found the end of the line
+  if x > 3
+          ^
+A body is written in braces, either trailing the line that introduces it or starting its own line right after.
+
+=== 010-missing-open-brace-while (mistake on line 3; check exit 1)
+010-missing-open-brace-while.em:3:12: expected `{` to open a block, found the end of the line
+  while i < 3
+             ^
+A body is written in braces, either trailing the line that introduces it or starting its own line right after.
+
+=== 011-python-colon-if (mistake on line 3; check exit 1)
+011-python-colon-if.em:3:9: expected `{` to open a block, found :
+  if x > 3:
+          ^
+A body is written in braces, either trailing the line that introduces it or starting its own line right after.
+
+=== 012-python-colon-for (mistake on line 2; check exit 1)
+012-python-colon-for.em:2:14: expected `{` to open a block, found :
+  for i in 1..3:
+               ^
+A body is written in braces, either trailing the line that introduces it or starting its own line right after.
+
+=== 013-python-colon-func (mistake on line 2; check exit 1)
+013-python-colon-func.em:2:1: this result is never used
+  def greet(name: String):
+  ^^^
+Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.
+
+=== 014-no-braces-indent-only (mistake on line 3; check exit 1)
+014-no-braces-indent-only.em:3:13: expected `{` to open a block, found the end of the line
+  if age >= 18
+              ^
+A body is written in braces, either trailing the line that introduces it or starting its own line right after.
+
+=== 015-one-line-if-no-braces (mistake on line 3; check exit 1)
+015-one-line-if-no-braces.em:3:10: expected `{` to open a block, found a name
+  if x > 3 print("big")
+           ^^^^^
+A body is written in braces, either trailing the line that introduces it or starting its own line right after.
+
+=== 016-semicolons-everywhere (mistake on line 2; check exit 1)
+016-semicolons-everywhere.em:2:14: Emerald does not use semicolons
+  var total = 0;
+               ^
+Remove it. A new line ends a statement.
+
+=== 017-semicolon-after-if (mistake on line 3; check exit 1)
+017-semicolon-after-if.em:3:9: Emerald does not use semicolons
+  if x > 3; {
+          ^
+Remove it. A new line ends a statement.
+
+=== 018-semicolon-after-func-header (mistake on line 2; check exit 1)
+018-semicolon-after-func-header.em:2:25: Emerald does not use semicolons
+  func square(n: Int): Int;
+                          ^
+Remove it. A new line ends a statement.
+
+=== 019-curly-quotes (mistake on line 2; check exit 1)
+019-curly-quotes.em:2:7: this character cannot be used in a name
+  print(“Hello”)
+        ^
+Names are made of letters, digits, and underscores. Emoji and symbols belong inside strings.
+
+=== 020-single-quotes (mistake on line 2; run exit 0)
+Ava
+
+=== 021-slash-comment (mistake on line 2; check exit 1)
+021-slash-comment.em:2:1: expected an expression, found //
+  // add up the scores
+  ^^
+An expression is a number, a name, or something built from them.
+
+=== 022-block-comment (mistake on line 2; check exit 1)
+022-block-comment.em:2:1: expected an expression, found /
+  /* print a greeting */
+  ^
+An expression is a number, a name, or something built from them.
+
+=== 023-else-on-new-line-after-blank (mistake on line 7; check exit 1)
+023-else-on-new-line-after-blank.em:7:1: expected an expression, found else
+  else {
+  ^^^^
+An expression is a number, a name, or something built from them.
+
+=== 024-misleading-indent-after-if (mistake on line 4; run exit 0)
+low
+try again
+
+=== 025-elif (mistake on line 6; check exit 1)
+025-elif.em:6:1: this result is never used
+  elif x > 3 {
+  ^^^^
+Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.
+
+=== 026-elsif (mistake on line 6; check exit 1)
+026-elsif.em:6:1: this result is never used
+  elsif x > 3 {
+  ^^^^^
+Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.
+
+=== 027-elseif-one-word (mistake on line 6; check exit 1)
+027-elseif-one-word.em:6:1: this result is never used
+  elseif x > 3 {
+  ^^^^^^
+Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.
+
+=== 028-else-if-without-condition-braces (mistake on line 9; check exit 1)
+028-else-if-without-condition-braces.em:9:6: expected `{` to open a block, found (
+  else (x > 0) {
+       ^
+A body is written in braces, either trailing the line that introduces it or starting its own line right after.
+
+=== 029-python-else-colon (mistake on line 6; check exit 1)
+029-python-else-colon.em:6:5: expected `{` to open a block, found :
+  else: {
+      ^
+A body is written in braces, either trailing the line that introduces it or starting its own line right after.
+
+=== 030-assign-in-if (mistake on line 3; check exit 1)
+030-assign-in-if.em:3:10: a condition compares values with `==`, not `=`
+  if guess = 7 {
+           ^
+Write `==` to compare values. Put an assignment on its own line.
+
+=== 031-assign-in-while (mistake on line 3; check exit 1)
+031-assign-in-while.em:3:12: a condition compares values with `==`, not `=`
+  while done = false {
+             ^
+Write `==` to compare values. Put an assignment on its own line.
+
+=== 032-assign-in-ternary (mistake on line 3; check exit 1)
+032-assign-in-ternary.em:3:21: a condition compares values with `==`, not `=`
+  var kind = if n % 2 = 0 then "even" else "odd"
+                      ^
+Write `==` to compare values. Put an assignment on its own line.
+
+=== 033-double-equals-as-statement (mistake on line 3; check exit 1)
+033-double-equals-as-statement.em:3:1: this result is never used
+  score == 10
+  ^^^^^^^^^^^
+Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.
+
+=== 034-and-ampersand (mistake on line 3; check exit 1)
+034-and-ampersand.em:3:13: `&&` is not an operator in Emerald
+  if age > 12 && age < 20 {
+              ^^
+Write `and` to require both conditions.
+
+=== 035-or-pipes (mistake on line 3; check exit 1)
+035-or-pipes.em:3:17: `||` is not an operator in Emerald
+  if day == "Sat" || day == "Sun" {
+                  ^^
+Write `or` to accept either condition.
+
+=== 036-single-ampersand (mistake on line 4; check exit 1)
+036-single-ampersand.em:4:6: this character does not belong here
+  if a & b {
+       ^
+Remove it, or check for a typo nearby.
+
+=== 037-bang-not (mistake on line 3; check exit 1)
+037-bang-not.em:3:4: `!` is not an operator in Emerald
+  if !done {
+     ^
+Write `not` for negation, or `!=` to compare for inequality.
+
+=== 038-arrow-ge (mistake on line 3; check exit 1)
+038-arrow-ge.em:3:10: expected `{` to open a block, found =>
+  if score => 50 {
+           ^^
+A body is written in braces, either trailing the line that introduces it or starting its own line right after.
+
+=== 039-arrow-le (mistake on line 3; check exit 1)
+039-arrow-le.em:3:10: a condition compares values with `==`, not `=`
+  if score =< 50 {
+           ^
+Write `==` to compare values. Put an assignment on its own line.
+
+=== 040-not-equal-diamond (mistake on line 3; check exit 1)
+040-not-equal-diamond.em:3:12: expected an expression, found >
+  if answer <> "yes" {
+             ^
+An expression is a number, a name, or something built from them.
+
+=== 041-plus-plus (mistake on line 3; check exit 1)
+041-plus-plus.em:3:6: `++` is not an operator in Emerald
+  count++
+       ^^
+Write `count += 1` to increase a variable by one.
+
+=== 042-pre-plus-plus (mistake on line 3; check exit 1)
+042-pre-plus-plus.em:3:1: `++` is not an operator in Emerald
+  ++count
+  ^^
+Write `count += 1` to increase a variable by one.
+
+=== 043-minus-minus (mistake on line 3; check exit 1)
+043-minus-minus.em:3:1: this result is never used
+  lives--
+  ^^^^^^^
+Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.
+
+=== 044-equals-plus (mistake on line 3; check exit 1)
+044-equals-plus.em:3:8: expected an expression, found +
+  total =+ 3
+         ^
+An expression is a number, a name, or something built from them.
+
+=== 045-caret-power (mistake on line 3; check exit 1)
+045-caret-power.em:3:17: this character does not belong here
+  var area = side ^ 2
+                  ^
+Remove it, or check for a typo nearby.
+
+=== 046-or-shortcut-value (mistake on line 3; check exit 1)
+046-or-shortcut-value.em:3:19: a condition must be a Bool, but this is Int
+  if choice == 1 or 2 {
+                    ^
+Compare it to something, as in `count > 0`. Emerald has no truthy or falsey values.
+
+=== 047-and-shortcut-compare (mistake on line 3; check exit 1)
+047-and-shortcut-compare.em:3:14: expected an expression, found <
+  if x > 0 and < 10 {
+               ^
+An expression is a number, a name, or something built from them.
+
+=== 048-not-precedence (mistake on line 3; run exit 0)
+not five
+
+=== 049-ternary-question-colon (mistake on line 3; check exit 1)
+049-ternary-question-colon.em:3:23: `? :` is not a conditional operator in Emerald
+  var label = age >= 18 ? "adult" : "child"
+                        ^
+Write `if condition then value else other_value`.
+
+=== 050-python-ternary (mistake on line 3; check exit 1)
+050-python-ternary.em:3:21: a declaration cannot have a trailing `if`
+  var label = "adult" if age >= 18 else "child"
+                      ^^
+Declare `label` on its own line first, then assign it with the trailing `if`, as in `label = value if condition`.
+
+=== 051-triple-equals (mistake on line 3; check exit 1)
+051-triple-equals.em:3:8: expected an expression, found =
+  if x === 5 {
+         ^
+An expression is a number, a name, or something built from them.
+
+=== 052-modulo-word (mistake on line 3; check exit 1)
+052-modulo-word.em:3:9: expected `)` to close this call, found a name
+  print(n mod 2)
+          ^^^
+Add the closing parenthesis, or check for a missing comma between arguments.
+
+=== 053-let-binding (mistake on line 2; check exit 1)
+053-let-binding.em:2:1: this result is never used
+  let name = "Ava"
+  ^^^
+Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.
+
+=== 054-java-typed-decl (mistake on line 2; check exit 1)
+054-java-typed-decl.em:2:1: this result is never used
+  int count = 0
+  ^^^
+Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.
+
+=== 055-no-var-assign (mistake on line 2; check exit 1)
+055-no-var-assign.em:2:1: [E1001] `total` is not defined
+  total = 0
+  ^^^^^
+Declare it first with `var`, or check the spelling.
+
+=== 056-use-before-declare (mistake on line 2; check exit 1)
+056-use-before-declare.em:2:7: `score` is not declared until later in the file
+  print(score)
+        ^^^^^
+A variable can only be used below its declaration. Move the declaration above this line.
+
+=== 057-misspelled-variable (mistake on line 3; check exit 1)
+057-misspelled-variable.em:3:7: [E1001] `totl` is not defined
+  print(totl)
+        ^^^^
+Check the spelling, or declare it before this line.
+
+=== 058-wrong-case-variable (mistake on line 3; check exit 1)
+058-wrong-case-variable.em:3:7: [E1001] `username` is not defined
+  print(username)
+        ^^^^^^^^
+Check the spelling, or declare it before this line.
+
+=== 059-misspelled-function (mistake on line 2; check exit 1)
+059-misspelled-function.em:2:1: [E1001] `pritn` is not defined
+  pritn("hello")
+  ^^^^^
+Check the spelling, or declare it before this line.
+
+=== 060-capital-print (mistake on line 2; check exit 1)
+060-capital-print.em:2:1: [E1001] `Print` is not defined
+  Print("hello")
+  ^^^^^
+Check the spelling, or declare it before this line.
+
+=== 061-misspelled-user-function (mistake on line 5; check exit 1)
+061-misspelled-user-function.em:5:7: [E1001] `calcualte_total` is not defined
+  print(calcualte_total(2, 3))
+        ^^^^^^^^^^^^^^^
+Check the spelling, or declare it before this line.
+
+=== 062-misspelled-keyword-func (mistake on line 2; check exit 1)
+062-misspelled-keyword-func.em:2:1: this result is never used
+  fucn greet() {
+  ^^^^
+Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.
+
+=== 063-misspelled-keyword-return (mistake on line 3; check exit 1)
+063-misspelled-keyword-return.em:3:5: this result is never used
+      retrun n * 2
+      ^^^^^^
+Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.
+
+=== 064-misspelled-keyword-while (mistake on line 3; check exit 1)
+064-misspelled-keyword-while.em:3:1: this result is never used
+  whlie i < 3 {
+  ^^^^^
+Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.
+
+=== 065-const-reassign (mistake on line 3; check exit 1)
+065-const-reassign.em:3:1: [E3001] `limit` cannot be reassigned
+  limit = 20
+  ^^^^^
+It was declared with `const`. Use `var` if the value needs to change.
+
+=== 066-const-compound (mistake on line 4; check exit 1)
+066-const-compound.em:4:5: [E3001] `count` cannot be reassigned
+      count += 1
+      ^^^^^
+It was declared with `const`. Use `var` if the value needs to change.
+
+=== 067-const-list-append (mistake on line 3; check exit 1)
+067-const-list-append.em:3:1: [E3001] `names` is a `const`, so its contents cannot change
+  names.append("Bo")
+  ^^^^^
+Declare `names` with `var` if it needs to change.
+
+=== 068-const-without-value (mistake on line 2; check exit 1)
+068-const-without-value.em:2:7: `answer` is a `const`, so it needs a value where it is declared
+  const answer: Int
+        ^^^^^^
+Write its value after `=`, or declare it with `var` if it is assigned later.
+
+=== 069-var-no-type-no-value (mistake on line 2; check exit 1)
+069-var-no-type-no-value.em:2:11: expected `=` after `result`, found the end of the line
+  var result
+            ^
+A declaration needs a value, as in `var score = 0`, or a type, as in `var score: Int`.
+
+=== 070-read-before-assign-branch (mistake on line 7; check exit 1)
+070-read-before-assign-branch.em:7:7: `grade` may not have been assigned
+  print(grade)
+        ^^^^^
+Assign `grade` on every branch before reading it.
+
+=== 071-redeclare-same-scope (mistake on line 3; check exit 1)
+071-redeclare-same-scope.em:3:5: `count` is already declared
+  var count = 2
+      ^^^^^
+Each name can have one declaration in a scope. Choose a different name, or remove the duplicate.
+
+=== 072-shadow-in-loop-reset (mistake on line 4; check exit 1)
+072-shadow-in-loop-reset.em:4:9: `total` is already declared
+      var total = total + n
+          ^^^^^
+Assign to the existing name instead of declaring it again, or choose a different name.
+
+=== 073-shadow-param (mistake on line 3; check exit 1)
+073-shadow-param.em:3:9: `n` is already declared
+      var n = n * 2
+          ^
+Assign to the existing name instead of declaring it again, or choose a different name.
+
+=== 074-keyword-as-name-class (mistake on line 2; check exit 1)
+074-keyword-as-name-class.em:2:5: expected a name after `var`, found class
+  var class = "7B"
+      ^^^^^
+A declaration introduces one name, as in `var score = 0`.
+
+=== 075-keyword-as-name-in (mistake on line 2; check exit 1)
+075-keyword-as-name-in.em:2:5: expected a name after `var`, found in
+  var in = 5
+      ^^
+A declaration introduces one name, as in `var score = 0`.
+
+=== 076-keyword-as-param-name (mistake on line 5; check exit 1)
+076-keyword-as-param-name.em:5:15: expected a parameter name, found when
+  func describe(when: String) {
+                ^^^^
+A parameter is a name and a type, as in `count: Int`.
+
+=== 077-shadow-builtin-print (mistake on line 2; check exit 1)
+077-shadow-builtin-print.em:2:5: warning: `print` hides Emerald's built-in `print`
+  var print = "hello"
+      ^^^^^
+A name the program declares always wins, so `print` here means this one. Write `Emerald.print` to reach the built-in, or choose a different name.
+
+=== 078-hyphen-in-name (mistake on line 2; check exit 1)
+078-hyphen-in-name.em:2:10: expected `=` after `first`, found -
+  var first-name = "Ava"
+           ^
+A declaration needs a value, as in `var score = 0`, or a type, as in `var score: Int`.
+
+=== 079-space-in-name (mistake on line 2; check exit 1)
+079-space-in-name.em:2:10: expected `=` after `high`, found a name
+  var high score = 10
+           ^^^^^
+A declaration needs a value, as in `var score = 0`, or a type, as in `var score: Int`.
+
+=== 080-digit-start-name (mistake on line 2; check exit 1)
+080-digit-start-name.em:2:5: this is not a valid number
+  var 2nd_place = "Bo"
+      ^^^^^^^^^
+Write a decimal number such as `42` or `3.5`. `_` may separate digits, as in `1_000`.
+
+=== 081-string-plus-int (mistake on line 3; check exit 1)
+081-string-plus-int.em:3:7: `+` joins two Strings, but this is String and Int
+  print("Age: " + age)
+        ^^^^^^^^^^^^^
+Convert the value with `to_string()`, or use interpolation, as in `"#{name}: #{score}"`.
+
+=== 082-int-plus-string (mistake on line 3; check exit 1)
+082-int-plus-string.em:3:15: `+` joins two Strings, but this is Int and String
+  var message = count + " apples"
+                ^^^^^^^^^^^^^^^^^
+Convert the value with `to_string()`, or use interpolation, as in `"#{name}: #{score}"`.
+
+=== 083-input-as-number (mistake on line 3; check exit 1)
+083-input-as-number.em:3:7: `+` joins two Strings, but this is String and Int
+  print(age + 1)
+        ^^^^^^^
+Convert the value with `to_string()`, or use interpolation, as in `"#{name}: #{score}"`.
+
+=== 084-input-compare-int (mistake on line 3; check exit 1)
+084-input-compare-int.em:3:4: String and Int cannot be compared
+  if age >= 18 {
+     ^^^^^^^^^
+`==` and `!=` compare two values of the same type, and Int and Float compare with each other.
+
+=== 085-string-equals-int (mistake on line 3; check exit 1)
+085-string-equals-int.em:3:4: String and Int cannot be compared
+  if answer == 4 {
+     ^^^^^^^^^^^
+`==` and `!=` compare two values of the same type, and Int and Float compare with each other.
+
+=== 086-python-int-call (mistake on line 3; check exit 1)
+086-python-int-call.em:3:9: [E1001] `int` is not defined
+  var n = int(text)
+          ^^^
+Check the spelling, or declare it before this line.
+
+=== 087-python-str-call (mistake on line 3; check exit 1)
+087-python-str-call.em:3:17: [E1001] `str` is not defined
+  print("n is " + str(n))
+                  ^^^
+Check the spelling, or declare it before this line.
+
+=== 088-java-to-string (mistake on line 3; check exit 1)
+088-java-to-string.em:3:19: [E4001] Int has no method `toString`
+  print("n is " + n.toString())
+                    ^^^^^^^^
+An Int has methods including `times`, `even?`, `abs`, `clamp`, `to_string`, `format`, `digits`, `gcd`, `factorial`, and `to_float`; the Int reference lists them all.
+
+=== 089-parse-int-js (mistake on line 2; check exit 1)
+089-parse-int-js.em:2:9: [E1001] `parseInt` is not defined
+  var n = parseInt("42")
+          ^^^^^^^^
+Check the spelling, or declare it before this line.
+
+=== 090-to-int-runtime-bad (mistake on line 3; run exit 2)
+090-to-int-runtime-bad.em:3:9: "twelve" is not a whole number
+  var n = text.to_int()
+          ^^^^^^^^^^^^^
+Only digits, with an optional sign and surrounding spaces, convert to an Int. `to_int_or(0)` gives a fallback instead of an error.
+
+=== 091-to-int-on-decimal (mistake on line 3; run exit 2)
+091-to-int-on-decimal.em:3:9: "3.50" is not a whole number
+  var n = price.to_int()
+          ^^^^^^^^^^^^^^
+Only digits, with an optional sign and surrounding spaces, convert to an Int. `to_int_or(0)` gives a fallback instead of an error.
+
+=== 092-int-from-divide (mistake on line 4; check exit 1)
+092-int-from-divide.em:4:20: [E2001] this is Float, but `average` was declared as Int
+  var average: Int = total / count
+                     ^^^^^^^^^^^^^
+Give the declaration the type of its value, or convert the value to match.
+
+=== 093-float-index (mistake on line 3; check exit 1)
+093-float-index.em:3:21: an index must be an Int, but this is Float
+  var middle = scores[scores.count / 2]
+                      ^^^^^^^^^^^^^^^^
+Indices count whole positions, starting from 0.
+
+=== 094-float-range-bound (mistake on line 3; check exit 1)
+094-float-range-bound.em:3:14: counting works with whole numbers, but this is Float
+  for i in 0..<n / 2 {
+               ^^^^^
+Count with Ints, as in `1..10` or `10.down_to(1)`.
+
+=== 095-float-to-int-param (mistake on line 5; check exit 1)
+095-float-to-int-param.em:5:7: this is Float, but parameter `count` of `stars` needs Int
+  stars(9 / 3)
+        ^^^^^
+Pass a value of the expected type, or convert it first.
+
+=== 096-int-annot-float-literal (mistake on line 2; check exit 1)
+096-int-annot-float-literal.em:2:18: [E2001] this is Float, but `price` was declared as Int
+  var price: Int = 3.5
+                   ^^^
+Give the declaration the type of its value, or convert the value to match.
+
+=== 097-string-annot-int (mistake on line 2; check exit 1)
+097-string-annot-int.em:2:20: [E2001] this is Int, but `name` was declared as String
+  var name: String = 42
+                     ^^
+Give the declaration the type of its value, or convert the value to match.
+
+=== 098-int-annot-string (mistake on line 2; check exit 1)
+098-int-annot-string.em:2:18: [E2001] this is String, but `count` was declared as Int
+  var count: Int = "5"
+                   ^^^
+Give the declaration the type of its value, or convert the value to match.
+
+=== 099-lowercase-type-int (mistake on line 2; check exit 1)
+099-lowercase-type-int.em:2:12: `int` is not a type
+  var count: int = 5
+             ^^^
+Check the spelling or declare the struct in this project.
+
+=== 100-lowercase-type-string (mistake on line 2; check exit 1)
+100-lowercase-type-string.em:2:18: `string` is not a type
+  func greet(name: string) {
+                   ^^^^^^
+Check the spelling or declare the struct in this project.
+
+=== 101-str-type-name (mistake on line 2; check exit 1)
+101-str-type-name.em:2:18: `str` is not a type
+  func shout(text: str): str {
+                   ^^^
+Check the spelling or declare the struct in this project.
+
+=== 102-boolean-type-name (mistake on line 2; check exit 1)
+102-boolean-type-name.em:2:12: `boolean` is not a type
+  var ready: boolean = true
+             ^^^^^^^
+Check the spelling or declare the struct in this project.
+
+=== 103-capital-true (mistake on line 2; check exit 1)
+103-capital-true.em:2:13: [E1001] `True` is not defined
+  var ready = True
+              ^^^^
+Check the spelling, or declare it before this line.
+
+=== 104-null-literal (mistake on line 2; check exit 1)
+104-null-literal.em:2:23: [E1001] `null` is not defined
+  var winner: String? = null
+                        ^^^^
+Check the spelling, or declare it before this line.
+
+=== 105-none-literal (mistake on line 2; check exit 1)
+105-none-literal.em:2:23: [E1001] `None` is not defined
+  var winner: String? = None
+                        ^^^^
+Check the spelling, or declare it before this line.
+
+=== 106-nil-literal (mistake on line 3; check exit 1)
+106-nil-literal.em:3:14: [E1001] `nil` is not defined
+  if winner == nil {
+               ^^^
+Check the spelling, or declare it before this line.
+
+=== 107-nothing-into-non-optional (mistake on line 2; check exit 1)
+107-nothing-into-non-optional.em:2:20: [E2001] this is Nothing, but `name` was declared as String
+  var name: String = nothing
+                     ^^^^^^^
+Give the declaration the type of its value, or convert the value to match.
+
+=== 108-string-times-int (mistake on line 2; check exit 1)
+108-string-times-int.em:2:7: multiplication needs numbers, but this is String and Int
+  print("-" * 20)
+        ^^^^^^^^
+Strings have no arithmetic. `+` is the one operator for them, and it joins two Strings.
+
+=== 109-string-index-assign (mistake on line 3; check exit 1)
+109-string-index-assign.em:3:1: a String cannot be changed in place
+  name[0] = "A"
+  ^^^^^^^
+Strings are immutable. Build a new one instead, for example with `replace` or interpolation.
+
+=== 110-char-single-quote-compare (mistake on line 3; run exit 0)
+starts with a
+
+=== 111-string-minus (mistake on line 3; check exit 1)
+111-string-minus.em:3:13: subtraction needs numbers, but this is String and String
+  var clean = word - "!"
+              ^^^^^^^^^^
+Strings have no arithmetic. `+` is the one operator for them, and it joins two Strings.
+
+=== 112-int-overflow (mistake on line 4; run exit 2)
+112-int-overflow.em:4:5: multiplication of 2432902008176640000 and 21 overflows Int
+      product *= n
+      ^^^^^^^^^^^^
+`Int` holds whole numbers from -9223372036854775808 through 9223372036854775807.
+
+=== 113-divide-by-zero (mistake on line 4; run exit 2)
+113-divide-by-zero.em:4:7: floor division by zero
+  print(total // count)
+        ^^^^^^^^^^^^^^
+Check the divisor before dividing. Division by zero has no result for either numeric type.
+
+=== 114-float-equality (mistake on line 3; run exit 0)
+not equal
+
+=== 115-compound-divide-int (mistake on line 3; check exit 1)
+115-compound-divide-int.em:3:1: `/` produces Float, which `half` cannot hold because it is Int
+  half /= 2
+  ^^^^
+`/` always produces a Float. Use `//=` to keep whole numbers, or declare the name as a Float.
+
+=== 116-percent-format (mistake on line 3; check exit 1)
+116-percent-format.em:3:7: remainder needs numbers, but this is String and String
+  print("Hello %s" % name)
+        ^^^^^^^^^^^^^^^^^
+Strings have no arithmetic. `+` is the one operator for them, and it joins two Strings.
+
+=== 117-f-string (mistake on line 3; check exit 1)
+117-f-string.em:3:8: expected `)` to close this call, found a string
+  print(f"Hello {name}")
+         ^^^^^^^^^^^^^^
+Add the closing parenthesis, or check for a missing comma between arguments.
+
+=== 118-js-template (mistake on line 3; run exit 0)
+Hello ${name}
+
+=== 119-python-braces-interp (mistake on line 3; run exit 0)
+Hello {name}
+
+=== 120-unterminated-interp (mistake on line 3; check exit 1)
+120-unterminated-interp.em:3:14: this `#{` is never closed
+  print("Hello #{name")
+               ^^
+End the interpolation with `}` before the string's closing quote, as in `"#{count}"`.
+
+=== 121-bool-string-compare (mistake on line 3; check exit 1)
+121-bool-string-compare.em:3:4: Bool and String cannot be compared
+  if ready == "true" {
+     ^^^^^^^^^^^^^^^
+`==` and `!=` compare two values of the same type, and Int and Float compare with each other.
+
+=== 122-int-truthiness (mistake on line 3; check exit 1)
+122-int-truthiness.em:3:4: a condition must be a Bool, but this is Int
+  if lives {
+     ^^^^^
+Compare it to something, as in `count > 0`. Emerald has no truthy or falsey values.
+
+=== 123-string-truthiness (mistake on line 3; check exit 1)
+123-string-truthiness.em:3:4: a condition must be a Bool, but this is String
+  if name {
+     ^^^^
+Compare it to something, as in `count > 0`. Emerald has no truthy or falsey values.
+
+=== 124-list-truthiness (mistake on line 3; check exit 1)
+124-list-truthiness.em:3:7: a condition must be a Bool, but this is List[Int]
+  while items {
+        ^^^^^
+Compare it to something, as in `count > 0`. Emerald has no truthy or falsey values.
+
+=== 125-optional-truthiness (mistake on line 3; check exit 1)
+125-optional-truthiness.em:3:4: a condition must be a Bool, but this is Int?
+  if found {
+     ^^^^^
+Compare it to something, as in `count > 0`. Emerald has no truthy or falsey values.
+
+=== 126-missing-return (mistake on line 4; check exit 1)
+126-missing-return.em:2:6: not every path in `square` returns a value
+  func square(n: Int): Int {
+       ^^^^^^
+Add a `return` on every path, or restructure so every branch returns.
+
+=== 127-missing-return-one-branch (mistake on line 9; check exit 1)
+127-missing-return-one-branch.em:2:6: not every path in `sign` returns a value
+  func sign(n: Int): String {
+       ^^^^
+Add a `return` on every path, or restructure so every branch returns.
+
+=== 128-implicit-last-expression (mistake on line 3; check exit 1)
+128-implicit-last-expression.em:3:5: this result is never used
+      n * 2
+      ^^^^^
+Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.
+
+=== 129-print-instead-of-return (mistake on line 5; check exit 1)
+129-print-instead-of-return.em:5:13: addition needs numbers, but this is Nothing and Int
+  var total = add(2, 3) + 1
+              ^^^^^^^^^^^^^
+Arithmetic works on Int and Float.
+
+=== 130-return-value-from-nothing (mistake on line 3; check exit 1)
+130-return-value-from-nothing.em:3:12: this function returns Nothing, so `return` cannot produce a value
+      return "Hello " + name
+             ^^^^^^^^^^^^^^^
+Remove the value, or declare the function with the type of what it returns.
+
+=== 131-return-wrong-type (mistake on line 3; check exit 1)
+131-return-wrong-type.em:3:12: this is String, but the function returns Int
+      return "100"
+             ^^^^^
+Return a value of the declared type, or convert it first.
+
+=== 132-result-into-wrong-type (mistake on line 5; check exit 1)
+132-result-into-wrong-type.em:5:14: [E2001] this is String, but `n` was declared as Int
+  var n: Int = name()
+               ^^^^^^
+Give the declaration the type of its value, or convert the value to match.
+
+=== 133-too-few-args (mistake on line 5; check exit 1)
+133-too-few-args.em:5:7: `area` takes 2 arguments, but this call passes 1
+  print(area(5))
+        ^^^^
+Match the number of arguments to the function's parameters.
+
+=== 134-too-many-args (mistake on line 5; check exit 1)
+134-too-many-args.em:5:1: `greet` takes 1 argument, but this call passes 2
+  greet("Ava", "Bo")
+  ^^^^^
+Match the number of arguments to the function's parameters.
+
+=== 135-wrong-arg-type (mistake on line 5; check exit 1)
+135-wrong-arg-type.em:5:14: this is String, but parameter `n` of `square` needs Int
+  print(square("4"))
+               ^^^
+Pass a value of the expected type, or convert it first.
+
+=== 136-args-swapped (mistake on line 5; check exit 1)
+136-args-swapped.em:5:19: this is Int, but parameter `word` of `repeat_word` needs String
+  print(repeat_word(3, "ha"))
+                    ^
+Pass a value of the expected type, or convert it first.
+
+=== 137-types-in-call (mistake on line 5; check exit 1)
+137-types-in-call.em:5:17: [E1001] `Int` is not defined
+  print(square(n: Int))
+                  ^^^
+Check the spelling, or declare it before this line.
+
+=== 138-call-without-parens (mistake on line 5; check exit 1)
+138-call-without-parens.em:5:1: this result is never used
+  say_hello
+  ^^^^^^^^^
+Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.
+
+=== 139-method-without-parens (mistake on line 3; check exit 1)
+139-method-without-parens.em:3:12: `upper` is a method, so it needs parentheses
+  print(name.upper)
+             ^^^^^
+Call it, as in `.upper()`. Methods cannot be used as values yet.
+
+=== 140-property-with-parens (mistake on line 3; check exit 1)
+140-property-with-parens.em:3:13: `count` is a property, so it takes no parentheses
+  print(items.count())
+              ^^^^^
+Write `.count` without `()`.
+
+=== 141-param-no-type (mistake on line 2; check exit 1)
+141-param-no-type.em:2:16: expected `:` and a type after `name`, found )
+  func greet(name) {
+                 ^
+Every parameter needs an explicit type, as in `count: Int`.
+
+=== 142-param-type-first (mistake on line 2; check exit 1)
+142-param-type-first.em:2:17: expected `:` and a type after `Int`, found a name
+  func square(Int n): Int {
+                  ^
+Every parameter needs an explicit type, as in `count: Int`.
+
+=== 143-arrow-return-type (mistake on line 2; check exit 1)
+143-arrow-return-type.em:2:21: expected `{` to open a block, found -
+  func square(n: Int) -> Int {
+                      ^
+A body is written in braces, either trailing the line that introduces it or starting its own line right after.
+
+=== 144-void-return-type (mistake on line 2; check exit 1)
+144-void-return-type.em:2:15: `void` is not a type
+  func greet(): void {
+                ^^^^
+Check the spelling or declare the struct in this project.
+
+=== 145-function-keyword (mistake on line 2; check exit 1)
+145-function-keyword.em:2:1: this result is never used
+  function greet() {
+  ^^^^^^^^
+Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.
+
+=== 146-def-keyword-braces (mistake on line 2; check exit 1)
+146-def-keyword-braces.em:2:1: this result is never used
+  def greet() {
+  ^^^
+Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.
+
+=== 147-fn-keyword (mistake on line 2; check exit 1)
+147-fn-keyword.em:2:1: this result is never used
+  fn greet() {
+  ^^
+Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.
+
+=== 148-modify-parameter (mistake on line 5; check exit 1)
+148-modify-parameter.em:5:9: `n` cannot be reassigned
+          n -= 1
+          ^
+Parameters are read-only. Assign it to a local variable first if you need a version that can change.
+
+=== 149-append-to-parameter (mistake on line 3; check exit 1)
+149-append-to-parameter.em:3:5: `scores` is a parameter, so a change to it would be lost when the function returns
+      scores.append(10)
+      ^^^^^^
+Copy it into a `var`, change the copy, and return it, as in `var changed = scores`.
+
+=== 150-default-before-required (mistake on line 2; check exit 1)
+150-default-before-required.em:2:40: `name` has no default, so it cannot follow `greeting`, which has one
+  func greet(greeting: String = "Hello", name: String) {
+                                         ^^^^
+Move the parameters with defaults to the end, or give this one a default too. Only a final function parameter, which a trailing block can supply, may follow them.
+
+=== 151-named-arg-typo (mistake on line 7; check exit 1)
+151-named-arg-typo.em:7:14: `greet` has no parameter named `tims`
+  greet("Ava", tims: 2)
+               ^^^^
+Check the spelling against the declaration.
+
+=== 152-python-kwarg-equals (mistake on line 5; check exit 1)
+152-python-kwarg-equals.em:5:19: a named argument is written with `:`
+  greet("Ava", times=2)
+                    ^
+Write `times: ...` instead of `times = ...`.
+
+=== 153-print-end-kwarg (mistake on line 2; check exit 1)
+153-print-end-kwarg.em:2:24: a named argument is written with `:`
+  print("no newline", end="")
+                         ^
+Write `end: ...` instead of `end = ...`.
+
+=== 154-call-int-as-function (mistake on line 3; check exit 1)
+154-call-int-as-function.em:3:7: `total` is Int, which is not a function
+  print(total(2))
+        ^^^^^
+Only a function can be called.
+
+=== 155-return-in-top-level-value (mistake on line 3; check exit 1)
+155-return-in-top-level-value.em:3:8: a top-level `return` cannot return a value
+  return x
+         ^
+It always ends the program successfully. Use `exit(code)` to choose a status.
+
+=== 156-recursion-no-base-case (mistake on line 4; run exit 2)
+156-recursion-no-base-case.em:4:5: RecursionError: too much recursion calling `count_down`
+      count_down(n - 1)
+      ^^^^^^^^^^^^^^^^^
+Emerald supports at least 1,000 active calls. Check that the recursion has a case that stops it.
+in `count_down`, called at 156-recursion-no-base-case.em:4:5 (999 times)
+in `count_down`, called at 156-recursion-no-base-case.em:6:1
+
+=== 157-ignored-result-trim (mistake on line 3; run exit 0)
+[  Ava  ]
+
+=== 158-ignored-result-sort (mistake on line 3; run exit 0)
+[30, 10, 20]
+
+=== 159-ignored-result-upper (mistake on line 3; run exit 0)
+hello
+
+=== 160-ignored-result-own-func (mistake on line 6; run exit 0)
+4
+
+=== 161-print-nothing-result (mistake on line 5; run exit 0)
+Hello Ava
+nothing
+
+=== 162-func-after-use (mistake on line -; run exit 0)
+8
+
+=== 163-return-unreachable (mistake on line 4; check exit 1)
+163-return-unreachable.em:4:5: warning: this code can never run
+      print("doubled")
+      ^^^^^^^^^^^^^^^^
+Every path above it already returns, raises, breaks, or continues. Remove it, or move it earlier.
+
+=== 164-nested-func-def-in-if (mistake on line 2; check exit 1)
+164-nested-func-def-in-if.em:2:14: expected an expression, found func
+  var double = func(n: Int): Int {
+               ^^^^
+An expression is a number, a name, or something built from them.
+
+=== 165-c-style-for (mistake on line 2; check exit 1)
+165-c-style-for.em:2:15: Emerald does not use semicolons
+  for (var i = 0; i < 5; i++) {
+                ^
+Remove it. A new line ends a statement.
+
+=== 166-python-range (mistake on line 2; check exit 1)
+166-python-range.em:2:10: [E1001] `range` is not defined
+  for i in range(5) {
+           ^^^^^
+Check the spelling, or declare it before this line.
+
+=== 167-python-range-two (mistake on line 2; check exit 1)
+167-python-range-two.em:2:10: [E1001] `range` is not defined
+  for i in range(1, 6) {
+           ^^^^^
+Check the spelling, or declare it before this line.
+
+=== 168-for-paren-in (mistake on line 3; check exit 1)
+168-for-paren-in.em:3:5: expected a name after `for`, found (
+  for (name in names) {
+      ^
+A `for` loop names each value it visits, as in `for number in 1..5`.
+
+=== 169-for-of (mistake on line 3; check exit 1)
+169-for-of.em:3:10: expected `in` after `name`, found a name
+  for name of names {
+           ^^
+Write what to loop over after `in`, as in `for number in 1..5`.
+
+=== 170-foreach-keyword (mistake on line 3; check exit 1)
+170-foreach-keyword.em:3:1: this result is never used
+  foreach name in names {
+  ^^^^^^^
+Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.
+
+=== 171-for-over-int (mistake on line 3; check exit 1)
+171-for-over-int.em:3:10: a `for` loop cannot visit Int
+  for i in names.count {
+           ^^^^^^^^^^^
+A `for` loop visits a range, as in `for i in 1..10`, or the elements of a list, dictionary, or set.
+
+=== 172-off-by-one-inclusive (mistake on line 4; run exit 2)
+172-off-by-one-inclusive.em:4:11: index 3 is outside this list, which has 3 elements
+      print(names[i])
+            ^^^^^^^^
+Valid indices are 0 through 2.
+
+=== 173-off-by-one-index (mistake on line 3; run exit 2)
+173-off-by-one-index.em:3:7: index 3 is outside this list, which has 3 elements
+  print(names[names.count])
+        ^^^^^^^^^^^^^^^^^^
+Valid indices are 0 through 2.
+
+=== 174-negative-index (mistake on line 3; run exit 2)
+174-negative-index.em:3:7: index -1 is outside this list, which has 3 elements
+  print(names[-1])
+        ^^^^^^^^^
+Valid indices are 0 through 2.
+
+=== 175-countdown-range (mistake on line 2; check exit 1)
+175-countdown-range.em:2:10: this range is empty, because ranges count upward
+  for i in 10..1 {
+           ^^^^^
+Count down with `10.down_to(1)`, or up with `1..10`.
+
+=== 176-one-based-index (mistake on line 4; run exit 2)
+176-one-based-index.em:4:11: index 3 is outside this list, which has 3 elements
+      print(names[i])
+            ^^^^^^^^
+Valid indices are 0 through 2.
+
+=== 177-infinite-while-no-increment (mistake on line 3; run exit 124)
+0
+0
+0
+0
+0
+0
+0
+0
+
+=== 178-infinite-while-true (mistake on line 3; check exit 1)
+178-infinite-while-true.em:6:1: warning: this code can never run
+  print(tries)
+  ^^^^^^^^^^^^
+Every path above it already returns, raises, breaks, or continues. Remove it, or move it earlier.
+
+=== 179-infinite-wrong-direction (mistake on line 3; run exit 124)
+
+(timed out after 5 seconds: no diagnostic)
+
+=== 180-break-outside-loop (mistake on line 4; check exit 1)
+180-break-outside-loop.em:4:5: `break` can only be used inside a loop
+      break
+      ^^^^^
+Put it inside a `while` or `for` loop, or remove it.
+
+=== 181-continue-outside-loop (mistake on line 4; check exit 1)
+181-continue-outside-loop.em:4:9: `continue` can only be used inside a loop
+          continue
+          ^^^^^^^^
+A function cannot end the loop that called it. Return a value the caller can check instead.
+
+=== 182-loop-var-reassign (mistake on line 4; check exit 1)
+182-loop-var-reassign.em:4:9: `i` cannot be reassigned
+          i = 4
+          ^
+A loop variable takes each value in turn. Copy it into a `var` if you need one that changes.
+
+=== 183-modify-list-while-iterating (mistake on line 5; run exit 0)
+[1, 3]
+
+=== 184-while-semicolon-body (mistake on line 3; check exit 1)
+184-while-semicolon-body.em:3:12: Emerald does not use semicolons
+  while i < 3; {
+             ^
+Remove it. A new line ends a statement.
+
+=== 185-do-while (mistake on line 3; check exit 1)
+185-do-while.em:4:7: expected `=>` after this lambda's parameters, found +=
+      i += 1
+        ^^
+A lambda separates what it receives from what it does with `=>`, as in `{ number => number * 2 }`.
+
+=== 186-until-loop (mistake on line 3; check exit 1)
+186-until-loop.em:3:1: this result is never used
+  until i == 3 {
+  ^^^^^
+Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.
+
+=== 187-unless (mistake on line 3; check exit 1)
+187-unless.em:3:1: this result is never used
+  unless done {
+  ^^^^^^
+Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.
+
+=== 188-range-step-python (mistake on line 2; check exit 1)
+188-range-step-python.em:2:10: [E1001] `range` is not defined
+  for i in range(0, 10, 2) {
+           ^^^^^
+Check the spelling, or declare it before this line.
+
+=== 189-while-assign-input (mistake on line 3; check exit 1)
+189-while-assign-input.em:3:13: a condition compares values with `==`, not `=`
+  while (line = input("> ")) != "quit" {
+              ^
+Write `==` to compare values. Put an assignment on its own line.
+
+=== 190-len-function (mistake on line 3; check exit 1)
+190-len-function.em:3:7: [E1001] `len` is not defined
+  print(len(names))
+        ^^^
+Check the spelling, or declare it before this line.
+
+=== 191-length-property (mistake on line 3; check exit 1)
+191-length-property.em:3:13: [E4001] List[String] has no property `length`
+  print(names.length)
+              ^^^^^^
+Emerald calls this `count`.
+
+=== 192-size-method (mistake on line 3; check exit 1)
+192-size-method.em:3:13: [E4001] List[String] has no method `size`
+  print(names.size())
+              ^^^^
+Emerald calls this `count`.
+
+=== 193-string-length-method (mistake on line 3; check exit 1)
+193-string-length-method.em:3:12: [E4001] String has no method `length`
+  print(word.length())
+             ^^^^^^
+Emerald calls this `count`.
+
+=== 194-string-len (mistake on line 3; check exit 1)
+194-string-len.em:3:7: [E1001] `len` is not defined
+  print(len(word))
+        ^^^
+Check the spelling, or declare it before this line.
+
+=== 195-push (mistake on line 3; check exit 1)
+195-push.em:3:7: [E4001] List[String] has no method `push`
+  names.push("Bo")
+        ^^^^
+Emerald calls this `append`.
+
+=== 196-add-method (mistake on line 3; check exit 1)
+196-add-method.em:3:7: [E4001] List[String] has no method `add`
+  names.add("Bo")
+        ^^^
+Emerald calls this `append`.
+
+=== 197-misspelled-append (mistake on line 3; check exit 1)
+197-misspelled-append.em:3:7: [E4001] List[String] has no method `apend`
+  names.apend("Bo")
+        ^^^^^
+A list has `count`, `first`, and `last`, and methods including `append`, `insert`, `remove`, `contains?`, `find`, `each`, `map`, `filter`, `sort`, `reverse`, `sum`, `min`, and `max`; the List reference lists them all.
+
+=== 198-pop (mistake on line 3; check exit 1)
+198-pop.em:3:17: [E4001] List[Int] has no method `pop`
+  var top = stack.pop()
+                  ^^^
+Emerald calls this `remove_last`.
+
+=== 199-index-method (mistake on line 3; check exit 1)
+199-index-method.em:3:13: [E4001] List[String] has no method `index`
+  print(names.index("Bo"))
+              ^^^^^
+Emerald calls this `index_of`.
+
+=== 200-contains-no-question (mistake on line 3; check exit 1)
+200-contains-no-question.em:3:10: [E4001] List[String] has no method `contains`
+  if names.contains("Bo") {
+           ^^^^^^^^
+Emerald calls this `contains?`.
+
+=== 201-includes-js (mistake on line 3; check exit 1)
+201-includes-js.em:3:10: [E4001] List[String] has no method `includes`
+  if names.includes("Bo") {
+           ^^^^^^^^
+Emerald calls this `contains?`.
+
+=== 202-in-operator (mistake on line 3; check exit 1)
+202-in-operator.em:3:9: expected `{` to open a block, found in
+  if "Bo" in names {
+          ^^
+A body is written in braces, either trailing the line that introduces it or starting its own line right after.
+
+=== 203-empty-no-question (mistake on line 3; check exit 1)
+203-empty-no-question.em:3:10: [E4001] List[String] has no method `empty`
+  if names.empty() {
+           ^^^^^
+Emerald calls this `empty?`.
+
+=== 204-is-empty-java (mistake on line 3; check exit 1)
+204-is-empty-java.em:3:10: [E4001] List[String] has no method `isEmpty`
+  if names.isEmpty() {
+           ^^^^^^^
+A list has `count`, `first`, and `last`, and methods including `append`, `insert`, `remove`, `contains?`, `find`, `each`, `map`, `filter`, `sort`, `reverse`, `sum`, `min`, and `max`; the List reference lists them all.
+
+=== 205-empty-list-no-type (mistake on line 2; check exit 1)
+205-empty-list-no-type.em:2:13: an empty list needs a type
+  var names = []
+              ^^
+Say what it will hold, as in `var names: List[Int] = []`, `var ages: Dict[String, Int] = []`, or `var seen: Set[String] = []`.
+
+=== 206-mixed-list (mistake on line 2; check exit 1)
+206-mixed-list.em:2:15: this is String, but the list holds Int
+  var row = [1, "two", 3]
+                ^^^^^
+A list holds one type of value.
+
+=== 207-list-plus-element (mistake on line 3; check exit 1)
+207-list-plus-element.em:3:10: addition needs numbers, but this is List[Int] and Int
+  scores = scores + 3
+           ^^^^^^^^^^
+Arithmetic works on Int and Float.
+
+=== 208-append-two (mistake on line 3; check exit 1)
+208-append-two.em:3:8: `append` takes 1 argument, but this call passes 2
+  scores.append(3, 4)
+         ^^^^^^
+Match the number of arguments to what the method needs.
+
+=== 209-append-list-to-list (mistake on line 3; check exit 1)
+209-append-list-to-list.em:3:15: this is List[Int], but `append` needs Int
+  scores.append([3, 4])
+                ^^^^^^
+Pass a value of the type the list holds, or convert it first.
+
+=== 210-append-wrong-type (mistake on line 3; check exit 1)
+210-append-wrong-type.em:3:15: this is String, but `append` needs Int
+  scores.append("3")
+                ^^^
+Pass a value of the type the list holds, or convert it first.
+
+=== 211-remove-by-index (mistake on line 3; check exit 1)
+211-remove-by-index.em:3:14: this is Int, but `remove` needs String
+  names.remove(0)
+               ^
+Pass a value of the type the list holds, or convert it first.
+
+=== 212-sort-bang-print (mistake on line 3; run exit 0)
+nothing
+
+=== 213-sum-function (mistake on line 3; check exit 1)
+213-sum-function.em:3:7: [E1001] `sum` is not defined
+  print(sum(scores))
+        ^^^
+Check the spelling, or declare it before this line.
+
+=== 214-max-function (mistake on line 4; check exit 1)
+214-max-function.em:4:7: [E1001] `max` is not defined
+  print(max(a, b))
+        ^^^
+Check the spelling, or declare it before this line.
+
+=== 215-list-index-string (mistake on line 4; check exit 1)
+215-list-index-string.em:4:13: an index must be an Int, but this is String
+  print(names[i])
+              ^
+Indices count whole positions, starting from 0.
+
+=== 216-empty-list-first-plus (mistake on line 3; check exit 1)
+216-empty-list-first-plus.em:3:7: addition needs numbers, but this is Int? and Int
+  print(scores.first + 1)
+        ^^^^^^^^^^^^^^^^
+One of these may be absent. Give it a fallback with `.or(0)`, or check it against `nothing` first.
+
+=== 217-list-of-list-index (mistake on line 3; check exit 1)
+217-list-of-list-index.em:3:13: expected `]` to close this index, found ,
+  print(grid[1, 0])
+              ^
+An index is one expression in brackets, as in `scores[0]`.
+
+=== 218-join-on-separator (mistake on line 3; check exit 1)
+218-join-on-separator.em:3:12: [E4001] String has no method `join`
+  print(", ".join(words))
+             ^^^^
+A String has `count`, and methods including `empty?`, `chars`, `upper`, `lower`, `trim`, `contains?`, `substring`, `split`, `lines`, `replace`, and `to_bytes`; the String reference lists them all.
+
+=== 219-split-no-arg (mistake on line 2; check exit 1)
+219-split-no-arg.em:2:21: `split` takes 1 argument, but this call passes 0
+  var words = "a b c".split()
+                      ^^^^^
+Match the number of arguments to what the method needs.
+
+=== 220-list-sum-strings (mistake on line 5; check exit 1)
+220-list-sum-strings.em:5:5: `+` joins two Strings, but this is Int and String
+      total += p
+      ^^^^^
+Convert the value with `to_string()`, or use interpolation, as in `"#{name}: #{score}"`.
+
+=== 221-dict-curly (mistake on line 2; check exit 1)
+221-dict-curly.em:2:13: expected a lambda parameter, found a string
+  var ages = {"Ava": 12, "Bo": 13}
+              ^^^^^
+A lambda names what it receives and then writes `=>`, as in `{ number => number * 2 }`. An empty list is written `[]`.
+
+=== 222-dict-dot-access (mistake on line 3; check exit 1)
+222-dict-dot-access.em:3:12: [E4001] Dict[String, Int] has no property `Ava`
+  print(ages.Ava)
+             ^^^
+A dictionary is looked up with `[key]`, has `count`, and has methods including `contains_key?`, `keys`, `values`, `entries`, `remove`, `merge`, `map_values`, `filter`, `each`, and `map`; the Dict reference lists them all.
+
+=== 223-dict-lookup-arith (mistake on line 3; check exit 1)
+223-dict-lookup-arith.em:3:17: addition needs numbers, but this is Int? and Int
+  var next_year = ages["Ava"] + 1
+                  ^^^^^^^^^^^^^^^
+One of these may be absent. Give it a fallback with `.or(0)`, or check it against `nothing` first.
+
+=== 224-dict-get-python (mistake on line 3; check exit 1)
+224-dict-get-python.em:3:12: [E4001] Dict[String, Int] has no method `get`
+  print(ages.get("Ava", 0))
+             ^^^
+Emerald calls this `[key]`.
+
+=== 225-dict-empty-no-type (mistake on line 2; check exit 1)
+225-dict-empty-no-type.em:2:14: expected a lambda parameter, found }
+  var counts = {}
+               ^
+A lambda names what it receives and then writes `=>`, as in `{ number => number * 2 }`. An empty list is written `[]`.
+
+=== 226-dict-duplicate-key (mistake on line 2; check exit 1)
+226-dict-duplicate-key.em:2:34: this key is already used above
+  var ages = ["Ava": 12, "Bo": 13, "Ava": 14]
+                                   ^^^^^
+A dictionary holds each key once, and the later value would just replace the earlier one. Remove one of the two entries.
+
+=== 227-dict-for-two-names (mistake on line 3; check exit 1)
+227-dict-for-two-names.em:3:9: expected `in` after `name`, found ,
+  for name, age in ages {
+          ^
+Write what to loop over after `in`, as in `for number in 1..5`.
+
+=== 228-dict-items-call (mistake on line 3; check exit 1)
+228-dict-items-call.em:3:25: [E4001] Dict[String, Int] has no method `items`
+  for (name, age) in ages.items() {
+                          ^^^^^
+Emerald calls this `entries`.
+
+=== 229-dict-has-key (mistake on line 3; check exit 1)
+229-dict-has-key.em:3:9: [E4001] Dict[String, Int] has no method `containsKey`
+  if ages.containsKey("Ava") {
+          ^^^^^^^^^^^
+A dictionary is looked up with `[key]`, has `count`, and has methods including `contains_key?`, `keys`, `values`, `entries`, `remove`, `merge`, `map_values`, `filter`, `each`, and `map`; the Dict reference lists them all.
+
+=== 230-dict-count-plus-equals (mistake on line 4; run exit 2)
+230-dict-count-plus-equals.em:4:12: there is no entry for "a"
+      counts[word] += 1
+             ^^^^
+Put a value there first, as in `scores[key] = 0`, or check with `contains_key?(key)`.
+
+=== 231-maybe-plus-one (mistake on line 4; check exit 1)
+231-maybe-plus-one.em:4:7: addition needs numbers, but this is Int? and Int
+  print(n + 1)
+        ^^^^^
+One of these may be absent. Give it a fallback with `.or(0)`, or check it against `nothing` first.
+
+=== 232-method-on-optional (mistake on line 4; check exit 1)
+232-method-on-optional.em:4:7: this is String?, so `upper` may not be there to use
+  print(first.upper())
+        ^^^^^
+Give it a fallback with `.or(...)`, or check it first with `if first != nothing { ... }`.
+
+=== 233-optional-chain-missing-second (mistake on line 9; check exit 1)
+233-optional-chain-missing-second.em:9:7: this is Address?, so `city` may not be there to use
+  print(user?.address.city)
+        ^^^^^^^^^^^^^
+Give it a fallback with `.or(...)`, or put it in a name and check that against `nothing` first.
+
+=== 234-optional-chain-assign (mistake on line 6; check exit 1)
+234-optional-chain-assign.em:6:1: this is User?, so there may be nothing to assign into
+  user?.name = "Bo"
+  ^^^^^^^^^^
+Check it first with `if user != nothing { ... }`.
+
+=== 235-double-optional (mistake on line 2; check exit 1)
+235-double-optional.em:2:11: a type cannot be optional twice
+  var n: Int?? = 5
+            ^^
+One `?` already says the value may be absent; there is nothing for a second to add.
+
+=== 236-optional-compare-greater (mistake on line 3; check exit 1)
+236-optional-compare-greater.em:3:4: `>` needs numbers, but these are Int? values
+  if n > 3 {
+     ^^^^^
+Only numbers and Strings are ordered. Use `==` or `!=` to compare other values.
+
+=== 237-optional-to-param (mistake on line 6; check exit 1)
+237-optional-to-param.em:6:14: this is Int?, but parameter `n` of `square` needs Int
+  print(square(n))
+               ^
+Pass a value of the expected type, or convert it first.
+
+=== 238-optional-narrow-lost-reassign (mistake on line 5; check exit 1)
+238-optional-narrow-lost-reassign.em:5:11: addition needs numbers, but this is Int? and Int
+      print(n + 1)
+            ^^^^^
+One of these may be absent. Give it a fallback with `.or(0)`, or check it against `nothing` first.
+
+=== 239-optional-bang-unwrap (mistake on line 3; check exit 1)
+239-optional-bang-unwrap.em:3:7: [E1001] `n!` is not defined
+  print(n! + 1)
+        ^^
+Check the spelling, or declare it before this line.
+
+=== 240-optional-or-wrong-type (mistake on line 3; check exit 1)
+240-optional-or-wrong-type.em:3:12: this is String, but the value it stands in for is Int
+  print(n.or("none") + 1)
+             ^^^^^^
+The fallback has to be the same kind of value.
+
+=== 241-elvis-operator (mistake on line 3; check exit 1)
+241-elvis-operator.em:3:9: `??` is not an operator in Emerald
+  print(n ?? 0)
+          ^^
+Write `n.or(0)` to use a fallback for `nothing`.
+
+=== 242-struct-missing-field (mistake on line 6; check exit 1)
+242-struct-missing-field.em:6:9: `Point` takes 2 arguments, but this call passes 1
+  var p = Point(1)
+          ^^^^^
+Pass one value for each required field, in declaration order.
+
+=== 243-new-keyword (mistake on line 6; check exit 1)
+243-new-keyword.em:6:13: expected the end of the line, found a name
+  var p = new Point(1, 2)
+              ^^^^^
+Statements end at a new line. Check for a missing operator or closing bracket.
+
+=== 244-ruby-dot-new (mistake on line 6; check exit 1)
+244-ruby-dot-new.em:6:9: `Point` has no type-level member named `new`
+  var p = Point.new(1, 2)
+          ^^^^^^^^^
+Check the spelling. A type-level member is declared inside the type with its name in front, as in `var Point.new = ...` or `func Point.new()`.
+
+=== 245-field-no-type (mistake on line 3; check exit 1)
+245-field-no-type.em:3:10: expected `:` and a type after `x`, found the end of the line
+      var x
+           ^
+Every stored field needs an explicit type, as in `var x: Float`.
+
+=== 246-ts-field-no-var (mistake on line 3; check exit 1)
+246-ts-field-no-var.em:3:5: `name` needs `var` or `const` in front
+      name: String
+      ^^^^
+A stored field says whether it can change, as in `var name: ...`.
+
+=== 247-method-no-self (mistake on line 7; check exit 1)
+247-method-no-self.em:7:16: `width` is a member of `Rect`, so it is reached through `self`
+          return width * height
+                 ^^^^^
+Write `self.` in front, as in `self.width`.
+
+=== 248-this-instead-of-self (mistake on line 7; check exit 1)
+248-this-instead-of-self.em:7:16: Emerald calls the current value `self`
+          return this.width * this.height
+                 ^^^^
+Write `self` instead of `this`.
+
+=== 249-python-self-param (mistake on line 6; check exit 1)
+249-python-self-param.em:6:15: `self` is not listed as a parameter
+      func area(self): Int {
+                ^^^^
+Every method and constructor already has `self`. Remove it from the parameter list.
+
+=== 250-python-init (mistake on line 5; run exit 0)
+Rex
+
+=== 251-unknown-field (mistake on line 7; check exit 1)
+251-unknown-field.em:7:9: Point has no field named `z`
+  print(p.z)
+          ^
+Check the field name in the type's declaration.
+
+=== 252-misspelled-field (mistake on line 6; check exit 1)
+252-misspelled-field.em:6:11: Pet has no field named `nmae`
+  print(pet.nmae)
+            ^^^^
+Check the field name in the type's declaration.
+
+=== 253-const-struct-field (mistake on line 7; check exit 1)
+253-const-struct-field.em:7:1: [E3001] `p` is a `const`, so its contents cannot change
+  p.x = 5
+  ^
+Declare `p` with `var` if it needs to change.
+
+=== 254-const-field-assign (mistake on line 6; check exit 1)
+254-const-field-assign.em:6:3: `title` is a `const` field of Book, so it cannot change
+  b.title = "Emma"
+    ^^^^^
+Declare it `var title: String` in Book if it needs to change.
+
+=== 255-struct-change-without-bang (mistake on line 9; check exit 1)
+255-struct-change-without-bang.em:9:1: [E3001] `c` is a `const`, so its contents cannot change
+  c.increment()
+  ^
+Declare `c` with `var` if it needs to change.
+
+=== 256-instance-method-on-type (mistake on line 8; check exit 1)
+256-instance-method-on-type.em:8:1: `speak` belongs to each `Dog` value, not to the type
+  Dog.speak()
+  ^^^^^^^^^
+Reach it through a value of `Dog` instead. Only a member declared with the type's name in front, such as `var Dog.count = 0`, belongs to the type.
+
+=== 257-missing-override (mistake on line 8; check exit 1)
+257-missing-override.em:8:10: `speak` is already a method of `Animal`
+      func speak() {
+           ^^^^^
+Write `@override` on the line before it to replace `Animal`'s version, or give it a name of its own.
+
+=== 258-python-inherit-parens (mistake on line 5; check exit 1)
+258-python-inherit-parens.em:5:10: expected `{` after `Dog`, found (
+  class Dog(Animal) {
+           ^
+A class body is enclosed in braces, as in `class Marker { }`.
+
+=== 259-java-implements (mistake on line 5; check exit 1)
+259-java-implements.em:5:15: expected `{` after `Square`, found a name
+  struct Square implements Shape {
+                ^^^^^^^^^^
+A struct body is enclosed in braces, as in `struct Marker { }`.
+
+=== 260-trait-member-missing (mistake on line 5; check exit 1)
+260-trait-member-missing.em:5:8: `Square` does not supply `area`, which the trait `Shape` requires
+  struct Square with Shape {
+         ^^^^^^
+Add `@override func area(...)` with a body to `Square`.
+
+=== 261-private-access (mistake on line 6; check exit 1)
+261-private-access.em:6:9: `_balance` is private to `Account`
+  print(a._balance)
+          ^^^^^^^^
+Only code written inside `Account`'s braces can reach a name that starts with `_`.
+
+=== 262-construct-abstract (mistake on line 7; check exit 1)
+262-construct-abstract.em:7:9: `Shape` is abstract, so it cannot be constructed
+  var s = Shape()
+          ^^^^^
+An abstract class is only a base for other classes. Construct one of the classes that extend `Shape` instead.
+
+=== 263-super-not-first (mistake on line 9; check exit 1)
+263-super-not-first.em:7:5: this constructor has to start with `super(...)`, because building `Animal` takes arguments
+      constructor(name: String) {
+      ^^^^^^^^^^^
+Pass what `Animal` needs on the constructor's first line, as in `super(...)`, before anything else.
+
+=== 264-struct-extends (mistake on line 5; check exit 1)
+264-struct-extends.em:5:12: a struct cannot extend another type
+  struct Dog extends Animal {
+             ^^^^^^^
+Structs do not inherit. Declare a class instead if this needs a base class.
+
+=== 265-java-object-decl (mistake on line 5; check exit 1)
+265-java-object-decl.em:5:1: this result is never used
+  Dog rex = Dog("Rex")
+  ^^^
+Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.
+
+=== 266-method-outside-type (mistake on line 6; check exit 1)
+266-method-outside-type.em:6:12: `self` is only available inside a constructor or a method
+      return self.x
+             ^^^^
+Declare this function inside the struct or class to make it a method, or pass the value in as a parameter.
+
+=== 267-struct-equality-class (mistake on line 5; run exit 0)
+different
+
+=== 268-struct-copy-surprise (mistake on line 7; run exit 0)
+1
+
+=== 269-switch-statement (mistake on line 3; check exit 1)
+269-switch-statement.em:3:1: this result is never used
+  switch day {
+  ^^^^^^
+Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.
+
+=== 270-case-colon (mistake on line 4; check exit 1)
+270-case-colon.em:4:11: expected a block or `then` after what this arm matches, found :
+      when 1:
+            ^
+Give the arm a block in braces, or `then` and the value it produces.
+
+=== 271-case-default (mistake on line 7; check exit 1)
+271-case-default.em:7:5: expected `when` or `else` in this `case`, found a name
+      default {
+      ^^^^^^^
+Each arm of a `case` starts with `when` and what it matches, as in `when 1 { ... }`.
+
+=== 272-enum-bare-value (mistake on line 5; check exit 1)
+272-enum-bare-value.em:5:16: [E1001] `red` is not defined
+  var c: Color = red
+                 ^^^
+Check the spelling, or declare it before this line.
+
+=== 273-enum-misspelled (mistake on line 5; check exit 1)
+273-enum-misspelled.em:5:9: `Color` has no value or type-level member named `gren`
+  var c = Color.gren
+          ^^^^^^^^^^
+Check the spelling. The values of `Color` are `red`, `green`.
+
+=== 274-case-then-nonexhaustive (mistake on line 6; check exit 1)
+274-case-then-nonexhaustive.em:6:12: this `case` gives no value for `Color.blue`
+  var name = case c {
+             ^^^^
+A `case` that produces a value needs one for every possible subject. Add an arm for each, or `else then ...` after the last arm.
+
+=== 275-case-statement-nonexhaustive (mistake on line 6; check exit 1)
+275-case-statement-nonexhaustive.em:6:1: warning: this `case` does not cover `Color.blue`
+  case c {
+  ^^^^
+Add an arm for each, or `else { }` to accept the gap deliberately.
+
+=== 276-enum-capital-value (mistake on line 5; check exit 1)
+276-enum-capital-value.em:5:9: `Color` has no value or type-level member named `RED`
+  var c = Color.RED
+          ^^^^^^^^^
+Check the spelling. The values of `Color` are `red`, `green`.
+
+=== 277-case-when-string-vs-int (mistake on line 4; check exit 1)
+277-case-when-string-vs-int.em:4:10: `when` compares this with the subject by `==`, but String and Int cannot be compared
+      when 1 {
+           ^
+Each alternative is a value of the subject's type, compared with it by `==`.
+
+=== 278-throw-keyword (mistake on line 4; check exit 1)
+278-throw-keyword.em:4:9: this result is never used
+          throw RuntimeError("negative")
+          ^^^^^
+Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.
+
+=== 279-raise-string (mistake on line 4; check exit 1)
+279-raise-string.em:4:15: only an Error can be raised, but this is String
+          raise "negative"
+                ^^^^^^^^^^
+Raise an Error value, such as `Error("what went wrong")`.
+
+=== 280-except-keyword (mistake on line 6; check exit 1)
+280-except-keyword.em:2:5: `try` needs a `catch` or `finally`
+  try {
+      ^
+Add a handler with `catch error { ... }`, cleanup with `finally { ... }`, or remove `try`.
+
+=== 281-catch-js-parens (mistake on line 6; check exit 1)
+281-catch-js-parens.em:6:7: expected a name after `catch`
+  catch (e) {
+        ^
+Name the caught error, as in `catch error: FileError {`.
+
+=== 282-try-without-catch (mistake on line 2; check exit 1)
+282-try-without-catch.em:2:5: `try` needs a `catch` or `finally`
+  try {
+      ^
+Add a handler with `catch error { ... }`, cleanup with `finally { ... }`, or remove `try`.
+
+=== 283-catch-unknown-type (mistake on line 6; check exit 1)
+283-catch-unknown-type.em:6:14: `ValueError` is not a type
+  catch error: ValueError {
+               ^^^^^^^^^^
+Check the spelling or declare the struct in this project.
+
+=== 284-error-subclass-no-extends (mistake on line 5; check exit 1)
+284-error-subclass-no-extends.em:5:7: only an Error can be raised, but this is BadScore
+  raise BadScore("too high")
+        ^^^^^^^^^^^^^^^^^^^^
+Raise an Error value, such as `Error("what went wrong")`.
+
+=== 285-assert-assign (mistake on line 3; check exit 1)
+285-assert-assign.em:3:14: a condition compares values with `==`, not `=`
+  assert total = 4
+               ^
+Write `==` to compare values. Put an assignment on its own line.
+
+=== 286-assert-fails (mistake on line 3; run exit 2)
+286-assert-fails.em:3:8: AssertionError: assertion failed: `total == 4`
+  assert total == 4
+         ^^^^^^^^^^
+Left was 5; right was 4.
+
+=== 287-python-lambda (mistake on line 2; check exit 1)
+287-python-lambda.em:2:21: expected the end of the line, found a name
+  var double = lambda x: x * 2
+                      ^
+Statements end at a new line. Check for a missing operator or closing bracket.
+
+=== 288-js-arrow-parens (mistake on line 3; check exit 1)
+288-js-arrow-parens.em:3:20: expected `)` to close this call, found =>
+  print(nums.map((x) => x * 2))
+                     ^^
+Add the closing parenthesis, or check for a missing comma between arguments.
+
+=== 289-ruby-block-pipes (mistake on line 3; check exit 1)
+289-ruby-block-pipes.em:3:13: this character does not belong here
+  nums.each { |n| print(n) }
+              ^
+Remove it, or check for a typo nearby.
+
+=== 290-ruby-do-end (mistake on line 3; check exit 1)
+290-ruby-do-end.em:3:14: this character does not belong here
+  nums.each do |n|
+               ^
+Remove it, or check for a typo nearby.
+
+=== 291-kotlin-it (mistake on line 3; check exit 1)
+291-kotlin-it.em:3:18: expected `=>` after this lambda's parameters, found (
+  nums.each { print(it) }
+                   ^
+A lambda separates what it receives from what it does with `=>`, as in `{ number => number * 2 }`.
+
+=== 292-break-in-each (mistake on line 4; check exit 1)
+292-break-in-each.em:4:5: `break` can only be used inside a loop
+      break if n > 1
+      ^^^^^
+A function cannot end the loop that called it. Return a value the caller can check instead.
+
+=== 293-block-wrong-arity (mistake on line 3; check exit 1)
+293-block-wrong-arity.em:3:11: this lambda takes 2 values, but it will be given 1
+  nums.each { i, n => print(i, n) }
+            ^^^^^^^^^^^^^^^^^^^^^^^
+Match the number of parameters to the number of values passed to it.
+
+=== 294-console-log (mistake on line 2; check exit 1)
+294-console-log.em:2:1: [E1001] `console` is not defined
+  console.log("hello")
+  ^^^^^^^
+Check the spelling, or declare it before this line.
+
+=== 295-system-out-println (mistake on line 2; check exit 1)
+295-system-out-println.em:2:1: [E1001] `System` is not defined
+  System.out.println("hello")
+  ^^^^^^
+Check the spelling, or declare it before this line.
+
+=== 296-python2-print (mistake on line 2; check exit 1)
+296-python2-print.em:2:1: this result is never used
+  print "hello"
+  ^^^^^
+Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.
+
+=== 297-printf (mistake on line 3; check exit 1)
+297-printf.em:3:1: [E1001] `printf` is not defined
+  printf("n = %d", n)
+  ^^^^^^
+Check the spelling, or declare it before this line.
+
+=== 298-puts (mistake on line 2; check exit 1)
+298-puts.em:2:1: [E1001] `puts` is not defined
+  puts("hello")
+  ^^^^
+Check the spelling, or declare it before this line.
+
+=== 299-to-upper-case (mistake on line 3; check exit 1)
+299-to-upper-case.em:3:12: [E4001] String has no method `toUpperCase`
+  print(name.toUpperCase())
+             ^^^^^^^^^^^
+A String has `count`, and methods including `empty?`, `chars`, `upper`, `lower`, `trim`, `contains?`, `substring`, `split`, `lines`, `replace`, and `to_bytes`; the String reference lists them all.
+
+=== 300-ruby-upcase (mistake on line 3; check exit 1)
+300-ruby-upcase.em:3:12: [E4001] String has no property `upcase`
+  print(name.upcase)
+             ^^^^^^
+Emerald calls this `upper`.
+
+=== 301-string-contains-no-q (mistake on line 3; check exit 1)
+301-string-contains-no-q.em:3:9: [E4001] String has no method `contains`
+  if word.contains("nan") {
+          ^^^^^^^^
+Emerald calls this `contains?`.
+
+=== 302-math-sqrt-lower (mistake on line 3; check exit 1)
+302-math-sqrt-lower.em:3:7: [E1001] `math` is not defined
+  print(math.sqrt(x))
+        ^^^^
+Check the spelling, or declare it before this line.
+
+=== 303-sqrt-bare (mistake on line 3; check exit 1)
+303-sqrt-bare.em:3:7: [E1001] `sqrt` is not defined
+  print(sqrt(x))
+        ^^^^
+Check the spelling, or declare it before this line.
+
+=== 304-python-random-randint (mistake on line 2; check exit 1)
+304-python-random-randint.em:2:12: `random` is built in, and built-in functions cannot be used as values
+  var roll = random.randint(1, 6)
+             ^^^^^^
+Call it with parentheses, as in `random(...)`, or wrap it in a lambda such as `{ value => random(value) }`.
+
+=== 305-type-function (mistake on line 3; check exit 1)
+305-type-function.em:3:7: [E1001] `type` is not defined
+  print(type(x))
+        ^^^^
+Check the spelling, or declare it before this line.
+
+=== 306-round-function (mistake on line 3; check exit 1)
+306-round-function.em:3:7: [E1001] `round` is not defined
+  print(round(price))
+        ^^^^^
+Check the spelling, or declare it before this line.
+
+=== 307-input-int-python (mistake on line 2; check exit 1)
+307-input-int-python.em:2:11: [E1001] `int` is not defined
+  var age = int(input("Age? "))
+            ^^^
+Check the spelling, or declare it before this line.
+
+=== 308-string-format-method (mistake on line 3; check exit 1)
+308-string-format-method.em:3:18: [E4001] String has no method `format`
+  print("Hello {}".format(name))
+                   ^^^^^^
+A String has `count`, and methods including `empty?`, `chars`, `upper`, `lower`, `trim`, `contains?`, `substring`, `split`, `lines`, `replace`, and `to_bytes`; the String reference lists them all.
+
+=== 309-char-at (mistake on line 3; check exit 1)
+309-char-at.em:3:12: [E4001] String has no method `charAt`
+  print(word.charAt(0))
+             ^^^^^^
+A String has `count`, and methods including `empty?`, `chars`, `upper`, `lower`, `trim`, `contains?`, `substring`, `split`, `lines`, `replace`, and `to_bytes`; the String reference lists them all.
+
+=== 310-string-index-out-of-range (mistake on line 3; run exit 2)
+310-string-index-out-of-range.em:3:7: index 2 is outside this String, which has 2 characters
+  print(word[2])
+        ^^^^^^^
+Valid indices are 0 through 1.
+
+=== 311-println-swift (mistake on line 2; check exit 1)
+311-println-swift.em:2:1: [E1001] `println` is not defined
+  println("hello")
+  ^^^^^^^
+Check the spelling, or declare it before this line.
+
+=== 312-echo (mistake on line 2; check exit 1)
+312-echo.em:2:1: [E1001] `echo` is not defined
+  echo("hello")
+  ^^^^
+Check the spelling, or declare it before this line.
+
+=== 313-control-greeter (mistake on line -; run exit 0)
+What is your name? Hello, 21!
+
+=== 314-control-loop (mistake on line -; run exit 0)
+1
+2
+3
+

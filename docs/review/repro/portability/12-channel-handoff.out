@@ -1,0 +1,7 @@
+send 0
+send 1
+got 0
+got 1
+send 2
+got 2
+[exit 0]

@@ -1,0 +1,4 @@
+diagnostics/variadic-parameter.em:2:24: expected `)` to close this parameter list, found ..
+  func total(numbers: Int...): Int {
+                         ^^
+Add the closing parenthesis, or check for a missing comma between parameters.

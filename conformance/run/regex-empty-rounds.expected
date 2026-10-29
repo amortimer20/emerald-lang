@@ -1,0 +1,4 @@
+true Regex.Match("" at 0..<0)
+aa [a]
+ab [a]
+aa [aa]

@@ -1,0 +1,4 @@
+diagnostics/operator-annotation-private.em:7:10: `_times` is private, so it cannot be an operator method
+      func _times(quantity: Int): Money {
+           ^^^^^^
+Operators are public syntax. Remove the leading `_`, or keep this as an ordinary private helper.

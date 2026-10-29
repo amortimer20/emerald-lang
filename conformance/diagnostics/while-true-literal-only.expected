@@ -1,0 +1,8 @@
+diagnostics/while-true-literal-only.em:11:6: not every path in `second` returns a value
+  func second(): Int {
+       ^^^^^^
+Add a `return` on every path, or restructure so every branch returns.
+diagnostics/while-true-literal-only.em:23:11: `answer` may not have been assigned
+      print(answer)
+            ^^^^^^
+The loop that assigns `answer` might not run at all. Give it a value before the loop.

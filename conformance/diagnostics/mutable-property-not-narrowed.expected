@@ -1,0 +1,4 @@
+diagnostics/mutable-property-not-narrowed.em:9:16: addition needs numbers, but this is Int? and Int
+          return box.item + 1
+                 ^^^^^^^^^^^^
+One of these may be absent. Give it a fallback with `.or(0)`, or check it against `nothing` first.

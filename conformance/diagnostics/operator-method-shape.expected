@@ -1,0 +1,12 @@
+diagnostics/operator-method-shape.em:7:10: an operator method takes exactly one parameter
+      func times(quantity: Int, extra: Int): Money {
+           ^^^^^
+The parameter is the value on the right of `*`.
+diagnostics/operator-method-shape.em:12:15: an operator parameter cannot have a default
+      func less(amount: Int = 1): Money {
+                ^^^^^^
+An operator always receives its right operand explicitly. Remove the default.
+diagnostics/operator-method-shape.em:17:10: an operator method needs an explicit result type
+      func split(parts: Int) {
+           ^^^^^
+Write the result after `:`, as in `func times(quantity: Int): Money`.

@@ -1,0 +1,6 @@
+runtime-errors/reraise-keeps-location.em:4:5: Error: disk is full
+      raise Error("disk is full")
+      ^^^^^
+Handle this error with `try` and `catch`, or correct the condition that raised it.
+in `load`, called at runtime-errors/reraise-keeps-location.em:9:9
+in `run`, called at runtime-errors/reraise-keeps-location.em:17:1

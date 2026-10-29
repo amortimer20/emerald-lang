@@ -1,0 +1,4 @@
+diagnostics/bool-case-coverage.em:4:1: warning: this `case` does not cover `false`
+  case ready {
+  ^^^^
+Add an arm for each, or `else { }` to accept the gap deliberately.

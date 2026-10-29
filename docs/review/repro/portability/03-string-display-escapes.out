@@ -1,0 +1,3 @@
+["#{x}", "5"]
+["bell", "escape[31m", "delete"]
+[exit 0]

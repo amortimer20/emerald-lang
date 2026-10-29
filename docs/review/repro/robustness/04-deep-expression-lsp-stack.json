@@ -1,0 +1,1 @@
+[{"jsonrpc": "2.0", "id": 1, "method": "textDocument/references", "params": {"textDocument": {"uri": "$URI"}, "position": {"line": 1, "character": 6}, "context": {"includeDeclaration": true}}}]

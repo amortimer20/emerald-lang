@@ -1,0 +1,4 @@
+diagnostics/operator-override-repeats.em:22:5: an overriding method inherits its operator registration
+      @operator("*")
+      ^^^^^^^^^^^^^^
+Remove `@operator`; `@override` replaces the inherited implementation without declaring a second registration.

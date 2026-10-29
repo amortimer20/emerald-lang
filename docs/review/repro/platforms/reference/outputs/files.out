@@ -1,0 +1,30 @@
+[a/b/c.txt] name=c.txt stem=c ext=txt parent=a/b abs?=false
+[a\b\c.txt] name=a\b\c.txt stem=a\b\c ext=txt parent= abs?=false
+[C:\x\y.txt] name=C:\x\y.txt stem=C:\x\y ext=txt parent= abs?=false
+[C:/x/y.txt] name=y.txt stem=y ext=txt parent=C:/x abs?=false
+[/abs/p] name=p stem=p ext= parent=/abs abs?=true
+[\\server\share\f.txt] name=\\server\share\f.txt stem=\\server\share\f ext=txt parent= abs?=false
+[rel] name=rel stem=rel ext= parent= abs?=false
+[] name= stem= ext= parent= abs?=false
+[/] name= stem= ext= parent= abs?=true
+[a/b/] name=b stem=b ext= parent=a abs?=false
+[a//b] name=b stem=b ext= parent=a abs?=false
+[.hidden] name=.hidden stem=.hidden ext= parent= abs?=false
+[a.tar.gz] name=a.tar.gz stem=a.tar ext=gz parent= abs?=false
+[dir.d/file] name=file stem=file ext= parent=dir.d abs?=false
+[c:] name=c: stem=c: ext= parent= abs?=false
+[a\b/c.d\e] name=c.d\e stem=c ext=d\e parent=a\b abs?=false
+a/b/c a/b C:\x/y a /a
+["emerald-platform-probe/10.txt", "emerald-platform-probe/b.txt", "emerald-platform-probe/éx.txt", "emerald-platform-probe/9.txt", "emerald-platform-probe/é.txt", "emerald-platform-probe/C.txt", "emerald-platform-probe/a.txt", "emerald-platform-probe/_", "emerald-platform-probe/Z"]
+["emerald-platform-probe/10.txt", "emerald-platform-probe/9.txt", "emerald-platform-probe/C.txt", "emerald-platform-probe/Z", "emerald-platform-probe/_", "emerald-platform-probe/a.txt", "emerald-platform-probe/b.txt", "emerald-platform-probe/é.txt", "emerald-platform-probe/éx.txt"]
+["one", "two", "", "last"]
+14 [111, 110, 101, 13, 10, 116, 119, 111, 13, 10, 13, 10, 108, 97, 115, 116, 13]
+["one", "two", "", "last"]
+[111, 110, 101]
+[116, 119, 111]
+[]
+[108, 97, 115, 116]
+[65279, 104, 105, 10, 120] ["﻿hi", "x"]
+4 4
+true true false
+exit 0

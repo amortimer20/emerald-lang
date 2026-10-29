@@ -1,0 +1,4 @@
+diagnostics/shared-trait-not-inferred.em:21:24: this is Robot, but the list holds Dog
+  var speakers = [Dog(), Robot()]
+                         ^^^^^^^
+A list holds one type of value.

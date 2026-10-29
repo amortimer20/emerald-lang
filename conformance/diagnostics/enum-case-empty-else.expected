@@ -1,0 +1,4 @@
+diagnostics/enum-case-empty-else.em:10:1: warning: this `case` does not cover `Light.green` or `Light.amber`
+  case light {
+  ^^^^
+Add an arm for each, or `else { }` to accept the gap deliberately.

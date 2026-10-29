@@ -1,0 +1,8 @@
+diagnostics/historical-spellings.em:4:12: String has no method `slice`
+  print(text.slice(0, 2))
+             ^^^^^
+Emerald calls this `substring`.
+diagnostics/historical-spellings.em:6:12: Dict[String, Int] has no method `has_key?`
+  print(ages.has_key?("Ava"))
+             ^^^^^^^^
+Emerald calls this `contains_key?`.

@@ -1,0 +1,4 @@
+runtime-errors/string-slice-start-after-end.em:4:7: slice start 4 comes after its end 2
+  print(text[start..2])
+        ^^^^^^^^^^^^^^
+Write the start at or before the end.

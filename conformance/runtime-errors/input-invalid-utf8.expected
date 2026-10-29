@@ -1,0 +1,4 @@
+runtime-errors/input-invalid-utf8.em:3:14: InputError: the line read by `input` is not valid UTF-8 text
+  const line = input()
+               ^^^^^^^
+Emerald strings hold Unicode text; check how the input was produced.
