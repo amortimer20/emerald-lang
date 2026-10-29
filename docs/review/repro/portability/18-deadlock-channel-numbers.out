@@ -1,0 +1,6 @@
+18-deadlock-channel-numbers.em:7:1: DeadlockError: these tasks are waiting for each other
+  second.send(1)
+  ^^^^^^^^^^^^^^
+At `18-deadlock-channel-numbers.em:7`, the program is waiting to send to channel 2.
+Check the task results they wait for.
+[exit 2]
