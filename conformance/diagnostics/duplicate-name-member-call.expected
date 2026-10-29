@@ -1,0 +1,4 @@
+diagnostics/duplicate-name-member-call.em:6:8: `f` is already declared
+  struct f {
+         ^
+Each name can have one declaration in a scope. Choose a different name, or remove the duplicate.
