@@ -3613,7 +3613,9 @@ children alone do not make a group fail; their result calls still raise Cancelle
 Program exit cancels and drains active children. `exit` in any task, a child or the group's
 block, ends the whole program: every other live task, including one not yet run, unwinds as
 `exit` does at its next suspension point outside cleanup, so its `finally` blocks run and no
-`catch` sees a `CancelledError`. A child's exit is not a failure of its group.
+`catch` sees a `CancelledError`. A child's exit is not a failure of its group. An exit while a group runs, including one in
+cleanup while a failing group drains, ends the program with its status ahead of any failure
+the group would otherwise propagate.
 
 Standard-input cancellation interrupts the task's wait immediately. One scheduler-owned
 reader keeps the in-flight read and delivers its eventual line to the next input call;

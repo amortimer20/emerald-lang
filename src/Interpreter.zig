@@ -95,6 +95,8 @@ const TaskGroupRecord = struct {
     owner: *Scheduler.TaskState(TaskData),
     first_error: ?*TaskRecord = null,
     cancelling: bool = false,
+    /// `Interpreter.exit_count` when the group began.
+    exit_count: usize,
 };
 
 const ChannelWaiter = struct {
@@ -238,6 +240,8 @@ channels: std.AutoHashMapUnmanaged(i64, *ChannelRecord) = .empty,
 next_channel_id: i64 = 1,
 next_group_id: i64 = 1,
 next_completion_order: usize = 1,
+/// How many times `exit` has been called; a group that saw one ends with it.
+exit_count: usize = 0,
 live_tasks: usize = 0,
 facts: Resolver.Facts = .{},
 out: *std.Io.Writer,
@@ -4037,7 +4041,7 @@ fn callTasksRun(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call
     const body = try self.evaluate(call.arguments[0]);
     defer self.heap.release(body);
     const group = try self.gpa.create(TaskGroupRecord);
-    group.* = .{ .id = self.next_group_id, .owner = self.task };
+    group.* = .{ .id = self.next_group_id, .owner = self.task, .exit_count = self.exit_count };
     self.next_group_id += 1;
     self.task_groups.put(self.gpa, group.id, group) catch |err| {
         self.gpa.destroy(group);
@@ -4111,6 +4115,9 @@ fn callTasksRun(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call
     defer self.finishTaskGroup(group);
     _ = self.scheduler.takeCancellation(owner.state.job.?);
 
+    // An `exit` anywhere while this group ran ends the program, ahead of
+    // any failure the group would otherwise report (15.2).
+    if (self.exit_count != group.exit_count) return error.Exited;
     if (block_failed_first) {
         self.task.state.raised_value = block_raised;
         self.task.state.failure = block_failure;
@@ -4329,6 +4336,7 @@ fn requestCancellation(self: *Interpreter, job: *Scheduler.Runtime.Job, state: *
 /// suspension point outside cleanup: `finally` runs, `catch` does not. Tasks
 /// are woken in start order, then the root, as a failing group would.
 fn requestExit(self: *Interpreter) void {
+    self.exit_count += 1;
     if (self.task_records.count() == 0) return;
     for (1..@as(usize, @intCast(self.next_task_id))) |id| {
         const task = self.task_records.get(@intCast(id)) orelse continue;
