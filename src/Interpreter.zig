@@ -1865,6 +1865,9 @@ const TaskData = struct {
     caught_failure: ?Diagnostic = null,
     failure: ?Diagnostic = null,
     exit_code: ?u8 = null,
+    /// Another task's `exit` is ending the program: every later suspension
+    /// point outside cleanup unwinds this task as `exit` does (15.2).
+    exit_requested: bool = false,
     stack: StackLimit = .{ .base = 0, .budget = 0 },
     steps_remaining: ?usize = null,
     step_limit: usize = 0,
@@ -4220,7 +4223,8 @@ fn taskMain(context: *anyopaque, job: *Scheduler.Runtime.Job) void {
     const closure = task.block.data.closure;
     const result = self.invokeClosure(task.span, closure, self.closureCallable(closure), &.{});
     if (result) |value| task.result = value else |err| task.ended = err;
-    if (task.ended != null and !self.taskCancelled(task)) {
+    // An exit is not a failure: it has already asked every task to unwind.
+    if (task.ended != null and task.ended.? != error.Exited and !self.taskCancelled(task)) {
         if (task.group.?.first_error == null) {
             task.group.?.first_error = task;
             self.cancelGroup(task.group.?, task);
@@ -4320,6 +4324,24 @@ fn requestCancellation(self: *Interpreter, job: *Scheduler.Runtime.Job, state: *
     }
 }
 
+/// `exit` ends the whole program, whichever task calls it (15.2). Every other
+/// live task, started or still queued, unwinds as `exit` does at its next
+/// suspension point outside cleanup: `finally` runs, `catch` does not. Tasks
+/// are woken in start order, then the root, as a failing group would.
+fn requestExit(self: *Interpreter) void {
+    if (self.task_records.count() == 0) return;
+    for (1..@as(usize, @intCast(self.next_task_id))) |id| {
+        const task = self.task_records.get(@intCast(id)) orelse continue;
+        if (task.group == null or &task.state == self.task) continue;
+        task.state.state.exit_requested = true;
+        self.requestCancellation(&task.job, &task.state);
+    }
+    if (self.task != self.root_task) {
+        self.root_task.state.exit_requested = true;
+        self.requestCancellation(self.root_task.state.job.?, self.root_task);
+    }
+}
+
 fn cancelGroup(self: *Interpreter, group: *TaskGroupRecord, failed: ?*TaskRecord) void {
     group.cancelling = true;
     for (group.tasks.items) |task| if (task != failed) self.cancelTask(task);
@@ -4328,6 +4350,10 @@ fn cancelGroup(self: *Interpreter, group: *TaskGroupRecord, failed: ?*TaskRecord
 
 fn cancellationPoint(self: *Interpreter, span: Source.Span) Error!void {
     if (self.task.state.cancellation_mask != 0) return;
+    if (self.task.state.exit_requested) {
+        _ = self.scheduler.takeCancellation(self.task.state.job.?);
+        return error.Exited;
+    }
     if (!self.scheduler.takeCancellation(self.task.state.job.?)) return;
     if (self.task.state.raised_value) |value| self.heap.release(value);
     self.task.state.raised_value = try self.makeError(Resolver.preludeKey("CancelledError"), "this task was cancelled");
@@ -4773,6 +4799,7 @@ fn callBuiltin(self: *Interpreter, expression: *const Ast.Expression, call: Ast.
         // The status belongs to the program, not to the task that asked:
         // a child's `exit` ends the whole run (15.2, 15.13).
         self.root_task.state.exit_code = @intCast(code);
+        self.requestExit();
         return error.Exited;
     }
     if (std.mem.eql(u8, name, "print_error")) return self.evaluatePrintError(call);
