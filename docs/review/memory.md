@@ -20,7 +20,7 @@ is `init.gpa`, a leak-checking `DebugAllocator`:
 | `conformance/repl/` | 20 sessions | `emerald repl < <case>.input` | clean |
 | `conformance/diagnostics/` | 420 | `emerald check <case>` | clean |
 | `examples/` (files and projects) | 31 | `emerald run <example>` | clean |
-| `benchmarks/` | 13 | `emerald run benchmarks/<name>.em` | clean, output equal to `.expected` (see the note below) |
+| `benchmarks/` | 13 | `emerald run benchmarks/<name>.em` | 10 clean, output equal to `.expected`; `generics`, `json`, and `strings` did not finish (see the note below) |
 | Probes of copying and counts | 12 | `emerald run`, `emerald test` | clean, correct answers |
 
 "Clean" means no `leaked`, `Double free`, `panic`, segmentation fault, or `reached unreachable`
@@ -40,10 +40,16 @@ what lay behind the first. 40 conformance programs were sampled, covering every 
 (Base64, Bytes, CSV, dates and durations, zones, digests, JSON, Math, paths, regular expressions,
 strings, Unicode text, files) and language area (closures, classes, inheritance, traits, enums,
 generics, optionals, tuples, errors, collections and their copies, tasks, channels, and
-cancellation): 25 were clean at every index, 15 crashed or leaked at some.
+cancellation): 25 were clean at every index, 15 crashed or leaked at some. Programs over about
+1,500 allocations were sampled at an even stride rather than at every index (`named-zones.em`,
+for example).
 
 Note on the benchmarks: the machine was shared with seven other review agents (load average
-170 at one point), so three benchmarks first hit a 50-minute limit and were rerun alone.
+170 at one point). A Debug build runs the benchmarks very slowly, so `generics.em`, `json.em`, and
+`strings.em` hit the 50-minute limit, and a rerun of the three was still running when the time box
+ended. Nothing in what they printed was a leak or crash report, but a leak is reported only at
+exit, so **these three are unchecked**. A rerun on an idle machine, or a ReleaseSafe build with a
+leak-checking allocator, would settle them.
 
 ## How to run the harness
 
