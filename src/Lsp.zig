@@ -434,12 +434,31 @@ fn runMessages(server: *Server, gpa: std.mem.Allocator, in: *std.Io.Reader, out:
 
         const should_exit = handle(server, gpa, parsed.value, out) catch |err| switch (err) {
             error.OutOfMemory, error.WriteFailed => |e| return e,
-            // A malformed or unexpected message is not fatal to the session;
-            // whatever request it was simply goes unanswered.
-            else => false,
+            // A malformed or unexpected message is not fatal to the session,
+            // but JSON-RPC 2.0 requires every request to be answered, or the
+            // client waits on its id forever. A notification has no id and
+            // gets nothing, as before.
+            else => |e| blk: {
+                if (requestId(parsed.value)) |id| {
+                    if (e == error.InvalidParams)
+                        try respondError(gpa, out, id, invalid_params_code, "invalid params")
+                    else
+                        try respondError(gpa, out, id, internal_error_code, "internal error");
+                }
+                break :blk false;
+            },
         };
         if (should_exit) break;
     }
+}
+
+/// The id of a request, or null for a notification (or a message too
+/// malformed to be either, which `handle` ignores without an error).
+fn requestId(message: std.json.Value) ?std.json.Value {
+    if (message != .object) return null;
+    const method = message.object.get("method") orelse return null;
+    if (method != .string) return null;
+    return message.object.get("id");
 }
 
 /// Backend-neutral protocol cases use the real framed-message server, not
@@ -3082,6 +3101,9 @@ const WorkspaceEdit = struct { changes: std.json.ArrayHashMap([]const TextEdit) 
 /// declines: an unrenameable name is as much an invalid request as a
 /// malformed one, and LSP defines no rename-specific code.
 const invalid_params_code: i32 = -32602;
+/// JSON-RPC's "internal error", for a request whose handling failed other
+/// than by malformed params, so that it is still answered.
+const internal_error_code: i32 = -32603;
 
 /// Whether `name` could be lexed back as a single identifier token — the
 /// same rule `Lexer.lexIdentifier` uses (Unicode's XID classes, with a
@@ -4834,6 +4856,51 @@ test "the server answers on expressions as deep as the parser accepts" {
         if (id.integer == 1) try testing.expectEqual(@as(usize, 2), parsed.value.object.get("result").?.array.items.len);
     }
     try testing.expectEqual([3]bool{ true, true, true }, answered);
+}
+
+test "a request with malformed params is answered with invalid params, a notification is not" {
+    const gpa = testing.allocator;
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const uri = "untitled:malformed.em";
+    const bodies = [_][]const u8{
+        "{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"initialize\",\"params\":{}}",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" ++ uri ++ "\",\"languageId\":\"emerald\",\"version\":1,\"text\":\"var x = 1\\n\"}}}",
+        // A negative line, a fractional character, no params, null params,
+        // rename with no `newName`, and one whose `newName` is a number.
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":{\"uri\":\"" ++ uri ++ "\"},\"position\":{\"line\":-1,\"character\":0}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/definition\",\"params\":{\"textDocument\":{\"uri\":\"" ++ uri ++ "\"},\"position\":{\"line\":0,\"character\":1.5}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/hover\"}",
+        "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"textDocument/completion\",\"params\":null}",
+        "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"textDocument/rename\",\"params\":{\"textDocument\":{\"uri\":\"" ++ uri ++ "\"},\"position\":{\"line\":0,\"character\":4}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":\"six\",\"method\":\"textDocument/rename\",\"params\":{\"textDocument\":{\"uri\":\"" ++ uri ++ "\"},\"position\":{\"line\":0,\"character\":4},\"newName\":6}}",
+        // A malformed notification still gets no reply.
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{}}",
+    };
+    var requests: std.Io.Writer.Allocating = .init(gpa);
+    defer requests.deinit();
+    for (bodies) |body| try requests.writer.print("Content-Length: {d}\r\n\r\n{s}", .{ body.len, body });
+    var reader: std.Io.Reader = .fixed(requests.written());
+    var responses: std.Io.Writer.Allocating = .init(gpa);
+    defer responses.deinit();
+    var server: Server = .{ .gpa = gpa, .io = io };
+    defer server.deinit();
+    try runMessages(&server, gpa, &reader, &responses.writer);
+
+    reader = .fixed(responses.written());
+    var initialized = (try readMessage(gpa, &reader)).?;
+    defer initialized.deinit();
+    var published = (try readMessage(gpa, &reader)).?;
+    defer published.deinit();
+    for ([_][]const u8{ "1", "2", "3", "4", "5", "\"six\"" }) |expected_id| {
+        var reply = (try readMessage(gpa, &reader)) orelse return error.TestExpectedReply;
+        defer reply.deinit();
+        const id = try std.json.Stringify.valueAlloc(gpa, reply.value.object.get("id").?, .{});
+        defer gpa.free(id);
+        try testing.expectEqualStrings(expected_id, id);
+        const code = reply.value.object.get("error").?.object.get("code").?.integer;
+        try testing.expectEqual(@as(i64, invalid_params_code), code);
+    }
+    try testing.expectEqual(@as(?std.json.Parsed(std.json.Value), null), try readMessage(gpa, &reader));
 }
 
 test "reading stops cleanly at the end of input" {
