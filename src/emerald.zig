@@ -2359,6 +2359,67 @@ test "running releases every allocation failure" {
     try testing.checkAllAllocationFailures(testing.allocator, Work.run, .{&project});
 }
 
+/// Runs `text` with every allocation in turn failing: each run must report
+/// out of memory and free what it took, exactly once.
+fn checkRunAllocationFailures(text: []const u8) !void {
+    const Work = struct {
+        fn attempt(gpa: std.mem.Allocator, program: []const u8) !void {
+            var source = try Source.init(gpa, "test.em", program);
+            defer source.deinit(gpa);
+            // The output takes its memory from elsewhere, so the program's
+            // own allocations fall where a CLI run puts them; otherwise a
+            // list can grow in place and skip the failure being tested.
+            var out: std.Io.Writer.Allocating = .init(testing.allocator);
+            defer out.deinit();
+            var no_input: std.Io.Reader = .fixed("");
+            // `error.WriteFailed` comes from an `Allocating` writer the
+            // interpreter makes from `gpa`, so it is a failed allocation.
+            var report = run(gpa, &source, .{ .out = &out.writer, .in = &no_input }) catch |err| switch (err) {
+                error.WriteFailed => return error.OutOfMemory,
+                else => |e| return e,
+            };
+            defer report.deinit();
+            if (!report.ok()) return error.UnexpectedDiagnosticOrFailure;
+        }
+    };
+    try testing.checkAllAllocationFailures(testing.allocator, Work.attempt, .{text});
+}
+
+test "a failed allocation in a tuple or struct constructor frees each part once" {
+    // Tuple literals, `String.partition`, and `List.partition`, `pairs`,
+    // and `zip`.
+    try checkRunAllocationFailures("const pair = (\"score\", 10)\nprint(pair)\n");
+    try checkRunAllocationFailures("print(\"key=value\".partition(\"=\"))\n");
+    try checkRunAllocationFailures("print([1, 2, 3, 4].partition { n => n % 2 == 0 })\n");
+    try checkRunAllocationFailures("print([1, 2, 3].pairs())\n");
+    try checkRunAllocationFailures("print([1, 2].zip([\"a\", \"b\"]))\n");
+    // A dictionary's `(key, value)` entries.
+    try checkRunAllocationFailures("for (key, value) in [\"a\": 1, \"b\": 2] {\n    print(key)\n    print(value)\n}\n");
+    // A struct decoded from JSON and a `CsvError`.
+    try checkRunAllocationFailures(
+        \\struct Point {
+        \\    const x: Int
+        \\    const y: Int
+        \\}
+        \\print(Json.decode("{\"x\": 1, \"y\": 2}", as: Point))
+        \\
+    );
+    try checkRunAllocationFailures(
+        \\try {
+        \\    print(Csv.parse("a,b\n1", separator: ";;"))
+        \\}
+        \\catch error {
+        \\    print(error.message)
+        \\}
+        \\
+    );
+}
+
+test "a failed allocation in Json.parse or split frees what was built" {
+    try checkRunAllocationFailures("print(Json.parse(\"{\\\"a\\\": [1, 2]}\"))\n");
+    try checkRunAllocationFailures("print(\"a,b,c,d,e,f,g,h,i\".split(\",\"))\n");
+}
+
 fn expectProjectOutput(files: []const ProjectFile, expected: []const u8) !void {
     var project = try buildProject(testing.allocator, files);
     defer project.deinit(testing.allocator);

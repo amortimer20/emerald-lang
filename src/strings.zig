@@ -240,10 +240,10 @@ pub fn split(gpa: Allocator, haystack: []const u8, separator: []const u8) Alloca
     }
     var start: usize = 0;
     while (search.next(start)) |match| {
-        try pieces.append(gpa, try gpa.dupe(u8, h[start..match]));
+        try appendCopy(gpa, &pieces, h[start..match]);
         start = match + search.needle.bytes.len;
     }
-    try pieces.append(gpa, try gpa.dupe(u8, h[start..]));
+    try appendCopy(gpa, &pieces, h[start..]);
     return pieces.toOwnedSlice(gpa);
 }
 
@@ -269,6 +269,7 @@ pub fn lines(gpa: Allocator, bytes: []const u8) Allocator.Error![][]u8 {
 /// Each character, as slices of `bytes`. The caller owns the list.
 pub fn characters(gpa: Allocator, bytes: []const u8) Allocator.Error![][]const u8 {
     var pieces: std.ArrayList([]const u8) = .empty;
+    errdefer pieces.deinit(gpa);
     var clusters: unicode.Graphemes = .init(bytes);
     while (clusters.next()) |cluster| try pieces.append(gpa, cluster);
     return pieces.toOwnedSlice(gpa);
@@ -680,4 +681,17 @@ test "parsing takes the whole string and reports what went wrong" {
     try testing.expectEqual(ParseResult(f64){ .value = 3 }, parseFloat("3"));
     try testing.expectEqual(ParseResult(f64).malformed, parseFloat("3."));
     try testing.expectEqual(ParseResult(f64).out_of_range, parseFloat("1e999"));
+}
+
+test "characters and split free what they built when an allocation fails" {
+    const Work = struct {
+        fn attempt(gpa: Allocator) !void {
+            const each = try characters(gpa, "h\u{e9}llo, w\u{f6}rld, and more characters");
+            gpa.free(each);
+            const pieces = try split(gpa, "a,b,c,d,e,f,g,h,i,j,k,l", ",");
+            for (pieces) |piece| gpa.free(piece);
+            gpa.free(pieces);
+        }
+    };
+    try testing.checkAllAllocationFailures(testing.allocator, Work.attempt, .{});
 }
