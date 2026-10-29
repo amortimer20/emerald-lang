@@ -1,0 +1,3 @@
+Dog(name: "Rex", _secret: 7, breed: "lab")
+Point(x: 1, _tag: "p")
+[exit 0]
