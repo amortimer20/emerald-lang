@@ -4574,13 +4574,17 @@ fn removeChannelWaiter(waiters: *std.ArrayList(*ChannelWaiter), waiter: *Channel
     };
 }
 
-fn waitChannel(self: *Interpreter, span: Source.Span, channel: *ChannelRecord, sending: bool) Error!void {
+/// A hand-off commits the message (15.13): once `waiter` is delivered, its
+/// send or receive succeeds, and a cancellation that arrived meanwhile stays
+/// pending for the task's next suspension point.
+fn waitChannel(self: *Interpreter, span: Source.Span, channel: *ChannelRecord, sending: bool, waiter: *const ChannelWaiter) Error!void {
     try self.cancellationPoint(span);
     const task = self.task;
     task.state.job.?.wait_site = .{ .file = task.state.file, .start = span.start };
     defer task.state.job.?.wait_site = null;
     const progressed = self.scheduler.parkChannel(task.state.job.?, .{ .id = channel.id, .sending = sending });
     self.activateTask(task);
+    if (waiter.delivered) return;
     try self.cancellationPoint(span);
     if (!progressed) return self.raiseDeadlock(span);
 }
@@ -4611,7 +4615,7 @@ fn sendChannel(self: *Interpreter, span: Source.Span, channel: *ChannelRecord, v
     defer if (waiter.value) |pending| self.heap.release(pending);
     try channel.senders.append(self.gpa, &waiter);
     defer removeChannelWaiter(&channel.senders, &waiter);
-    try self.waitChannel(span, channel, true);
+    try self.waitChannel(span, channel, true, &.{ .job = waiter.job });
     if (!waiter.delivered) return self.raise(span, "cannot send to a closed channel", "Send values before closing the channel.");
 }
 
@@ -4653,7 +4657,7 @@ fn receiveChannel(self: *Interpreter, span: Source.Span, channel: *ChannelRecord
     defer if (waiter.value) |pending| self.heap.release(pending);
     try channel.receivers.append(self.gpa, &waiter);
     defer removeChannelWaiter(&channel.receivers, &waiter);
-    try self.waitChannel(span, channel, false);
+    try self.waitChannel(span, channel, false, &waiter);
     const value = waiter.value;
     waiter.value = null;
     return value;

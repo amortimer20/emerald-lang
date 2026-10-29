@@ -1,0 +1,4 @@
+receiver got 42
+receiver then: this task was cancelled
+buffered receiver got 43
+left in channel: nothing
