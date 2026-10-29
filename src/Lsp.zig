@@ -179,8 +179,10 @@ fn lspPosition(source: *const Source, offset: u32) Position {
 /// range — a client's position can be stale by one keystroke the moment a
 /// fast edit follows a request.
 fn offsetFromPosition(source: *const Source, position: Position) u32 {
-    const last_line = @as(u32, @intCast(source.line_starts.len));
-    const line = @min(position.line + 1, last_line);
+    // Clamped before the one-based shift, so even `line` 4294967295 cannot
+    // overflow: it lands on the last line, like any other line past the end.
+    const last_index = @as(u32, @intCast(source.line_starts.len - 1));
+    const line = @min(position.line, last_index) + 1;
     const line_start = source.line_starts[line - 1];
     const line_text = source.lineText(line);
 
@@ -386,11 +388,37 @@ fn pathToUri(gpa: std.mem.Allocator, path: []const u8) ![]u8 {
 
 /// Runs until `exit` or a clean end of the input stream (the client closed
 /// its side of stdio).
+///
+/// The server runs on a thread with the same reserved stack `check`, `run`,
+/// `format` and the REPL use. Its walks over the syntax tree (references,
+/// definition, hover, rename) recurse once per level, like the checker's,
+/// and the parser accepts expressions `Parser.max_expression_depth` deep: on
+/// the calling thread's stack, whose size is the host's choice, a program
+/// that checks could overflow it. A reserved stack is mapped lazily, so the
+/// unused part costs address space only.
 pub fn run(gpa: std.mem.Allocator, io: std.Io, in: *std.Io.Reader, out: *std.Io.Writer) !void {
     var server: Server = .{ .gpa = gpa, .io = io, .builtins = try emerald.Builtins.load(gpa) };
     defer server.deinit();
-    try runMessages(&server, gpa, in, out);
+    const Work = struct {
+        server: *Server,
+        gpa: std.mem.Allocator,
+        in: *std.Io.Reader,
+        out: *std.Io.Writer,
+        result: RunError!void = {},
+
+        fn go(work: *@This()) void {
+            work.result = runMessages(work.server, work.gpa, work.in, work.out);
+        }
+    };
+    var work: Work = .{ .server = &server, .gpa = gpa, .in = in, .out = out };
+    // The calling thread only waits, so nothing is touched from two threads.
+    const thread = emerald.Scheduler.ReservedThread.spawn(stack_size, Work.go, .{&work}) catch return error.StackUnavailable;
+    thread.join();
+    return work.result;
 }
+
+const stack_size: usize = if (@sizeOf(usize) >= 8) 1024 * 1024 * 1024 else 32 * 1024 * 1024;
+const RunError = @typeInfo(@typeInfo(@TypeOf(runMessages)).@"fn".return_type.?).error_union.error_set;
 
 fn runMessages(server: *Server, gpa: std.mem.Allocator, in: *std.Io.Reader, out: *std.Io.Writer) !void {
     while (true) {
@@ -406,12 +434,31 @@ fn runMessages(server: *Server, gpa: std.mem.Allocator, in: *std.Io.Reader, out:
 
         const should_exit = handle(server, gpa, parsed.value, out) catch |err| switch (err) {
             error.OutOfMemory, error.WriteFailed => |e| return e,
-            // A malformed or unexpected message is not fatal to the session;
-            // whatever request it was simply goes unanswered.
-            else => false,
+            // A malformed or unexpected message is not fatal to the session,
+            // but JSON-RPC 2.0 requires every request to be answered, or the
+            // client waits on its id forever. A notification has no id and
+            // gets nothing, as before.
+            else => |e| blk: {
+                if (requestId(parsed.value)) |id| {
+                    if (e == error.InvalidParams)
+                        try respondError(gpa, out, id, invalid_params_code, "invalid params")
+                    else
+                        try respondError(gpa, out, id, internal_error_code, "internal error");
+                }
+                break :blk false;
+            },
         };
         if (should_exit) break;
     }
+}
+
+/// The id of a request, or null for a notification (or a message too
+/// malformed to be either, which `handle` ignores without an error).
+fn requestId(message: std.json.Value) ?std.json.Value {
+    if (message != .object) return null;
+    const method = message.object.get("method") orelse return null;
+    if (method != .string) return null;
+    return message.object.get("id");
 }
 
 /// Backend-neutral protocol cases use the real framed-message server, not
@@ -2450,13 +2497,7 @@ fn onReferences(server: *Server, gpa: std.mem.Allocator, uri: []const u8, positi
     // prelude has no URI an editor can open, so its declaration itself cannot
     // become a Location; its references below still can.
     if (include_declaration and target.file < loaded.project.files.len) try sites.append(gpa, target);
-    // `analysis.parsed` ends with the embedded prelude. It participates in
-    // resolution, but it has no project URI, so references report only the
-    // project's real source files.
-    if (!try collectParameterSites(gpa, &analysis, target, &sites)) for (analysis.parsed[0..loaded.project.files.len], 0..) |parsed, file_index| {
-        try collectReferencesInUsings(gpa, &analysis, target, @intCast(file_index), parsed.program.using, &sites);
-        try collectReferencesInStatements(gpa, &analysis, target, @intCast(file_index), parsed.program.statements, &sites);
-    };
+    try collectProjectSites(gpa, &analysis, loaded.project.files.len, target, &sites);
 
     var locations: std.ArrayList(Location) = .empty;
     defer {
@@ -2489,6 +2530,25 @@ fn parameterAt(analysis: *const emerald.Analysis, file: u32, offset: u32) ?*cons
 
 fn parameterTarget(parameter: *const Type.Parameter) Resolver.Target {
     return .{ .file = parameter.file, .span = .{ .start = parameter.start, .end = parameter.end } };
+}
+
+/// Every site find references reports for `target`, in the project's own
+/// files only. `analysis.parsed` ends with the embedded prelude, which takes
+/// part in resolution but has no URI: walking it could report a site past
+/// `project.files` (a prelude `String` annotation read as a user's
+/// `struct String`), which no caller can turn into a location or an edit.
+fn collectProjectSites(
+    gpa: std.mem.Allocator,
+    analysis: *const emerald.Analysis,
+    project_files: usize,
+    target: Resolver.Target,
+    sites: *std.ArrayList(Resolver.Target),
+) !void {
+    if (try collectParameterSites(gpa, analysis, target, sites)) return;
+    for (analysis.parsed[0..project_files], 0..) |parsed, file_index| {
+        try collectReferencesInUsings(gpa, analysis, target, @intCast(file_index), parsed.program.using, sites);
+        try collectReferencesInStatements(gpa, analysis, target, @intCast(file_index), parsed.program.statements, sites);
+    }
 }
 
 /// When `target` is a type parameter's name in its `[T]` list, adds every
@@ -2934,10 +2994,7 @@ fn onPrepareRename(server: *Server, gpa: std.mem.Allocator, uri: []const u8, pos
     var sites: std.ArrayList(Resolver.Target) = .empty;
     defer sites.deinit(gpa);
     try sites.append(gpa, target);
-    if (!try collectParameterSites(gpa, &analysis, target, &sites)) for (analysis.parsed, 0..) |parsed, file_index| {
-        try collectReferencesInUsings(gpa, &analysis, target, @intCast(file_index), parsed.program.using, &sites);
-        try collectReferencesInStatements(gpa, &analysis, target, @intCast(file_index), parsed.program.statements, &sites);
-    };
+    try collectProjectSites(gpa, &analysis, loaded.project.files.len, target, &sites);
 
     for (sites.items) |site| {
         if (site.file == loaded.index and offset >= site.span.start and offset <= site.span.end) {
@@ -2989,10 +3046,7 @@ fn onRename(server: *Server, gpa: std.mem.Allocator, uri: []const u8, position: 
     var sites: std.ArrayList(Resolver.Target) = .empty;
     defer sites.deinit(gpa);
     try sites.append(gpa, target);
-    if (!try collectParameterSites(gpa, &analysis, target, &sites)) for (analysis.parsed, 0..) |parsed, file_index| {
-        try collectReferencesInUsings(gpa, &analysis, target, @intCast(file_index), parsed.program.using, &sites);
-        try collectReferencesInStatements(gpa, &analysis, target, @intCast(file_index), parsed.program.statements, &sites);
-    };
+    try collectProjectSites(gpa, &analysis, loaded.project.files.len, target, &sites);
 
     var by_file: std.AutoArrayHashMapUnmanaged(u32, std.ArrayList(TextEdit)) = .empty;
     defer {
@@ -3047,6 +3101,9 @@ const WorkspaceEdit = struct { changes: std.json.ArrayHashMap([]const TextEdit) 
 /// declines: an unrenameable name is as much an invalid request as a
 /// malformed one, and LSP defines no rename-specific code.
 const invalid_params_code: i32 = -32602;
+/// JSON-RPC's "internal error", for a request whose handling failed other
+/// than by malformed params, so that it is still answered.
+const internal_error_code: i32 = -32603;
 
 /// Whether `name` could be lexed back as a single identifier token — the
 /// same rule `Lexer.lexIdentifier` uses (Unicode's XID classes, with a
@@ -4753,6 +4810,99 @@ test "a framed message round-trips through reading and writing" {
     try testing.expectEqual(@as(i64, 7), parsed.value.object.get("id").?.integer);
 }
 
+test "the server answers on expressions as deep as the parser accepts" {
+    const gpa = testing.allocator;
+    const io = std.Io.Threaded.global_single_threaded.io();
+    // Thousands of nested unaries, then a use: references walk the whole
+    // initializer, and definition descends into it, one frame per level,
+    // which overflowed the calling thread's stack in a Debug build.
+    const depth = 9_000;
+    var text: std.ArrayList(u8) = .empty;
+    defer text.deinit(gpa);
+    try text.appendSlice(gpa, "var x = ");
+    try text.appendNTimes(gpa, '-', depth);
+    try text.appendSlice(gpa, "1\nprint(x)\n");
+    const uri = "untitled:deep-expression.em";
+    var requests: std.Io.Writer.Allocating = .init(gpa);
+    defer requests.deinit();
+    try writeMessage(gpa, &requests.writer, .{ .jsonrpc = "2.0", .id = 0, .method = "initialize", .params = .{} });
+    try writeMessage(gpa, &requests.writer, .{ .jsonrpc = "2.0", .method = "textDocument/didOpen", .params = .{
+        .textDocument = .{ .uri = uri, .languageId = "emerald", .version = 1, .text = text.items },
+    } });
+    try writeMessage(gpa, &requests.writer, .{ .jsonrpc = "2.0", .id = 1, .method = "textDocument/references", .params = .{
+        .textDocument = .{ .uri = uri },
+        .position = Position{ .line = 1, .character = 6 },
+        .context = .{ .includeDeclaration = true },
+    } });
+    try writeMessage(gpa, &requests.writer, .{ .jsonrpc = "2.0", .id = 2, .method = "textDocument/definition", .params = .{
+        .textDocument = .{ .uri = uri },
+        .position = Position{ .line = 0, .character = 8 + depth / 2 },
+    } });
+    try writeMessage(gpa, &requests.writer, .{ .jsonrpc = "2.0", .method = "exit" });
+    var reader: std.Io.Reader = .fixed(requests.written());
+    var responses: std.Io.Writer.Allocating = .init(gpa);
+    defer responses.deinit();
+    try run(gpa, io, &reader, &responses.writer);
+
+    reader = .fixed(responses.written());
+    var answered: [3]bool = @splat(false);
+    while (try readMessage(gpa, &reader)) |value| {
+        var parsed = value;
+        defer parsed.deinit();
+        const id = parsed.value.object.get("id") orelse continue;
+        try testing.expect(parsed.value.object.get("result") != null);
+        answered[@intCast(id.integer)] = true;
+        // The declaration and the one read.
+        if (id.integer == 1) try testing.expectEqual(@as(usize, 2), parsed.value.object.get("result").?.array.items.len);
+    }
+    try testing.expectEqual([3]bool{ true, true, true }, answered);
+}
+
+test "a request with malformed params is answered with invalid params, a notification is not" {
+    const gpa = testing.allocator;
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const uri = "untitled:malformed.em";
+    const bodies = [_][]const u8{
+        "{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"initialize\",\"params\":{}}",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" ++ uri ++ "\",\"languageId\":\"emerald\",\"version\":1,\"text\":\"var x = 1\\n\"}}}",
+        // A negative line, a fractional character, no params, null params,
+        // rename with no `newName`, and one whose `newName` is a number.
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":{\"uri\":\"" ++ uri ++ "\"},\"position\":{\"line\":-1,\"character\":0}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/definition\",\"params\":{\"textDocument\":{\"uri\":\"" ++ uri ++ "\"},\"position\":{\"line\":0,\"character\":1.5}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/hover\"}",
+        "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"textDocument/completion\",\"params\":null}",
+        "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"textDocument/rename\",\"params\":{\"textDocument\":{\"uri\":\"" ++ uri ++ "\"},\"position\":{\"line\":0,\"character\":4}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":\"six\",\"method\":\"textDocument/rename\",\"params\":{\"textDocument\":{\"uri\":\"" ++ uri ++ "\"},\"position\":{\"line\":0,\"character\":4},\"newName\":6}}",
+        // A malformed notification still gets no reply.
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{}}",
+    };
+    var requests: std.Io.Writer.Allocating = .init(gpa);
+    defer requests.deinit();
+    for (bodies) |body| try requests.writer.print("Content-Length: {d}\r\n\r\n{s}", .{ body.len, body });
+    var reader: std.Io.Reader = .fixed(requests.written());
+    var responses: std.Io.Writer.Allocating = .init(gpa);
+    defer responses.deinit();
+    var server: Server = .{ .gpa = gpa, .io = io };
+    defer server.deinit();
+    try runMessages(&server, gpa, &reader, &responses.writer);
+
+    reader = .fixed(responses.written());
+    var initialized = (try readMessage(gpa, &reader)).?;
+    defer initialized.deinit();
+    var published = (try readMessage(gpa, &reader)).?;
+    defer published.deinit();
+    for ([_][]const u8{ "1", "2", "3", "4", "5", "\"six\"" }) |expected_id| {
+        var reply = (try readMessage(gpa, &reader)) orelse return error.TestExpectedReply;
+        defer reply.deinit();
+        const id = try std.json.Stringify.valueAlloc(gpa, reply.value.object.get("id").?, .{});
+        defer gpa.free(id);
+        try testing.expectEqualStrings(expected_id, id);
+        const code = reply.value.object.get("error").?.object.get("code").?.integer;
+        try testing.expectEqual(@as(i64, invalid_params_code), code);
+    }
+    try testing.expectEqual(@as(?std.json.Parsed(std.json.Value), null), try readMessage(gpa, &reader));
+}
+
 test "reading stops cleanly at the end of input" {
     const gpa = testing.allocator;
     var reader: std.Io.Reader = .fixed("");
@@ -4851,6 +5001,13 @@ test "offsetFromPosition is lspPosition's inverse, including astral scalars" {
     // than indexing out of range.
     try testing.expectEqual(@as(u32, 7), offsetFromPosition(&source, .{ .line = 1, .character = 0 }));
     try testing.expectEqual(@as(u32, 18), offsetFromPosition(&source, .{ .line = 1, .character = 999 }));
+    // Any line past the end clamps to the last (empty) one, up to the
+    // largest `u32` a client can send, and any character to its end.
+    const end: u32 = @intCast(source.text.len);
+    try testing.expectEqual(end, offsetFromPosition(&source, .{ .line = 2, .character = 0 }));
+    try testing.expectEqual(end, offsetFromPosition(&source, .{ .line = std.math.maxInt(u32), .character = 0 }));
+    try testing.expectEqual(end, offsetFromPosition(&source, .{ .line = std.math.maxInt(u32), .character = std.math.maxInt(u32) }));
+    try testing.expectEqual(@as(u32, 18), offsetFromPosition(&source, .{ .line = 1, .character = std.math.maxInt(u32) }));
 }
 
 test "uriToPath percent-decodes and strips a Windows drive letter's extra slash" {
@@ -5474,6 +5631,40 @@ test "references returns project uses of an embedded prelude declaration" {
     const start = locations[0].object.get("range").?.object.get("start").?.object;
     try testing.expectEqual(@as(i64, 0), start.get("line").?.integer);
     try testing.expectEqual(@as(i64, 15), start.get("character").?.integer);
+}
+
+test "rename edits a declaration named like a built-in, not the prelude's uses of that name" {
+    const gpa = testing.allocator;
+    var server: Server = .{ .gpa = gpa, .io = std.Io.Threaded.global_single_threaded.io() };
+    defer server.deinit();
+    const cases = [_]struct { text: []const u8, position: Position }{
+        // The prelude writes `String` in its own annotations.
+        .{ .text = "struct String {\n}\n", .position = .{ .line = 0, .character = 7 } },
+        // ...and calls `print`.
+        .{ .text = "func print() {\n}\nprint()\n", .position = .{ .line = 0, .character = 5 } },
+    };
+    for (cases) |case| {
+        const uri = "untitled:rename-builtin-name.em";
+        try server.store(uri, case.text);
+        var out: std.Io.Writer.Allocating = .init(gpa);
+        defer out.deinit();
+        try onRename(&server, gpa, uri, case.position, "Renamed", .{ .integer = 1 }, &out.writer);
+        var reader: std.Io.Reader = .fixed(out.written());
+        var response = (try readMessage(gpa, &reader)).?;
+        defer response.deinit();
+        const changes = response.value.object.get("result").?.object.get("changes").?.object;
+        // Only the open document is edited, at each of its own sites.
+        try testing.expectEqual(@as(usize, 1), changes.count());
+        const edits = changes.get(uri).?.array.items;
+        try testing.expectEqual(std.mem.count(u8, case.text, if (case.position.character == 7) "String" else "print"), edits.len);
+
+        out.clearRetainingCapacity();
+        try onPrepareRename(&server, gpa, uri, case.position, .{ .integer = 2 }, &out.writer);
+        reader = .fixed(out.written());
+        var prepared = (try readMessage(gpa, &reader)).?;
+        defer prepared.deinit();
+        try testing.expect(prepared.value.object.get("result").? == .object);
+    }
 }
 
 test "isValidIdentifier accepts an ordinary name, a predicate name, and an accented one" {
