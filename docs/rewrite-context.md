@@ -3596,7 +3596,8 @@ message. `close()` is idempotent: buffered messages remain available, closed-and
 receives return `nothing`, and sends not already committed raise RuntimeError with
 `cannot send to a closed channel`. A hand-off commits a message: once a send has
 been handed to a waiting receiver, that receiver gets the value even if it is cancelled
-before it resumes, and observes the cancellation at its next suspension point. Negative capacity raises RuntimeError with
+before it resumes, and observes the cancellation at its next suspension point. Likewise a sender whose value a receiver took has
+sent it: that send returns normally, and the cancellation waits for the next suspension point. Negative capacity raises RuntimeError with
 `a channel capacity cannot be negative`. An optional item type is a checking error:
 `a channel's items can't be optional`, with help to wrap the value in a struct. Struct
 fields may be optional without confusing a message with closure. `for item in channel`

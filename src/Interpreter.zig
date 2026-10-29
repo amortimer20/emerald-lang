@@ -4615,7 +4615,7 @@ fn sendChannel(self: *Interpreter, span: Source.Span, channel: *ChannelRecord, v
     defer if (waiter.value) |pending| self.heap.release(pending);
     try channel.senders.append(self.gpa, &waiter);
     defer removeChannelWaiter(&channel.senders, &waiter);
-    try self.waitChannel(span, channel, true, &.{ .job = waiter.job });
+    try self.waitChannel(span, channel, true, &waiter);
     if (!waiter.delivered) return self.raise(span, "cannot send to a closed channel", "Send values before closing the channel.");
 }
 
