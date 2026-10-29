@@ -56,7 +56,8 @@ malformed editor request.
 | B13 | `TZ` set to a zone name ignores Emerald's built-in zone database; the local zone's name is not normalized | 5.Z1–Z2 |
 | B14 | The formatter keeps a byte-order mark and a CRLF comment's `\r`; the language server's formatting disagrees with `emerald format` on both | 3.5–3.6, 2.6–2.7 |
 | B15 | **A regression of mine (PR #52):** running another file than `main.em` describes the project's `main.em` as a copied library's demo | 3.13 |
-| B16 | `Path` on Windows: `join` uses `/` while the other functions follow the host (predicted; confirm with the Windows run) | 5.P1–P2 |
+| B16 | `Path` on Windows: `join` uses `/` while the other functions follow the host; **confirmed on Windows** (2026-10-29) | 5.P1–P2 |
+| B17 | Unicode output is mojibake in a Windows console with the default code page (`print("é")` shows `├⌐`); arguments and environment are read correctly. Found in the Windows run (2026-10-29) | Windows run |
 
 ## C. Diagnostics: fix in two batches, no decision needed
 
