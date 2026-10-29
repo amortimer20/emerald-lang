@@ -1230,7 +1230,10 @@ fn joinPath(self: *Resolver, path: []const []const u8) Error![]const u8 {
 fn checkModuleFile(self: *Resolver, statements: []const Ast.Statement, path: []const u8) Error!void {
     // A `main.em` below the top is most often a copied library's own demo
     // (14.4), and "move this into `main.em`" would name the file it is in.
-    const nested_main = std.mem.eql(u8, std.fs.path.basename(path), "main.em");
+    // Only a `main.em` in a folder below the entry's own is one: the
+    // project's `main.em` beside another chosen entry is just not running.
+    const same_folder = std.mem.eql(u8, std.fs.path.dirname(path) orelse "", std.fs.path.dirname(self.entry_path) orelse "");
+    const nested_main = std.mem.eql(u8, std.fs.path.basename(path), "main.em") and !same_folder;
     for (statements) |statement| switch (statement.data) {
         .function_declaration, .struct_declaration => {},
         .destructuring => {},
