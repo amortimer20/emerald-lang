@@ -1,0 +1,4 @@
+diagnostics/backslash-continuation.em:2:19: this character does not belong here
+  const total = 1 + \
+                    ^
+Remove it, or check for a typo nearby.

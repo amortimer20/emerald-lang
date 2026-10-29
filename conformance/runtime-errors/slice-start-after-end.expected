@@ -1,0 +1,4 @@
+runtime-errors/slice-start-after-end.em:5:7: slice start 3 comes after its end 1
+  print(items[start..<1])
+        ^^^^^^^^^^^^^^^^
+Write the start at or before the end.

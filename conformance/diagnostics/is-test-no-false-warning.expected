@@ -1,0 +1,4 @@
+diagnostics/is-test-no-false-warning.em:30:11: warning: this `is` test always answers `false`
+      print(robot is Rock)
+            ^^^^^^^^^^^^^
+These classes are not related, so no value of one can also be the other. Remove the test, or check a related class.

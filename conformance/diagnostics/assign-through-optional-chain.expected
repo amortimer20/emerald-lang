@@ -1,0 +1,4 @@
+diagnostics/assign-through-optional-chain.em:8:1: this is User?, so there may be nothing to assign into
+  user?.name = "Bo"
+  ^^^^^^^^^^
+Check it first with `if user != nothing { ... }`.

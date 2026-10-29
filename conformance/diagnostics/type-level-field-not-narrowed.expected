@@ -1,0 +1,4 @@
+diagnostics/type-level-field-not-narrowed.em:9:16: this is String?, but the function returns String
+          return Session.current
+                 ^^^^^^^^^^^^^^^
+Return a value of the declared type, or convert it first.

@@ -1,0 +1,4 @@
+diagnostics/trait-changing-default-on-struct.em:20:1: `Counter.bump` changes the value it runs on, so it cannot be called this way yet
+  Counter.bump(tally)
+  ^^^^^^^^^^^^
+Call it as a method instead, as in `value.bump()`.

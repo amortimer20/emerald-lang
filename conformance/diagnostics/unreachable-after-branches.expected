@@ -1,0 +1,8 @@
+diagnostics/unreachable-after-branches.em:10:5: warning: this code can never run
+      print("after if")
+      ^^^^^^^^^^^^^^^^^
+Every path above it already returns, raises, breaks, or continues. Remove it, or move it earlier.
+diagnostics/unreachable-after-branches.em:23:5: warning: this code can never run
+      print("after case")
+      ^^^^^^^^^^^^^^^^^^^
+Every path above it already returns, raises, breaks, or continues. Remove it, or move it earlier.

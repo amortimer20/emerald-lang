@@ -1,0 +1,4 @@
+diagnostics/trait-conflict-reported-once.em:15:7: `Moody` gets `speak` from both `Loud` and `Quiet`, and trait order does not choose
+  trait Moody with Loud, Quiet {
+        ^^^^^
+Give `Moody` its own `speak` marked `@override`. It can run either version, as in `Loud.speak(self)`.

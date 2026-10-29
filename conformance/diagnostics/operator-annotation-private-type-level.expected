@@ -1,0 +1,4 @@
+diagnostics/operator-annotation-private-type-level.em:6:5: `@operator` cannot mark a type-level function
+      @operator("+")
+      ^^^^^^^^^^^^^^
+Put it on an instance method, reached through a value on the left of the operator.

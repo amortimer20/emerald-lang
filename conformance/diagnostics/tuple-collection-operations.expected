@@ -1,0 +1,8 @@
+diagnostics/tuple-collection-operations.em:3:12: (Int, Int) has no method `map`
+  print(pair.map { item => item })
+             ^^^
+Check the spelling, or what kind of value this is.
+diagnostics/tuple-collection-operations.em:4:12: a tuple has no `count`
+  print(pair.count)
+             ^^^^^
+Its size is fixed where it is written. Reach its positions with `.0` through `.1`.

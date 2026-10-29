@@ -1,0 +1,8 @@
+diagnostics/set-comparison-operators.em:4:7: `<` needs numbers, but these are Set[Int] values
+  print(small < large)
+        ^^^^^^^^^^^^^
+Only numbers and Strings are ordered. Use `==` or `!=` to compare other values.
+diagnostics/set-comparison-operators.em:5:7: `<=` needs numbers, but these are Set[Int] values
+  print(small <= large)
+        ^^^^^^^^^^^^^^
+Only numbers and Strings are ordered. Use `==` or `!=` to compare other values.

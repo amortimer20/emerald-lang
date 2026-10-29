@@ -1,0 +1,4 @@
+diagnostics/private-keyword.em:3:5: expected `var` or `const` for a stored field, found a name
+      private var balance: Int = 0
+      ^^^^^^^
+A stored field makes its binding visible, as in `var x: Float`.

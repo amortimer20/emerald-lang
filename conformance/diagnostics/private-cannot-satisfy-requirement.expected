@@ -1,0 +1,12 @@
+diagnostics/private-cannot-satisfy-requirement.em:8:8: `Robot` does not supply `name`, which the trait `Named` requires
+  struct Robot with Named {
+         ^^^^^
+Add `const name: String` to `Robot`, as a field or a property.
+diagnostics/private-cannot-satisfy-requirement.em:8:8: `Robot` does not supply `greet`, which the trait `Named` requires
+  struct Robot with Named {
+         ^^^^^
+Add `@override func greet(...)` with a body to `Robot`.
+diagnostics/private-cannot-satisfy-requirement.em:12:10: `_greet` does not override anything
+      func _greet(): String {
+           ^^^^^^
+Nothing `Robot` extends or adopts has a method named `_greet` to replace. Check the name, or remove `@override`.

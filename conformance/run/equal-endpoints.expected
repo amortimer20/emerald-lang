@@ -1,0 +1,8 @@
+range 3
+up_to 3
+down_to 3
+reverse 3
+step 3
+up_to block 3
+down_to block 3
+1 0 true

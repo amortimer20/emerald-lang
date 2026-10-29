@@ -1,0 +1,3 @@
+Http can only use http:// and https:// addresses, not `ftp://example.com/file`
+Http can only use http:// and https:// addresses, not `file:///etc/hosts`
+`example.com` is not a web address; write the whole address, as in `https://example.com/weather`

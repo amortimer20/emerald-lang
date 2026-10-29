@@ -1,0 +1,4 @@
+diagnostics/implicit-nothing-return.em:3:6: the return type of `first_even` is ambiguous
+  func first_even(numbers: List[Int]) {
+       ^^^^^^^^^^
+Add an explicit return type; this function returns more than one kind of value.

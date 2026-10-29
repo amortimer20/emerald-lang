@@ -1,0 +1,4 @@
+diagnostics/nested-self-is-nested-type.em:13:22: this is Theme.Pair, but `theme` was declared as Theme
+  const theme: Theme = Theme.Pair(left: 1).copy()
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^
+Give the declaration the type of its value, or convert the value to match.

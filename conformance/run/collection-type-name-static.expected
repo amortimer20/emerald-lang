@@ -1,0 +1,4 @@
+List[Animal]
+Dog
+Dict[String, Animal]
+(Dog, Int)
