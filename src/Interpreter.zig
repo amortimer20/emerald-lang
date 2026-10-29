@@ -750,7 +750,7 @@ pub const Session = struct {
                 interpreter.task.state.return_value = null;
                 return .complete;
             },
-            error.Exited => return .{ .exited = interpreter.task.state.exit_code orelse 0 },
+            error.Exited => return .{ .exited = interpreter.root_task.state.exit_code orelse 0 },
             error.Broke, error.Continued => unreachable,
             else => |other| return other,
         };
@@ -1052,7 +1052,7 @@ pub fn run(
                         interpreter.task.state.failure = null;
                         continue;
                     },
-                    error.Exited => return .{ .arena_state = arena_state, .shared_allocator = shared_allocator, .failure = null, .test_failures = failures.items, .test_count = count, .exit_code = interpreter.task.state.exit_code },
+                    error.Exited => return .{ .arena_state = arena_state, .shared_allocator = shared_allocator, .failure = null, .test_failures = failures.items, .test_count = count, .exit_code = interpreter.root_task.state.exit_code },
                     error.StepLimit => return .{ .arena_state = arena_state, .shared_allocator = shared_allocator, .failure = interpreter.task.state.failure, .test_failures = failures.items, .test_count = count },
                     error.Returned, error.Broke, error.Continued => unreachable,
                     else => |other| return other,
@@ -1077,7 +1077,7 @@ pub fn run(
     };
 
     const failure = interpreter.task.state.failure;
-    return .{ .arena_state = arena_state, .shared_allocator = shared_allocator, .failure = failure, .exit_code = interpreter.task.state.exit_code };
+    return .{ .arena_state = arena_state, .shared_allocator = shared_allocator, .failure = failure, .exit_code = interpreter.root_task.state.exit_code };
 }
 
 /// Completes a class's descriptor with what it inherits, its base classes'
@@ -4770,7 +4770,9 @@ fn callBuiltin(self: *Interpreter, expression: *const Ast.Expression, call: Ast.
     if (std.mem.eql(u8, name, "exit")) {
         const code: i64 = if (call.arguments.len == 0) 0 else (try self.evaluate(call.arguments[0])).data.int;
         if (code < 0 or code > 255) return self.raiseFmt(expression.span, "`exit` cannot use status {d}", .{code}, "Pass a whole number from 0 through 255.");
-        self.task.state.exit_code = @intCast(code);
+        // The status belongs to the program, not to the task that asked:
+        // a child's `exit` ends the whole run (15.2, 15.13).
+        self.root_task.state.exit_code = @intCast(code);
         return error.Exited;
     }
     if (std.mem.eql(u8, name, "print_error")) return self.evaluatePrintError(call);

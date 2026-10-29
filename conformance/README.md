@@ -16,7 +16,7 @@ project files, to catch formatting that breaks valid syntax. No cases are exclud
 | --- | --- |
 | `lexical/` | The program tokenizes with no diagnostics. |
 | `diagnostics/` | `check` reports exactly the text in its `.expected` file. |
-| `run/` | The program runs and prints exactly its `.expected` file. |
+| `run/` | The program runs and prints exactly its `.expected` file; with a `.status` file beside it, it must also end with that process status. |
 | `color/` | The program runs with Console ANSI styling forced on. |
 | `http/` | The program runs against a local HTTP server; its base address is `Program.arguments[0]`. |
 | `local-zone/` | The program runs with `TimeZone.local` set to `EST5EDT`, the United States' Eastern rules, so changes of clocks are the same everywhere. |

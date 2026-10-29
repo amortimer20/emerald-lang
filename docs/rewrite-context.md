@@ -3005,7 +3005,8 @@ with 14.2's warning.
 
 `exit()` ends the program successfully; `exit(code)` uses a process status from `0` through
 `255`. Other status values are diagnosed. `exit` unwinds pending `finally` blocks but is not
-caught as an error.
+caught as an error. The status belongs to the program: `exit(code)` inside a task ends the
+whole program with that code, as 15.13 describes.
 Reaching the end of the entry file exits successfully; an uncaught error uses a nonzero
 status.
 
