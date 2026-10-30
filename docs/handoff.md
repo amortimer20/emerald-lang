@@ -7,6 +7,16 @@ belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 
 ## Current status
 
+**Where things stand (2026-10-29, paused by the user):** `v0.8.0-rc1` is published as a
+prerelease (tag on `73b9b19`, all three assets, install scripts checked). The codebase review
+(roadmap item 10) has reported and been triaged in [`review/triage.md`](review/triage.md), with
+every decision accepted. Fix batch 1 is merged (PRs #57–#61: crashes, `exit()` in tasks, the
+language server, allocation failures). **Next:** batch 2, the remaining wrong answers (B4–B14,
+B16, B17 with D1, D3, D6), then the spec corrections and contract (E, D2, D8), then diagnostics
+(C, D4, D5); the user asked for Sonnet subagents for this work to spare usage. Open from batch 1:
+two allocation-failure programs (`min_max`, a caught index error) used memory nondeterministically,
+not investigated. Then roadmap item 11's plan, and the compiler.
+
 The Zig rewrite implements the current rewrite-context language surface: control flow,
 functions, optionals, collections, Unicode strings, structs, classes, inheritance, traits,
 enums, typed errors, projects/namespaces, ranges and slicing. The formatter and persistent-session
