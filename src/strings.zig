@@ -207,43 +207,50 @@ pub fn indexOf(gpa: Allocator, haystack: []const u8, needle: []const u8) Allocat
     return index;
 }
 
-pub fn replace(gpa: Allocator, haystack: []const u8, old: []const u8, new: []const u8) Allocator.Error![]u8 {
-    var search = try Search.init(gpa, haystack, old);
-    defer search.deinit(gpa);
-    const h = search.haystack.bytes;
+/// The first canonical match at or after `from`, a character boundary of
+/// `haystack`, reported in the original text. `count` is the needle's length in
+/// characters, which is at least one.
+fn nextMatch(gpa: Allocator, haystack: []const u8, from: usize, needle: []const u8, count: usize) Allocator.Error!?Match {
+    var clusters: unicode.Graphemes = .init(haystack[from..]);
+    var start = from;
+    while (true) {
+        const end = endAfter(haystack, start, count) orelse return null;
+        if (try unicode.equal(gpa, haystack[start..end], needle)) return .{ .start = start, .end = end };
+        const character = clusters.next() orelse return null;
+        start += character.len;
+    }
+}
 
+pub fn replace(gpa: Allocator, haystack: []const u8, old: []const u8, new: []const u8) Allocator.Error![]u8 {
+    const count = unicode.graphemeCount(old);
     var result: std.ArrayList(u8) = .empty;
     errdefer result.deinit(gpa);
     var copied: usize = 0;
-    var from: usize = 0;
-    while (search.next(from)) |match| {
-        try result.appendSlice(gpa, h[copied..match]);
+    while (try nextMatch(gpa, haystack, copied, old, count)) |match| {
+        try result.appendSlice(gpa, haystack[copied..match.start]);
         try result.appendSlice(gpa, new);
-        copied = match + search.needle.bytes.len;
-        from = copied;
+        copied = match.end;
     }
-    try result.appendSlice(gpa, h[copied..]);
+    try result.appendSlice(gpa, haystack[copied..]);
     return result.toOwnedSlice(gpa);
 }
 
 /// The pieces between occurrences of `separator`, which is not empty. Each
-/// piece is owned by the caller, as is the list.
+/// piece keeps the receiver's original bytes and is owned by the caller, as is
+/// the list.
 pub fn split(gpa: Allocator, haystack: []const u8, separator: []const u8) Allocator.Error![][]u8 {
-    var search = try Search.init(gpa, haystack, separator);
-    defer search.deinit(gpa);
-    const h = search.haystack.bytes;
-
+    const count = unicode.graphemeCount(separator);
     var pieces: std.ArrayList([]u8) = .empty;
     errdefer {
         for (pieces.items) |piece| gpa.free(piece);
         pieces.deinit(gpa);
     }
     var start: usize = 0;
-    while (search.next(start)) |match| {
-        try appendCopy(gpa, &pieces, h[start..match]);
-        start = match + search.needle.bytes.len;
+    while (try nextMatch(gpa, haystack, start, separator, count)) |match| {
+        try appendCopy(gpa, &pieces, haystack[start..match.start]);
+        start = match.end;
     }
-    try appendCopy(gpa, &pieces, h[start..]);
+    try appendCopy(gpa, &pieces, haystack[start..]);
     return pieces.toOwnedSlice(gpa);
 }
 
@@ -575,6 +582,22 @@ test "split, replace, and lines" {
     }
     try testing.expectEqual(@as(usize, 2), text_lines.len);
     try testing.expectEqualStrings("one", text_lines[0]);
+}
+
+test "split and replace keep the receiver's original bytes" {
+    const decomposed = "cafe\u{301} x";
+    const pieces = try split(std.testing.allocator, decomposed, "x");
+    defer {
+        for (pieces) |piece| std.testing.allocator.free(piece);
+        std.testing.allocator.free(pieces);
+    }
+    try std.testing.expectEqualStrings("cafe\u{301} ", pieces[0]);
+    const replaced = try replace(std.testing.allocator, decomposed, "x", "y");
+    defer std.testing.allocator.free(replaced);
+    try std.testing.expectEqualStrings("cafe\u{301} y", replaced);
+    const untouched = try replace(std.testing.allocator, "cafe\u{301}", "q", "y");
+    defer std.testing.allocator.free(untouched);
+    try std.testing.expectEqualStrings("cafe\u{301}", untouched);
 }
 
 test "character tests ask about every character, and need at least one" {

@@ -9388,6 +9388,33 @@ fn callMapTransform(
         const key = if (changing) widen(produced, key_kind) else widen(Heap.retain(entry.key), key_kind);
         const value = if (changing) widen(Heap.retain(entry.value), value_kind) else widen(produced, value_kind);
         const hash = try self.hashKey(member.name_span, key);
+        if (changing) {
+            // Two entries must not collapse into one: the result would be
+            // smaller than the receiver and one value would vanish silently.
+            if (try Heap.lookupIn(self.gpa, result, hash, key, self.equatable(member.name_span))) |_| {
+                var first: ?Value = null;
+                for (result.entries.items, 0..) |existing, at| {
+                    if (existing.hash == hash and try Value.equals(self.gpa, existing.key, key, self.equatable(member.name_span))) {
+                        first = map.entries.items[at].key;
+                        break;
+                    }
+                }
+                var one: std.Io.Writer.Allocating = .init(self.arena);
+                var two: std.Io.Writer.Allocating = .init(self.arena);
+                var made: std.Io.Writer.Allocating = .init(self.arena);
+                if (first) |f| f.write(&one.writer, true) catch return error.OutOfMemory;
+                entry.key.write(&two.writer, true) catch return error.OutOfMemory;
+                key.write(&made.writer, true) catch return error.OutOfMemory;
+                self.heap.release(value);
+                self.heap.release(key);
+                return self.raiseFmt(
+                    member.name_span,
+                    "`map_keys` made the keys {s} and {s} the same key, {s}",
+                    .{ one.written(), two.written(), made.written() },
+                    "Each key must come out different, or the dictionary would lose an entry. Change the block, or build the dictionary with `associate` to let a later value replace an earlier one.",
+                );
+            }
+        }
         try self.heap.put(result, hash, key, value, self.equatable(member.name_span));
     }
     return .{ .data = .{ .map = result } };

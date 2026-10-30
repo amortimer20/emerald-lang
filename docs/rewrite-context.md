@@ -1482,7 +1482,10 @@ natural applicability and exact return-type review:
 - conversion: `to_list`, `to_set`, `to_dictionary`.
 
 Dictionary-specific transformation includes `map_keys`, `map_values`, and tuple-aware
-`filter`. Sequence-to-dictionary construction includes `associate` and `associate_by`.
+`filter`. When `map_keys` produces the same key for two entries, it raises an error naming
+both original keys and the key they collide on, since the result would otherwise be smaller
+than the receiver; `associate` is the way to let a later value replace an earlier one.
+Sequence-to-dictionary construction includes `associate` and `associate_by`.
 Set operations use the explicit names `union`, `intersection`, `difference`,
 `symmetric_difference`, `subset?`, `superset?`, and `disjoint?`; comparison operators do
 not stand for subset relationships.
@@ -2994,7 +2997,9 @@ A line that is not valid UTF-8 also raises, so every `String` holds Unicode text
 `print` and `write` accept zero or more ordinary values through their display
 representation. Multiple arguments evaluate left to right and are separated by one space.
 A string displays as its text. Inside a collection it displays quoted, with escapes where
-needed, so `["a, b"]` and `["a", "b"]` cannot be mistaken for each other.
+needed, so `["a, b"]` and `["a", "b"]` cannot be mistaken for each other. The quoted form
+reads back as the same text: `"`, `\`, and `#{` are escaped, `\n`, `\t`, `\r`, and `\0` use their
+escapes, and any other control character is written `\u{...}`.
 `print` appends a newline; `write` does not. Separator customization is deferred, and
 interpolation remains the primary way to construct deliberate prose.
 

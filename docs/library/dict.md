@@ -95,7 +95,10 @@ position but takes `other`'s value.
 
 **Callback.** Each transforms one side of every entry, run once per entry in insertion order,
 producing a new `Dict` the same size as the receiver. `map_keys`' produced keys must still be
-eligible; a block producing `Nothing` is rejected, since there would be nothing to collect.
+eligible, and two entries must not produce the same key: that raises an error naming both
+original keys and the key they collide on, rather than silently dropping an entry (use
+`associate` when a later value should replace an earlier one); a block producing `Nothing`
+is rejected, since there would be nothing to collect.
 
 ## filter { (key, value) => ... } -> Dict[K, V]
 

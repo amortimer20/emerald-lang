@@ -1,0 +1,4 @@
+runtime-errors/map-keys-collision.em:4:14: `map_keys` made the keys "ann" and "bob" the same key, 3
+  print(scores.map_keys { name => name.count })
+               ^^^^^^^^
+Each key must come out different, or the dictionary would lose an entry. Change the block, or build the dictionary with `associate` to let a later value replace an earlier one.

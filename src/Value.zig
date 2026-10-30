@@ -461,15 +461,28 @@ fn asWholeNumber(number: f64) ?i64 {
 /// escapes where they are needed.
 fn writeQuoted(bytes: []const u8, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     try writer.writeAll("\"");
-    for (bytes) |c| switch (c) {
-        '"' => try writer.writeAll("\\\""),
-        '\\' => try writer.writeAll("\\\\"),
-        '\n' => try writer.writeAll("\\n"),
-        '\t' => try writer.writeAll("\\t"),
-        '\r' => try writer.writeAll("\\r"),
-        0 => try writer.writeAll("\\0"),
-        else => try writer.writeByte(c),
-    };
+    var i: usize = 0;
+    while (i < bytes.len) : (i += 1) {
+        const c = bytes[i];
+        switch (c) {
+            '"' => try writer.writeAll("\\\""),
+            '\\' => try writer.writeAll("\\\\"),
+            '\n' => try writer.writeAll("\\n"),
+            '\t' => try writer.writeAll("\\t"),
+            '\r' => try writer.writeAll("\\r"),
+            0 => try writer.writeAll("\\0"),
+            // `#{` would interpolate if the text were written back as a literal.
+            '#' => try writer.writeAll(if (i + 1 < bytes.len and bytes[i + 1] == '{') "\\#" else "#"),
+            // Other C0 controls and DEL, which would move or restyle a terminal.
+            1...8, 11, 12, 14...31, 127 => try writer.print("\\u{{{x}}}", .{c}),
+            // C1 controls (U+0080 to U+009F) are the two bytes C2 80 to C2 9F.
+            0xC2 => if (i + 1 < bytes.len and bytes[i + 1] >= 0x80 and bytes[i + 1] <= 0x9F) {
+                try writer.print("\\u{{{x}}}", .{bytes[i + 1]});
+                i += 1;
+            } else try writer.writeByte(c),
+            else => try writer.writeByte(c),
+        }
+    }
     try writer.writeAll("\"");
 }
 

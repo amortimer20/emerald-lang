@@ -65,6 +65,9 @@ pub fn parse(gpa: Allocator, input: []const u8, separator: []const u8, problem: 
         return problem.fail(null, "a separator must be one character, not \"{s}\"", .{separator});
     }
 
+    var bounds = try Boundaries.of(gpa, input);
+    defer bounds.deinit(gpa);
+
     var document: Document = .{ .arena_state = .init(gpa) };
     errdefer document.deinit();
     const allocator = document.arena_state.allocator();
@@ -112,12 +115,12 @@ pub fn parse(gpa: Allocator, input: []const u8, separator: []const u8, problem: 
                     try field.append(allocator, input[index]);
                     index += 1;
                 }
-                if (index < input.len and !atSeparator(input, index, separator) and !atLineEnd(input, index)) {
+                if (index < input.len and !atSeparator(input, index, separator, bounds) and !atLineEnd(input, index)) {
                     const end = nextScalarEnd(input, index);
                     return problem.fail(line, "a quoted field must end at a separator or the end of the line, not \"{s}\"", .{input[index..end]});
                 }
             } else {
-                while (index < input.len and !atSeparator(input, index, separator) and !atLineEnd(input, index)) {
+                while (index < input.len and !atSeparator(input, index, separator, bounds) and !atLineEnd(input, index)) {
                     try field.append(allocator, input[index]);
                     index += 1;
                 }
@@ -125,7 +128,7 @@ pub fn parse(gpa: Allocator, input: []const u8, separator: []const u8, problem: 
             try fields.append(allocator, try field.toOwnedSlice(allocator));
 
             if (index == input.len) break;
-            if (atSeparator(input, index, separator)) {
+            if (atSeparator(input, index, separator, bounds)) {
                 index += separator.len;
                 continue;
             }
@@ -147,7 +150,7 @@ pub fn write(rows: []const []const []const u8, separator: []const u8, out: *std.
         if (row_index != 0) try out.writeByte('\n');
         for (row, 0..) |field, field_index| {
             if (field_index != 0) try out.writeAll(separator);
-            if (needsQuotes(field, separator)) {
+            if (needsQuotes(field, separator, row.len == 1)) {
                 try out.writeByte('"');
                 for (field) |byte| {
                     if (byte == '"') try out.writeByte('"');
@@ -161,9 +164,39 @@ pub fn write(rows: []const []const []const u8, separator: []const u8, out: *std.
     }
 }
 
-fn atSeparator(input: []const u8, index: usize, separator: []const u8) bool {
-    return index + separator.len <= input.len and std.mem.eql(u8, input[index .. index + separator.len], separator);
+/// Whether the separator starts at `index`. It must start and end between
+/// characters: the `e` inside `e` plus a combining accent is not a separator,
+/// as with `String.split` (section 9.1).
+fn atSeparator(input: []const u8, index: usize, separator: []const u8, bounds: Boundaries) bool {
+    const end = std.math.add(usize, index, separator.len) catch return false;
+    return end <= input.len and bounds.at(index) and bounds.at(end) and std.mem.eql(u8, input[index..end], separator);
 }
+
+/// Which byte offsets of the input fall between grapheme clusters.
+const Boundaries = struct {
+    set: std.DynamicBitSetUnmanaged,
+
+    fn of(gpa: Allocator, bytes: []const u8) Allocator.Error!Boundaries {
+        var set = try std.DynamicBitSetUnmanaged.initEmpty(gpa, bytes.len + 1);
+        errdefer set.deinit(gpa);
+        set.set(0);
+        var clusters: unicode.Graphemes = .init(bytes);
+        var offset: usize = 0;
+        while (clusters.next()) |cluster| {
+            offset += cluster.len;
+            set.set(offset);
+        }
+        return .{ .set = set };
+    }
+
+    fn deinit(self: *Boundaries, gpa: Allocator) void {
+        self.set.deinit(gpa);
+    }
+
+    fn at(self: Boundaries, offset: usize) bool {
+        return self.set.isSet(offset);
+    }
+};
 
 fn atLineEnd(input: []const u8, index: usize) bool {
     return input[index] == '\n' or (input[index] == '\r' and index + 1 < input.len and input[index + 1] == '\n');
@@ -183,8 +216,10 @@ fn nextScalarEnd(input: []const u8, index: usize) usize {
     return @min(input.len, index + byte_count);
 }
 
-fn needsQuotes(field: []const u8, separator: []const u8) bool {
-    if (field.len == 0) return false;
+/// A lone empty field in a row must be quoted: bare, the row would be an empty
+/// line, which the parser reads as no row at all.
+fn needsQuotes(field: []const u8, separator: []const u8, only_field: bool) bool {
+    if (field.len == 0) return only_field;
     if (field[0] == ' ' or field[field.len - 1] == ' ') return true;
     return std.mem.indexOf(u8, field, separator) != null or
         std.mem.indexOfScalar(u8, field, '"') != null or
@@ -272,6 +307,22 @@ test "CSV writes minimally quoted Unix rows" {
         &.{ "Hopper, Grace", "said \"hi\"" },
         &.{ " spaced ", "one\ntwo" },
     }, ",", "name,note\nAda,plain\n\"Hopper, Grace\",\"said \"\"hi\"\"\"\n\" spaced \",\"one\ntwo\"");
+}
+
+test "CSV writer quotes a row holding one empty field" {
+    try expectWritten(&.{&.{""}}, ",", "\"\"");
+    try expectWritten(&.{ &.{"a"}, &.{""} }, ",", "a\n\"\"");
+    try expectWritten(&.{ &.{ "", "" }, &.{"a"} }, ",", ",\na");
+}
+
+test "CSV separator does not match inside a grapheme" {
+    var document = try expectParses("ae\u{301}b", "e");
+    defer document.deinit();
+    try testing.expectEqual(@as(usize, 1), document.rows[0].fields.len);
+    try testing.expectEqualStrings("ae\u{301}b", document.rows[0].fields[0]);
+    var split = try expectParses("aeb", "e");
+    defer split.deinit();
+    try testing.expectEqual(@as(usize, 2), split.rows[0].fields.len);
 }
 
 test "CSV writer rejects a separator longer than one character" {
