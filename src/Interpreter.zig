@@ -2348,19 +2348,21 @@ fn executeForList(self: *Interpreter, loop: Ast.For) Error!void {
 /// Section 8.6's `(key, value)`, which is the one item a dictionary's block and
 /// `for` loop receive. Takes over one holder of each half.
 fn entryTuple(self: *Interpreter, map: *const Heap.Map, entry: Heap.Map.Entry) Error!Value {
-    const items = try self.gpa.alloc(Value, 2);
-    const kinds = self.gpa.alloc(Value.Kind, 2) catch |err| {
-        self.gpa.free(items);
+    const items = self.gpa.alloc(Value, 2) catch |err| {
+        self.heap.release(entry.key);
+        self.heap.release(entry.value);
         return err;
     };
     items[0] = entry.key;
     items[1] = entry.value;
+    const kinds = self.gpa.alloc(Value.Kind, 2) catch |err| {
+        for (items) |item| self.heap.release(item);
+        self.gpa.free(items);
+        return err;
+    };
     kinds[0] = map.key_kind;
     kinds[1] = map.value_kind;
-    errdefer {
-        self.heap.release(entry.key);
-        self.heap.release(entry.value);
-    }
+    // `createTuple` takes over both halves even when it fails.
     return .{ .data = .{ .tuple = try self.heap.createTuple(items, kinds) } };
 }
 
@@ -3465,16 +3467,19 @@ fn evaluateTuple(
     for (kinds, checked.elements) |*slot, element| slot.* = kindOf(element);
 
     // Filled one at a time, so a failure part-way releases only what is built.
+    // `createTuple` takes everything over, even when it fails.
     var built: usize = 0;
-    errdefer {
+    var owned = true;
+    errdefer if (owned) {
         for (items[0..built]) |item| self.heap.release(item);
         self.gpa.free(items);
         self.gpa.free(kinds);
-    }
+    };
     while (built < positions.len) : (built += 1) {
         items[built] = widen(try self.evaluate(positions[built]), kinds[built]);
     }
 
+    owned = false;
     return .{ .data = .{ .tuple = try self.heap.createTuple(items, kinds) } };
 }
 
@@ -6056,14 +6061,17 @@ fn makeCsvError(self: *Interpreter, message: []const u8, line: ?u32) RunError!Va
     const descriptor = self.structs.get(Resolver.preludeKey("CsvError")).?;
     const fields = try self.gpa.alloc(Value, descriptor.fields.len);
     @memset(fields, Value.nothing);
-    errdefer {
+    var owned = true;
+    errdefer if (owned) {
         for (fields) |field| self.heap.release(field);
         self.gpa.free(fields);
-    }
+    };
     for (descriptor.fields, fields) |field, *value| {
         if (std.mem.eql(u8, field.name, "message")) value.* = try self.heap.copyText(message);
         if (std.mem.eql(u8, field.name, "line")) value.* = if (line) |number| .initInt(number) else .nothing;
     }
+    // `createStruct` takes the fields over, even when it fails.
+    owned = false;
     return .{ .data = .{ .struct_value = try self.heap.createStruct(descriptor, fields) } };
 }
 
@@ -6346,10 +6354,15 @@ fn httpResponse(self: *Interpreter, span: Source.Span, response: *Http.Response)
     fields[1] = .initInt(response.status);
     fields[2] = try self.heap.copyText(response.reason);
     fields[3] = try self.heap.copyText(response.url);
-    fields[4] = .{ .data = .{ .map = try self.httpHeaders(span, response.headers) } };
+    // Each made through a local first: assigning `.{ .data = .{ .map = try ... } }`
+    // straight into the field would set its tag before the `try`, leaving the
+    // `errdefer` above to release an undefined pointer.
+    const headers = try self.httpHeaders(span, response.headers);
+    fields[4] = .{ .data = .{ .map = headers } };
     const body = response.body;
     body_transferred = true;
-    fields[5] = .{ .data = .{ .bytes = try self.heap.createText(body) } };
+    const bytes = try self.heap.createText(body);
+    fields[5] = .{ .data = .{ .bytes = bytes } };
     response.deinitMetadata(self.gpa);
     metadata_released = true;
     fields_transferred = true;
@@ -6409,10 +6422,17 @@ fn raiseHttp(self: *Interpreter, span: Source.Span, message: []const u8, status:
 fn makeHttpError(self: *Interpreter, message: []const u8, status: ?u16) RunError!Value {
     const descriptor = self.structs.get(Resolver.preludeKey("HttpError")).?;
     const fields = try self.gpa.alloc(Value, descriptor.fields.len);
-    errdefer self.gpa.free(fields);
+    @memset(fields, Value.nothing);
+    var owned = true;
+    errdefer if (owned) {
+        for (fields) |field| self.heap.release(field);
+        self.gpa.free(fields);
+    };
     for (descriptor.fields, fields) |field, *value| {
         value.* = if (std.mem.eql(u8, field.name, "message")) try self.heap.copyText(message) else if (std.mem.eql(u8, field.name, "status")) if (status) |number| .initInt(number) else .nothing else .nothing;
     }
+    // `createStruct` takes the fields over, even when it fails.
+    owned = false;
     return .{ .data = .{ .struct_value = try self.heap.createStruct(descriptor, fields) } };
 }
 
@@ -6480,8 +6500,13 @@ const JsonBuilder = struct {
             kind.* = .{ .data = .{ .struct_value = instance } };
         }
         builder.empty_text = try heap.copyText("");
-        builder.empty_items = .{ .data = .{ .list = try heap.createList(.struct_value, 0) } };
-        builder.empty_entries = .{ .data = .{ .map = try heap.createMap(.string, .struct_value, false) } };
+        // Through locals: `builder.empty_items = .{ .data = .{ .list = try ... } }`
+        // would write the `.list` tag before the `try`, so a failure would leave
+        // `deinit` releasing an undefined pointer.
+        const empty_items = try heap.createList(.struct_value, 0);
+        builder.empty_items = .{ .data = .{ .list = empty_items } };
+        const empty_entries = try heap.createMap(.string, .struct_value, false);
+        builder.empty_entries = .{ .data = .{ .map = empty_entries } };
         return builder;
     }
 
@@ -6677,10 +6702,7 @@ fn jsonDecodePlainStruct(self: *Interpreter, span: Source.Span, json: Json.Value
     const descriptor = self.structs.get(user.name).?;
     const fields = try self.gpa.alloc(Value, user.fields.len);
     @memset(fields, Value.nothing);
-    const result: Value = .{ .data = .{ .struct_value = self.heap.createStruct(descriptor, fields) catch |err| {
-        self.gpa.free(fields);
-        return err;
-    } } };
+    const result: Value = .{ .data = .{ .struct_value = try self.heap.createStruct(descriptor, fields) } };
     // `runFieldDefaults` takes over `result`, so it is released here only
     // until then.
     var owned = true;
@@ -7229,9 +7251,8 @@ fn constructStruct(
     const info = self.struct_infos.get(key).?;
     if (info.base != null and descriptor.isOrExtends(Resolver.preludeKey("Error")) and info.declaration.fields.len == 0 and descriptor.fields.len == 1 and !self.constructors.contains(key)) {
         const bound = try self.evaluateBound(call, &.{"message"}, &.{false});
-        const instance: Value = .{ .data = .{ .struct_value = try self.heap.createStruct(descriptor, bound.values) } };
-        if (bound.omitted) |omitted| self.gpa.free(omitted);
-        return instance;
+        defer if (bound.omitted) |omitted| self.gpa.free(omitted);
+        return .{ .data = .{ .struct_value = try self.heap.createStruct(descriptor, bound.values) } };
     }
     // Section 10.7: an object of a subclass is built one class at a time,
     // starting from the class every other extends.
@@ -8716,14 +8737,26 @@ fn callPartition(
     const list = receiver.data.list;
     const callable = self.closureCallable(block.data.closure);
     const closure = block.data.closure;
-    const kept = try self.heap.createList(list.element, list.items.items.len);
-    const dropped = try self.heap.createList(list.element, list.items.items.len);
     const items = try self.gpa.alloc(Value, 2);
-    const kinds = try self.gpa.alloc(Value.Kind, 2);
-    items[0] = .{ .data = .{ .list = kept } };
-    items[1] = .{ .data = .{ .list = dropped } };
+    @memset(items, Value.nothing);
+    const kinds = self.gpa.alloc(Value.Kind, 2) catch |err| {
+        self.gpa.free(items);
+        return err;
+    };
     kinds[0] = .list;
     kinds[1] = .list;
+    var owned = true;
+    errdefer if (owned) {
+        for (items) |item| self.heap.release(item);
+        self.gpa.free(items);
+        self.gpa.free(kinds);
+    };
+    const kept = try self.heap.createList(list.element, list.items.items.len);
+    items[0] = .{ .data = .{ .list = kept } };
+    const dropped = try self.heap.createList(list.element, list.items.items.len);
+    items[1] = .{ .data = .{ .list = dropped } };
+    // `createTuple` takes the two lists over, even when it fails.
+    owned = false;
     const result: Value = .{ .data = .{ .tuple = try self.heap.createTuple(items, kinds) } };
     errdefer self.heap.release(result);
 
@@ -9440,12 +9473,16 @@ fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List,
             if (count > 0) {
                 for (items[0..count], items[1..]) |left, right| {
                     const tuple_items = try self.gpa.alloc(Value, 2);
-                    const tuple_kinds = try self.gpa.alloc(Value.Kind, 2);
+                    const tuple_kinds = self.gpa.alloc(Value.Kind, 2) catch |err| {
+                        self.gpa.free(tuple_items);
+                        return err;
+                    };
                     tuple_items[0] = Heap.retain(left);
                     tuple_items[1] = Heap.retain(right);
                     tuple_kinds[0] = list.element;
                     tuple_kinds[1] = list.element;
-                    result.items.appendAssumeCapacity(.{ .data = .{ .tuple = try self.heap.createTuple(tuple_items, tuple_kinds) } });
+                    const tuple = try self.heap.createTuple(tuple_items, tuple_kinds);
+                    result.items.appendAssumeCapacity(.{ .data = .{ .tuple = tuple } });
                 }
             }
             break :blk value;
@@ -9524,12 +9561,16 @@ fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List,
             errdefer self.heap.release(value);
             for (items[0..limit], right.items.items[0..limit]) |left, right_item| {
                 const tuple_items = try self.gpa.alloc(Value, 2);
-                const tuple_kinds = try self.gpa.alloc(Value.Kind, 2);
+                const tuple_kinds = self.gpa.alloc(Value.Kind, 2) catch |err| {
+                    self.gpa.free(tuple_items);
+                    return err;
+                };
                 tuple_items[0] = Heap.retain(left);
                 tuple_items[1] = Heap.retain(right_item);
                 tuple_kinds[0] = list.element;
                 tuple_kinds[1] = right.element;
-                result.items.appendAssumeCapacity(.{ .data = .{ .tuple = try self.heap.createTuple(tuple_items, tuple_kinds) } });
+                const tuple = try self.heap.createTuple(tuple_items, tuple_kinds);
+                result.items.appendAssumeCapacity(.{ .data = .{ .tuple = tuple } });
             }
             break :blk value;
         },
@@ -9771,9 +9812,14 @@ fn listMinMax(self: *Interpreter, span: Source.Span, list: *const Heap.List) Err
     if (list.element == .float and std.math.isNan(items[0].data.float)) return self.raiseExtremeNaN(span, .pair);
 
     var minimum = Heap.retain(items[0]);
-    errdefer self.heap.release(minimum);
     var maximum = Heap.retain(items[0]);
-    errdefer self.heap.release(maximum);
+    // Released here only until `extremePair`, which takes both over even when
+    // it fails.
+    var owned = true;
+    errdefer if (owned) {
+        self.heap.release(minimum);
+        self.heap.release(maximum);
+    };
     for (items[1..]) |item| {
         if ((try self.orderListItems(span, minimum.data, minimum, item, .pair)) == .gt) {
             self.heap.release(minimum);
@@ -9784,28 +9830,30 @@ fn listMinMax(self: *Interpreter, span: Source.Span, list: *const Heap.List) Err
             maximum = Heap.retain(item);
         }
     }
+    owned = false;
     return self.extremePair(list.element, minimum, maximum);
 }
 
 /// Builds the immutable `(minimum, maximum)` result, taking ownership of both
-/// values. Their stored kinds are the List's element kind even when both are
+/// values, also when it fails. Their stored kinds are the List's element kind even when both are
 /// `nothing`, because the checker recorded their optional element type.
 fn extremePair(self: *Interpreter, kind: Value.Kind, minimum: Value, maximum: Value) Error!Value {
-    const items = try self.gpa.alloc(Value, 2);
-    const kinds = self.gpa.alloc(Value.Kind, 2) catch |err| {
-        self.gpa.free(items);
-        return err;
-    };
-    items[0] = minimum;
-    items[1] = maximum;
-    kinds[0] = kind;
-    kinds[1] = kind;
-    const tuple = self.heap.createTuple(items, kinds) catch |err| {
+    const items = self.gpa.alloc(Value, 2) catch |err| {
         self.heap.release(minimum);
         self.heap.release(maximum);
         return err;
     };
-    return .{ .data = .{ .tuple = tuple } };
+    items[0] = minimum;
+    items[1] = maximum;
+    const kinds = self.gpa.alloc(Value.Kind, 2) catch |err| {
+        for (items) |item| self.heap.release(item);
+        self.gpa.free(items);
+        return err;
+    };
+    kinds[0] = kind;
+    kinds[1] = kind;
+    // `createTuple` takes both values over, even when it fails.
+    return .{ .data = .{ .tuple = try self.heap.createTuple(items, kinds) } };
 }
 
 /// A new list containing one held copy of each value in `items`.
@@ -11086,15 +11134,18 @@ fn stringTuple(self: *Interpreter, parts: struct { []const u8, []const u8, []con
     kinds[1] = .string;
     kinds[2] = .string;
     var built: usize = 0;
-    errdefer {
+    var owned = true;
+    errdefer if (owned) {
         for (items[0..built]) |item| self.heap.release(item);
         self.gpa.free(items);
         self.gpa.free(kinds);
-    }
+    };
     inline for (parts) |part| {
         items[built] = try self.heap.copyText(part);
         built += 1;
     }
+    // `createTuple` takes everything over, even when it fails.
+    owned = false;
     return .{ .data = .{ .tuple = try self.heap.createTuple(items, kinds) } };
 }
 
@@ -11300,7 +11351,10 @@ fn raise(self: *Interpreter, span: Source.Span, message: []const u8, help: []con
 
 fn makeError(self: *Interpreter, key: []const u8, message: []const u8) RunError!Value {
     const text = try self.heap.copyText(message);
-    const fields = try self.gpa.alloc(Value, 1);
+    const fields = self.gpa.alloc(Value, 1) catch |err| {
+        self.heap.release(text);
+        return err;
+    };
     fields[0] = text;
     return .{ .data = .{ .struct_value = try self.heap.createStruct(self.structs.get(key).?, fields) } };
 }

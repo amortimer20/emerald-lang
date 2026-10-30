@@ -476,11 +476,16 @@ pub fn createList(self: *Heap, element: Value.Kind, capacity: usize) std.mem.All
     return list;
 }
 
-/// A tuple holding `items`, whose memory it takes over, with one holder, the
-/// caller. `kinds` is taken over too.
+/// A tuple holding `items`, with one holder, the caller.
+///
+/// Like `createText` and `createStruct`, it takes over `items`, the values in
+/// them, and `kinds` whether it succeeds or fails: on failure it releases each
+/// value and frees both slices. The caller must not release, free, or read
+/// them after the call, so an `errdefer` cleaning them up must not cover it.
 pub fn createTuple(self: *Heap, items: []Value, kinds: []Value.Kind) std.mem.Allocator.Error!*Tuple {
     self.maybeCollect();
     const tuple = self.gpa.create(Tuple) catch |err| {
+        for (items) |item| self.release(item);
         self.gpa.free(items);
         self.gpa.free(kinds);
         return err;
@@ -493,8 +498,11 @@ pub fn createTuple(self: *Heap, items: []Value, kinds: []Value.Kind) std.mem.All
     return tuple;
 }
 
-/// A user-defined struct holding `fields`, whose memory and values it takes
-/// over, with one holder in the caller.
+/// A user-defined struct holding `fields`, with one holder, the caller.
+///
+/// It takes over `fields` and the values in them whether it succeeds or
+/// fails, as `createTuple` does: on failure it releases each value and frees
+/// the slice. The caller must not release, free, or read them after the call.
 pub fn createStruct(
     self: *Heap,
     descriptor: *const Value.StructType,
@@ -1741,7 +1749,8 @@ test "releasing a chain longer than the release depth leaves the rest to the col
     for (0..max_release_depth * 3) |_| {
         const fields = try testing.allocator.alloc(Value, 1);
         fields[0] = head;
-        head = .{ .data = .{ .struct_value = try heap.createStruct(&descriptor, fields) } };
+        const node = try heap.createStruct(&descriptor, fields);
+        head = .{ .data = .{ .struct_value = node } };
     }
 
     heap.release(head);
