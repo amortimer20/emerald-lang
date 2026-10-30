@@ -11,7 +11,8 @@ belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 prerelease (tag on `73b9b19`, all three assets, install scripts checked). The codebase review
 (roadmap item 10) has reported and been triaged in [`review/triage.md`](review/triage.md), with
 every decision accepted. Fix batch 1 is merged (PRs #57–#61: crashes, `exit()` in tasks, the
-language server, allocation failures). **Next:** batch 2, the remaining wrong answers (B4–B14,
+language server, allocation failures). Fix batch 2 is under way: B4, B5, B7, B8 and D1 are fixed on
+`claude/number-maths` (`src/FloatMath.zig`). **Next:** batch 2, the remaining wrong answers (B4–B14,
 B16, B17 with D1, D3, D6), then the spec corrections and contract (E, D2, D8), then diagnostics
 (C, D4, D5); the user asked for Sonnet subagents for this work to spare usage. Open from batch 1:
 two allocation-failure programs (`min_max`, a caught index error) used memory nondeterministically,

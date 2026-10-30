@@ -1854,7 +1854,12 @@ with a trailing block; `times` is the corresponding immediate block form.
 Positive places address digits after the decimal point, zero produces a whole-number-valued
 `Float`, and negative places round to tens, hundreds, and so on. Halfway values round away
 from zero, consistently with `round`. It changes the number and does not preserve display
-zeros; `2.0.round_to(2)` is a numeric `2.0`, not the text `"2.00"`.
+zeros; `2.0.round_to(2)` is a numeric `2.0`, not the text `"2.00"`. "Halfway" is read in the
+shortest decimal text the `Float` displays, not its exact binary value, so `2.675.round_to(2)`
+is `2.68` and `1.005.round_to(2)` is `1.01`, as a reader of the digits expects (other
+languages that round the exact binary value give `2.67` and `1.0`). `format(decimal_places:)`
+rounds the same way. A value with no digits beyond the requested place, however large, is
+returned unchanged.
 
 `floor()`, `ceil()`, `round()`, and `truncate()` return an `Int`; `round()` resolves a tie
 away from zero, and `truncate()` discards the fraction toward zero. `to_int()` has the same
