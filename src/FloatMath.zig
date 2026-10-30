@@ -173,6 +173,9 @@ pub fn remainder(a: f64, b: f64) f64 {
 /// value with no digits beyond the requested place comes back unchanged.
 pub fn roundTo(value: f64, places: i64) f64 {
     if (!std.math.isFinite(value) or value == 0) return value;
+    // Binary64 spans fewer than 350 decimal places either way, so this clamp
+    // changes no result and keeps `keep` below from overflowing.
+    const clamped = std.math.clamp(places, -400, 400);
     var buffer: [64]u8 = undefined;
     const text = std.fmt.bufPrint(&buffer, "{e}", .{@abs(value)}) catch return value;
     const e_index = std.mem.indexOfScalar(u8, text, 'e') orelse return value;
@@ -185,7 +188,7 @@ pub fn roundTo(value: f64, places: i64) f64 {
     }
     const exponent = std.fmt.parseInt(i64, text[e_index + 1 ..], 10) catch return value;
     // value = 0.d1 d2 ... dn * 10^(exponent + 1); keep this many digits.
-    const keep = exponent + 1 + places;
+    const keep = exponent + 1 + clamped;
     if (keep >= count) return value;
     var result_exponent = exponent;
     if (keep < 0) return std.math.copysign(@as(f64, 0), value);
@@ -270,4 +273,6 @@ test "round_to uses decimal places and leaves large values alone" {
     try std.testing.expectEqual(@as(f64, 0.0), roundTo(0.4, 0));
     try std.testing.expectEqual(@as(f64, 100.0), roundTo(60.0, -2));
     try std.testing.expectEqual(@as(f64, 0.0), roundTo(40.0, -2));
+    try std.testing.expectEqual(@as(f64, 1.5), roundTo(1.5, std.math.maxInt(i64)));
+    try std.testing.expectEqual(@as(f64, -0.0), roundTo(-0.001, std.math.minInt(i64)));
 }
