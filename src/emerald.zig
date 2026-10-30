@@ -2382,6 +2382,10 @@ fn checkRunAllocationFailures(text: []const u8) !void {
             if (!report.ok()) return error.UnexpectedDiagnosticOrFailure;
         }
     };
+    // A first run in the process can allocate what later runs do not (seen
+    // on Windows), which the check below reports as nondeterministic usage,
+    // so one unchecked run comes first.
+    try Work.attempt(testing.allocator, text);
     try testing.checkAllAllocationFailures(testing.allocator, Work.attempt, .{text});
 }
 
