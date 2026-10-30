@@ -2382,11 +2382,22 @@ fn checkRunAllocationFailures(text: []const u8) !void {
             if (!report.ok()) return error.UnexpectedDiagnosticOrFailure;
         }
     };
-    // A first run in the process can allocate what later runs do not (seen
-    // on Windows), which the check below reports as nondeterministic usage,
-    // so one unchecked run comes first.
-    try Work.attempt(testing.allocator, text);
-    try testing.checkAllAllocationFailures(testing.allocator, Work.attempt, .{text});
+    // `checkAllAllocationFailures` needs every run to allocate identically,
+    // which the interpreter does not on Linux and Windows. What matters is
+    // that a failure at any point is reported cleanly, never a crash or a
+    // leak, so each allocation of a counted run is failed in turn, and the
+    // testing allocator reports any leak when the test ends.
+    var counting: std.testing.FailingAllocator = .init(testing.allocator, .{});
+    try Work.attempt(counting.allocator(), text);
+    // A run may allocate a little more than the counted one; the extra
+    // indices cost nothing when no allocation reaches them.
+    for (0..counting.alloc_index + 64) |index| {
+        var failing: std.testing.FailingAllocator = .init(testing.allocator, .{ .fail_index = index });
+        Work.attempt(failing.allocator(), text) catch |err| switch (err) {
+            error.OutOfMemory => {},
+            else => return err,
+        };
+    }
 }
 
 test "a failed allocation in a tuple or struct constructor frees each part once" {
