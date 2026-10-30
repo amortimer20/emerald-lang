@@ -1,6 +1,5 @@
 # Section 5.3: `%` with a Float operand returns Float; a NaN remainder operand, or an
-# infinite dividend, produces NaN. (A negative or infinite divisor is a finding:
-# docs/review/repro/rules/06 and 07.)
+# infinite operand, produces NaN. (Negative divisors: float-floored-maths.em.)
 print(7 % 2.0)
 print(7.5 % 2)
 print(-7.5 % 2)

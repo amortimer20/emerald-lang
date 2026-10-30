@@ -31,6 +31,7 @@ const version_options = @import("version_options");
 const Ast = @import("Ast.zig");
 const Checker = @import("Checker.zig");
 const Csv = @import("Csv.zig");
+const FloatMath = @import("FloatMath.zig");
 const Diagnostic = @import("Diagnostic.zig");
 const Heap = @import("Heap.zig");
 const Http = @import("Http.zig");
@@ -3919,14 +3920,14 @@ fn evaluateFloatBinary(
         .multiply => return .initFloat(left * right),
         .floor_divide => {
             if (right == 0) return self.raiseDivisionByZero(span, operator);
-            return .initFloat(@floor(left / right));
+            return .initFloat(FloatMath.floorDivide(left, right));
         },
         .remainder => {
             if (right == 0) return self.raiseDivisionByZero(span, operator);
-            // A NaN or infinite operand produces NaN, which @mod already gives.
-            return .initFloat(@mod(left, right));
+            // The result takes the divisor's sign; a NaN or infinite operand gives NaN.
+            return .initFloat(FloatMath.remainder(left, right));
         },
-        .power => return .initFloat(std.math.pow(f64, left, right)),
+        .power => return .initFloat(FloatMath.power(left, right)),
         .divide => unreachable,
     }
 }
@@ -5521,7 +5522,7 @@ fn callMath(self: *Interpreter, call: Ast.Expression.Call, key: []const u8) Erro
     var values: [2]f64 = undefined;
     for (call.arguments, 0..) |argument, index| values[index] = toFloat(try self.evaluate(argument));
     const name = key[Resolver.math_prefix.len..];
-    return .initFloat(if (std.mem.eql(u8, name, "sin")) std.math.sin(values[0]) else if (std.mem.eql(u8, name, "cos")) std.math.cos(values[0]) else if (std.mem.eql(u8, name, "tan")) std.math.tan(values[0]) else if (std.mem.eql(u8, name, "arc_sin")) std.math.asin(values[0]) else if (std.mem.eql(u8, name, "arc_cos")) std.math.acos(values[0]) else if (std.mem.eql(u8, name, "arc_tan")) std.math.atan(values[0]) else if (std.mem.eql(u8, name, "arc_tan2")) std.math.atan2(values[0], values[1]) else if (std.mem.eql(u8, name, "natural_log")) std.math.log(f64, std.math.e, values[0]) else if (std.mem.eql(u8, name, "log10")) std.math.log10(values[0]) else if (std.mem.eql(u8, name, "log")) if (values[1] <= 0 or values[1] == 1) std.math.nan(f64) else std.math.log(f64, values[1], values[0]) else std.math.pow(f64, values[0], values[1]));
+    return .initFloat(if (std.mem.eql(u8, name, "sin")) std.math.sin(values[0]) else if (std.mem.eql(u8, name, "cos")) std.math.cos(values[0]) else if (std.mem.eql(u8, name, "tan")) std.math.tan(values[0]) else if (std.mem.eql(u8, name, "arc_sin")) std.math.asin(values[0]) else if (std.mem.eql(u8, name, "arc_cos")) std.math.acos(values[0]) else if (std.mem.eql(u8, name, "arc_tan")) std.math.atan(values[0]) else if (std.mem.eql(u8, name, "arc_tan2")) std.math.atan2(values[0], values[1]) else if (std.mem.eql(u8, name, "natural_log")) std.math.log(f64, std.math.e, values[0]) else if (std.mem.eql(u8, name, "log10")) std.math.log10(values[0]) else if (std.mem.eql(u8, name, "log")) if (values[1] <= 0 or values[1] == 1) std.math.nan(f64) else std.math.log(f64, values[1], values[0]) else FloatMath.power(values[0], values[1]));
 }
 
 /// The rules a zone name has, for a zone whose offset changes: the built-in
@@ -10752,24 +10753,8 @@ fn floatResultToInt(self: *Interpreter, span: Source.Span, operation: []const u8
     return .initInt(@intFromFloat(value));
 }
 
-/// Decimal-place rounding over binary64. Scaling that would overflow on the
-/// right of the decimal point means the requested precision cannot change the
-/// stored value, while a place beyond the left edge rounds a finite value to
-/// signed zero.
 fn roundFloatTo(value: f64, places: i64) f64 {
-    if (!std.math.isFinite(value) or value == 0) return value;
-    if (places > 308) return value;
-    if (places < -308) return std.math.copysign(@as(f64, 0), value);
-
-    if (places >= 0) {
-        const scale = std.math.pow(f64, 10, @as(f64, @floatFromInt(places)));
-        const scaled = value * scale;
-        if (!std.math.isFinite(scaled)) return value;
-        return @round(scaled) / scale;
-    }
-
-    const scale = std.math.pow(f64, 10, @as(f64, @floatFromInt(-places)));
-    return @round(value / scale) * scale;
+    return FloatMath.roundTo(value, places);
 }
 
 fn displayFloatAlloc(self: *Interpreter, value: f64) Error![]u8 {
