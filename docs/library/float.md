@@ -94,7 +94,9 @@ conversion.
 Rounds to `places` decimal places and returns a `Float`, not text: `2.0.round_to(2)` is the
 number `2.0`, not `"2.00"`. Positive `places` addresses digits after the decimal point, `0`
 produces a whole-number-valued `Float`, and negative `places` rounds to tens, hundreds, and
-so on. Ties round away from zero, matching `round`. Every `Int` place count is accepted:
+so on. Ties round away from zero, matching `round`, and a tie is judged on the shortest
+decimal text the value displays: `2.675.round_to(2)` is `2.68` and `1.005.round_to(2)` is
+`1.01`, even though the stored binary values lie just below those ties. Every `Int` place count is accepted:
 precision beyond binary64's decimal range leaves a finite value's fractional side unchanged
 and produces a signed zero past its whole-number side. NaN and infinity propagate through
 unchanged rather than raising.
