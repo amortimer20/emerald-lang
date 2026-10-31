@@ -481,6 +481,10 @@ the review, with 11's plan alongside it, both before the compiler.
 15. **Godot bindings, then microcontrollers** (Unity deprioritized by the user, 2026-10-03), as
     described below; the host guardrail applies to every integration.
 16. **A debugger.** Interpreter performance work is not on the list: the compiler replaces it.
+17. **Several traits on one type parameter** (the user, 2026-10-30), e.g. `[T with Ordered and
+    Hashable]`. Today a parameter takes one trait, and a combining trait (`trait Rankable with
+    Ordered, Hashable {}`) cannot be met by `Int`, `Float`, `String` or `Bool`. Additive, so it may
+    land earlier; `[T with A, B]` already parses as a second type parameter named `B`.
 
 ## Longer term: the native compiler
 
