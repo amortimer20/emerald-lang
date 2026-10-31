@@ -6164,3 +6164,43 @@ or float conversion, and seeded output is unchanged. Both suites pass, the three
 cross-build, and the benchmarks show nothing slower and `json`, `regex`, and `pipeline` 28 to 39%
 faster. The plan's "Settled while building" section has the details; CI, the parallel Windows
 runs, and a release dry run come next.
+
+## 2026-10-29: The codebase review, triaged, and batch 1
+
+The pre-1.0 review (roadmap item 10) ran its eight areas and reported in `docs/review/`; the
+triage in `review/triage.md` sorts 42 findings into crashes (A), wrong answers (B), diagnostics
+(C), decisions (D) and the spec's own corrections (E). The user accepted every D recommendation.
+Batch 1 (#58–#61) fixed the crashes, `exit()` in tasks, the language server's robustness and
+allocation failures; the allocation-failure test became a direct `FailingAllocator` sweep, since
+comparing peak memory between runs was not deterministic on Linux or Windows. `v0.8.0-rc1` was
+tagged on `73b9b19` as a prerelease, so the user can try generics and data enums; the VS Code
+extension needs no change for them. The browser playground moved after 1.0.
+
+## 2026-10-30: Batch 2, wrong answers
+
+Three PRs, one at a time on the user's request. #62 moved Float `%`, `//`, `**` and `round_to`
+into `src/FloatMath.zig`: floored `%` and `//` that satisfy the remainder law, a double-double
+`pow` (Zig's own `pow` is thousands of ulps off and there is no libc), and `round_to` on the
+shortest decimal text (D1; `1.005.round_to(2)` is now `1.01`, matching `format`). #63 made
+`split` and `replace` keep the receiver's bytes, fixed two CSV edge cases, escaped `#{` and
+control characters in collection display, and made a `map_keys` collision an error (D6). #64
+gave `is` and `type_name` the running call's types inside a generic body (B10), wrote the
+type-level setup rule into 14.1 (a type and its type-level members are members of their file;
+the spec already settled nested types and subclasses), and unpinned the recursion limit (D3).
+
+Noted, not fixed:
+
+- A generic function called through a function value, or a lambda run by another task, cannot
+  see `T` at run time; compound `type_name` prints `List[U]`. The compiler must carry type
+  arguments (monomorphize or pass them), with a conformance case; the interpreter could capture
+  them in closures if needed sooner.
+- `5.0 // -Float.infinity` is `-0.0` where floored division gives `-1.0`; the spec is silent.
+- `**` may be slower per call since #62 (2M calls: 14s against 5.4s, build modes unconfirmed).
+- `"ab,".repeat(100000)` then `split` and `replace` took about 20 seconds on main and the branch
+  alike: something in text handling is quadratic. Not investigated.
+- The user's report: `return` inside a block (`list.each_with_index { ... return index ... }`)
+  leaves only the block, per spec, so the function carried on. That is correct but silent: a
+  block whose result is discarded should warn that `return` does not leave the function. Also
+  check whether a function with no declared result type may `return` a value. Both go with the
+  diagnostics batch.
+

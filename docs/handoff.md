@@ -7,17 +7,20 @@ belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 
 ## Current status
 
-**Where things stand (2026-10-29, paused by the user):** `v0.8.0-rc1` is published as a
+**Where things stand (2026-10-31, paused by the user):** `v0.8.0-rc1` is published as a
 prerelease (tag on `73b9b19`, all three assets, install scripts checked). The codebase review
 (roadmap item 10) has reported and been triaged in [`review/triage.md`](review/triage.md), with
 every decision accepted. Fix batch 1 is merged (PRs #57–#61: crashes, `exit()` in tasks, the
-language server, allocation failures). Fix batch 2 is under way: B4, B5, B7, B8 and D1 are fixed on
-`claude/number-maths` (`src/FloatMath.zig`); B6, B9, B11 and D6 are fixed on `claude/text-collections`
-(unmerged); B10, B12 and D3 are fixed on `claude/runtime-semantics` (unmerged). **Next:** batch 2,
-the remaining wrong answers (B13, B14, B16, B17), then the spec corrections and contract (E, D2, D8), then diagnostics
-(C, D4, D5); the user asked for Sonnet subagents for this work to spare usage. Open from batch 1:
-two allocation-failure programs (`min_max`, a caught index error) used memory nondeterministically,
-not investigated. Then roadmap item 11's plan, and the compiler.
+language server, allocation failures). Fix batch 2 is three quarters merged: #62 (B4, B5, B7, B8,
+D1; `src/FloatMath.zig`), #63 (B6, B9, B11, D6) and #64 (B10, B12, D3). **Next, when the user says
+go:** batch 2's last PR, platform and tooling (B13, B14, B16, B17; B16 and B17 need the user's
+Windows check). Then the spec corrections and contract (E, D2, D8), then diagnostics in two
+batches (C, D4, D5, plus the `return`-in-a-block warning in the journal, 2026-10-30), then a rerun
+of the mutation sweep and allocation-failure harness. The user asked for Sonnet subagents for
+routine fixes to spare usage (Opus for subtle ones), one PR at a time. Still open: two
+allocation-failure programs (`min_max`, a caught index error) used memory nondeterministically,
+not investigated; and the follow-ups noted in the journal (2026-10-30). Then roadmap item 11's
+plan, and the compiler.
 
 The Zig rewrite implements the current rewrite-context language surface: control flow,
 functions, optionals, collections, Unicode strings, structs, classes, inheritance, traits,
