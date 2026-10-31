@@ -42,8 +42,10 @@ interpreter's recursion boundary, in the main program or a task. Emerald support
 at least 1,000 active calls; the diagnostic summarizes repeated frames. Typed catches
 and `finally` work normally, and a catch for `RuntimeError` still handles it. Run
 [`conformance/run/recursion-error.em`](../../conformance/run/recursion-error.em) for
-both execution contexts and cleanup; the uncaught diagnostic is covered by
-[`conformance/runtime-errors/recursion-limit.em`](../../conformance/runtime-errors/recursion-limit.em).
+both execution contexts and cleanup. The exact limit is not part of the language, so no
+golden file shows an uncaught `RecursionError`'s trace;
+[`conformance/runtime-errors/recursion-limit.em`](../../conformance/runtime-errors/recursion-limit.em)
+shows how a trace summarizes repeated frames.
 
 **`CancelledError`** extends `Error` directly, not `RuntimeError`. Task cancellation raises
 it at a suspension point and runs `finally`; a catch for `RuntimeError` does not swallow it.

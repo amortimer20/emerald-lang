@@ -1,8 +1,12 @@
-# Section 7.2: at least 1,000 active calls are supported, and crossing the limit
-# raises rather than exhausting the host stack. Repeated frames are summarized.
+# Section 7.2: repeated frames in a trace are summarized. The recursion stops at
+# a fixed depth and raises its own error, so the case does not depend on the
+# call limit, which 7.2 says is not part of the language.
 
-func forever(n: Int): Int {
-    return forever(n + 1)
+func descend(n: Int): Int {
+    if n == 0 {
+        raise Error("reached the bottom")
+    }
+    return descend(n - 1)
 }
 
-print(forever(0))
+print(descend(40))
