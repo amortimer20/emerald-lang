@@ -1,0 +1,9 @@
+Int true false
+String false true
+Float false false
+inside: List[Int]
+outside: List[Int]
+List[Int] List[List[Int]]
+List[List[Bool]]
+String true
+Int false

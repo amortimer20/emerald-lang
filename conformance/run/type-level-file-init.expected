@@ -1,0 +1,7 @@
+call a type-level function
+  setting up greeting
+hello
+use an enum value
+Mood.happy
+construct the class
+done
