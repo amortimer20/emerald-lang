@@ -377,6 +377,9 @@ widenings: *const Checker.Widenings,
 /// Section 11.3: method calls on a `T with Trait`, mapped to the trait
 /// member's key, which run the value's own version.
 parameter_calls: *const Checker.MethodCalls,
+/// Section 11.3: each generic call's type arguments, by callee, so 4.4's
+/// `is` and `type_name` see a type parameter's runtime type.
+generic_calls: *const Checker.GenericCalls,
 /// Every trait, by key, with the keys of the traits it builds on.
 trait_infos: std.StringHashMapUnmanaged(TraitInfo) = .empty,
 /// Every method that overrides another, mapped to the declaration it
@@ -417,6 +420,7 @@ pub const SessionAnalysis = struct {
     trait_calls: *const Checker.MethodCalls,
     widenings: *const Checker.Widenings,
     parameter_calls: *const Checker.MethodCalls,
+    generic_calls: *const Checker.GenericCalls,
     facts: Resolver.Facts,
 };
 
@@ -592,6 +596,7 @@ pub const Session = struct {
             .trait_calls = analysis.trait_calls,
             .widenings = analysis.widenings,
             .parameter_calls = analysis.parameter_calls,
+            .generic_calls = analysis.generic_calls,
             .literal_types = analysis.literal_types,
             .heap = .init(gpa),
             .session_keys = .empty,
@@ -658,6 +663,7 @@ pub const Session = struct {
         self.interpreter.trait_calls = analysis.trait_calls;
         self.interpreter.widenings = analysis.widenings;
         self.interpreter.parameter_calls = analysis.parameter_calls;
+        self.interpreter.generic_calls = analysis.generic_calls;
         self.interpreter.facts = analysis.facts;
     }
 
@@ -840,6 +846,7 @@ pub const Session = struct {
         if (self.root_task.state.raised_value) |value| interpreter.heap.release(value);
         self.root_task.state.scopes.deinit(interpreter.gpa);
         self.root_task.state.call_stack.deinit(interpreter.gpa);
+        self.root_task.state.type_frames.deinit(interpreter.gpa);
         self.root_task.state.taken_fields.deinit(interpreter.gpa);
         for (self.root_task.state.spare_scopes.items) |environment| {
             environment.bindings.deinit(interpreter.gpa);
@@ -887,6 +894,7 @@ pub fn run(
     trait_calls: *const Checker.MethodCalls,
     widenings: *const Checker.Widenings,
     parameter_calls: *const Checker.MethodCalls,
+    generic_calls: *const Checker.GenericCalls,
     facts: Resolver.Facts,
     out: *std.Io.Writer,
     in: *std.Io.Reader,
@@ -974,6 +982,7 @@ pub fn run(
         .trait_calls = trait_calls,
         .widenings = widenings,
         .parameter_calls = parameter_calls,
+        .generic_calls = generic_calls,
         .literal_types = literal_types,
         .heap = .init(gpa),
         .test_mode = test_mode,
@@ -1025,6 +1034,7 @@ pub fn run(
     // error unwinds through it, so only the lists themselves are left.
     defer root_task.state.scopes.deinit(gpa);
     defer root_task.state.call_stack.deinit(gpa);
+    defer root_task.state.type_frames.deinit(gpa);
     defer root_task.state.taken_fields.deinit(gpa);
     // A recycled environment is out of the heap's live list, so it is this
     // list's to free.
@@ -1865,6 +1875,9 @@ const TaskData = struct {
     scopes: std.ArrayList(*Environment) = .empty,
     spare_scopes: std.ArrayList(*Environment) = .empty,
     call_stack: std.ArrayList(Diagnostic.Frame) = .empty,
+    /// Section 11.3: what each running generic call gave its type parameters,
+    /// innermost last, written in its caller's terms.
+    type_frames: std.ArrayList(Checker.GenericCall) = .empty,
     taken_fields: std.ArrayList(TakenField) = .empty,
     return_value: ?Value = null,
     raised_value: ?Value = null,
@@ -3146,7 +3159,40 @@ fn evaluateTypeTest(self: *Interpreter, expression: *const Ast.Expression) Error
     const value = try self.evaluate(expression.data.type_test.value);
     defer self.heap.release(value);
     const tested = self.type_tests.get(expression).?;
-    return .initBool(valueIs(value, tested.value, tested.target));
+    if (!tested.value.mentionsParameter() and !tested.target.mentionsParameter()) return .initBool(valueIs(value, tested.value, tested.target));
+    var scratch: std.heap.ArenaAllocator = .init(self.gpa);
+    defer scratch.deinit();
+    const static = try self.runtimeType(scratch.allocator(), tested.value, value);
+    const target = try self.runtimeType(scratch.allocator(), tested.target, null);
+    return .initBool(valueIs(value, static, target));
+}
+
+/// Section 4.4 inside a generic body: `static` with each type parameter
+/// replaced by what the running calls gave it, innermost first, since each
+/// call's types are written in its caller's terms. A parameter no running
+/// call binds (a lambda run by another task, say) takes the type of `value`
+/// itself when that is a plain scalar.
+fn runtimeType(self: *Interpreter, allocator: std.mem.Allocator, static: Type, value: ?Value) Error!Type {
+    var result = static;
+    var index = self.task.state.type_frames.items.len;
+    while (index > 0 and result.mentionsParameter()) {
+        index -= 1;
+        const frame = self.task.state.type_frames.items[index];
+        result = try result.substitute(allocator, frame.parameters, frame.arguments);
+    }
+    if (result.kind == .type_parameter) if (value) |present| {
+        const kind: ?Type.Kind = switch (present.data) {
+            .bool => .bool,
+            .int => .int,
+            .float => .float,
+            .string => .string,
+            .bytes => .bytes,
+            .range => .range,
+            else => null,
+        };
+        if (kind) |found| result = .{ .kind = found, .optional = result.optional };
+    };
+    return result;
 }
 
 /// Whether a value whose static type is `static` has the type `target`. A
@@ -3177,7 +3223,10 @@ fn evaluateTypeName(self: *Interpreter, member: Ast.Expression.Member, static: T
     defer self.heap.release(value);
     var written: std.Io.Writer.Allocating = .init(self.gpa);
     defer written.deinit();
-    writeTypeName(&written.writer, value, static) catch return error.OutOfMemory;
+    var scratch: std.heap.ArenaAllocator = .init(self.gpa);
+    defer scratch.deinit();
+    const present = if (static.mentionsParameter()) try self.runtimeType(scratch.allocator(), static, value) else static;
+    writeTypeName(&written.writer, value, present) catch return error.OutOfMemory;
     return self.heap.copyText(written.written());
 }
 
@@ -3939,6 +3988,16 @@ fn evaluateCall(
     expression: *const Ast.Expression,
     call: Ast.Expression.Call,
 ) Error!Value {
+    // Section 11.3: a generic call's types, for 4.4's `is` and `type_name`
+    // inside its body. A program with no generics pays only for the count.
+    const generic = if (self.generic_calls.count() != 0) self.generic_calls.get(call.callee) else null;
+    // The task's own list: a call that waits may resume after another
+    // task has run.
+    const frames = &self.task.state.type_frames;
+    if (generic) |frame| try frames.append(self.gpa, frame);
+    defer if (generic != null) {
+        _ = frames.pop();
+    };
     const result = self.evaluateCallInner(expression, call);
     if (self.task.state.external_completed) {
         self.task.state.external_completed = false;
@@ -4491,6 +4550,7 @@ fn finishTaskGroup(self: *Interpreter, group: *TaskGroupRecord) void {
 fn freeTaskState(self: *Interpreter, task: *TaskRecord) void {
     task.state.state.scopes.deinit(self.gpa);
     task.state.state.call_stack.deinit(self.gpa);
+    task.state.state.type_frames.deinit(self.gpa);
     task.state.state.taken_fields.deinit(self.gpa);
     for (task.state.state.spare_scopes.items) |environment| {
         environment.bindings.deinit(self.gpa);
@@ -4499,6 +4559,7 @@ fn freeTaskState(self: *Interpreter, task: *TaskRecord) void {
     task.state.state.spare_scopes.deinit(self.gpa);
     task.state.state.scopes = .empty;
     task.state.state.call_stack = .empty;
+    task.state.state.type_frames = .empty;
     task.state.state.taken_fields = .empty;
     task.state.state.spare_scopes = .empty;
 }

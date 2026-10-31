@@ -111,6 +111,10 @@ pub const Checked = struct {
     /// key. The value's own version runs: a struct's or class's method, or a
     /// built-in one for a scalar.
     parameter_calls: MethodCalls,
+    /// Every call to a generic function or method, by callee, with the types
+    /// its parameters were given there (11.3), so `is` and `type_name` inside
+    /// the body see runtime types (4.4).
+    generic_calls: GenericCalls,
     /// Every place a type parameter is written as a type. Its declaration is
     /// on the parameter itself.
     parameter_sites: []const ParameterSite,
@@ -192,6 +196,9 @@ pub const JsonDecodes = std.AutoHashMapUnmanaged(*const Ast.Expression, Type);
 pub const TypeTest = struct { value: Type, target: Type };
 pub const TypeTests = std.AutoHashMapUnmanaged(*const Ast.Expression, TypeTest);
 pub const Widenings = std.AutoHashMapUnmanaged(*const Ast.Expression, void);
+/// The type parameters a generic call binds and the types it gives them.
+pub const GenericCall = struct { parameters: []const *const Type.Parameter, arguments: []const Type };
+pub const GenericCalls = std.AutoHashMapUnmanaged(*const Ast.Expression, GenericCall);
 /// A type parameter written as a type, for the language server (11.3).
 pub const ParameterSite = struct { file: u32, span: Source.Span, parameter: *const Type.Parameter };
 
@@ -389,6 +396,8 @@ widenings: Widenings = .empty,
 /// Every method call on a `T with Trait`, by callee, mapped to the trait
 /// member's key. The interpreter runs the value's own version (5.7 of the plan).
 parameter_calls: MethodCalls = .empty,
+/// Every generic call, by callee, with its type arguments (11.3, 4.4).
+generic_calls: GenericCalls = .empty,
 /// Section 16.1's `@deprecated` declarations, by key, and where each one's
 /// own text is, inside which its uses do not warn.
 deprecations: std.StringHashMapUnmanaged(Deprecation) = .empty,
@@ -707,6 +716,7 @@ pub fn checkWithOptions(
         .trait_calls = checker.trait_calls,
         .widenings = checker.widenings,
         .parameter_calls = checker.parameter_calls,
+        .generic_calls = checker.generic_calls,
         .parameter_sites = checker.parameter_sites.items,
     };
 }
@@ -6059,7 +6069,10 @@ fn typeOfStructMethodCall(
         "Match the number of arguments to the method's parameters.",
     );
     parameters.named_units = takesNamedUnits(key);
-    if (base.payload().type_arguments.len > 0) parameters.declared = declared.parameters;
+    if (base.payload().type_arguments.len > 0) {
+        parameters.declared = declared.parameters;
+        if (base.payload().user) |user| try self.noteGenericCall(call.callee, user.type_parameters, base.payload().type_arguments);
+    }
     var inference: ?Inference = null;
     if (signature.type_parameters.len > 0) {
         inference = try Inference.init(self.arena, signature.type_parameters);
@@ -12301,7 +12314,25 @@ fn finishGenericCall(self: *Checker, call: Ast.Expression.Call, name: []const u8
         };
         if (!try self.checkAnswer(call.callee.span, name, parameter, found)) return .invalid;
     }
+    const answers = try self.arena.alloc(Type, inference.solved.len);
+    for (inference.solved, answers) |answer, *slot| slot.* = answer.?;
+    try self.noteGenericCall(call.callee, inference.parameters, answers);
     return inference.substituted(self.arena, result);
+}
+
+/// Records what a generic call gives its type parameters (11.3), adding to
+/// what the receiver's type gave a generic type's own, so the interpreter can
+/// answer 4.4's `is` and `type_name` with runtime types inside the body.
+fn noteGenericCall(self: *Checker, callee: *const Ast.Expression, parameters: []const *const Type.Parameter, arguments: []const Type) Error!void {
+    if (parameters.len == 0 or parameters.len != arguments.len) return;
+    const slot = try self.generic_calls.getOrPut(self.arena, callee);
+    if (!slot.found_existing) {
+        slot.value_ptr.* = .{ .parameters = parameters, .arguments = arguments };
+        return;
+    }
+    const joined_parameters = try std.mem.concat(self.arena, *const Type.Parameter, &.{ slot.value_ptr.parameters, parameters });
+    const joined_arguments = try std.mem.concat(self.arena, Type, &.{ slot.value_ptr.arguments, arguments });
+    slot.value_ptr.* = .{ .parameters = joined_parameters, .arguments = joined_arguments };
 }
 
 /// Section 11.3's `Grid(3, 3, ".")`: a generic type is built without its
