@@ -2166,7 +2166,7 @@ type's fields, properties, and methods, so a name means one thing wherever it is
 A type-level field's annotation is optional: without one, the field holds the type of its
 value, as a module-level binding does. Its value may read only the type-level fields
 declared before it. Setting the fields up follows 14.1's lazy rule: once, in declaration
-order, the first time the type is constructed or one of its type-level members is reached;
+order, the first time the type is constructed or one of its type-level members is reached (14.1 says what that sets up for a subclass, a nested type, and the file);
 reaching a field that setup has not got to yet through a function is an initialization-cycle
 error. Because a type-level field is one binding for the whole program, which any function
 may change, 4.5 does not narrow it. Type-level computed properties are not part of the
@@ -2752,6 +2752,13 @@ written.
 Type-level fields follow the same lazy rule, initializing once in declaration order when
 the type is first constructed or a type-level member is accessed. Merely mentioning the
 type in an annotation or `using` does not initialize it.
+
+A type declared in a file is one of the file's members, and so is each of the type's
+type-level members. Constructing the type, calling one of its type-level functions, reading
+one of its type-level fields, or naming one of its enum values first initializes the file,
+then sets up the type. Constructing a subclass constructs its base, so the base's type-level
+fields are set up first, then the subclass's. A nested type is a type of its own: reaching it
+sets up only its own type-level fields, never its enclosing type's (14.3).
 
 `Program.arguments` is the provisional library name for a list of only the program
 arguments, excluding the Emerald executable and entry-file paths. `Program.environment(name)`

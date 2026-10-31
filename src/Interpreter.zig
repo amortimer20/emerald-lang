@@ -2726,12 +2726,18 @@ fn find(self: *Interpreter, name: []const u8) ?*Binding {
 /// Section 14.1: a file that is not the entry initializes once, the first time
 /// anything reaches one of its members. Called wherever a module-level key is
 /// about to be read, assigned, or called.
+///
+/// A type declared in a file is one of its members, and so is each of the
+/// type's own type-level members (14.1): reaching either initializes the file
+/// first, then sets up the type. A nested type is a type of its own, not a
+/// member of its encloser, so reaching it sets up only itself (14.3).
 fn reach(self: *Interpreter, key: []const u8, span: Source.Span) Error!void {
-    // A type-level member belongs to its type, whose setup is separate from
-    // its file's: the fields' values reach whatever they read themselves.
-    if (self.facts.type_members.get(key)) |type_key| return self.setUpType(type_key, key, span);
+    if (!self.structs.contains(key)) if (self.facts.type_members.get(key)) |type_key| {
+        try self.reachFile(type_key, span);
+        return self.setUpType(type_key, key, span);
+    };
     try self.reachFile(key, span);
-    if (self.type_setups.contains(key)) try self.setUpType(key, null, span);
+    if (self.structs.contains(key)) try self.setUpType(key, null, span);
 }
 
 /// Section 10.4: "Type-level fields follow the same lazy rule, initializing
@@ -2739,6 +2745,12 @@ fn reach(self: *Interpreter, key: []const u8, span: Source.Span) Error!void {
 /// type-level member is accessed." `member` is the member reached, or null
 /// when the type is being constructed.
 fn setUpType(self: *Interpreter, type_key: []const u8, member: ?[]const u8, span: Source.Span) Error!void {
+    // Section 10.4: constructing a subclass constructs its base, so the
+    // base's type-level fields are set up first, then the subclass's.
+    if (member == null and self.type_setups.count() != 0) if (self.struct_infos.get(type_key)) |info| if (info.base) |base| {
+        try self.reachFile(base, span);
+        try self.setUpType(base, null, span);
+    };
     // Never added to while running, so this pointer stays put.
     const setup = self.type_setups.getPtr(type_key) orelse return;
     switch (setup.state) {
