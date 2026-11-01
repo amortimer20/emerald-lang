@@ -187,7 +187,9 @@ fn resolveLocalZone(arena: std.mem.Allocator, io: std.Io, environ_map: *const st
     switch (TimeZone.localSource(environ_map.get("TZ"), link)) {
         .utc => return .utc,
         .file => |file| {
-            const name = canonicalName(arena, file.name) orelse return .utc;
+            // A path outside any `zoneinfo/` names itself, and keeps its
+            // leading `/`; only a zone name is normalized.
+            const name = if (std.mem.eql(u8, file.name, file.path)) file.name else canonicalName(arena, file.name) orelse return .utc;
             const rules = readZoneFile(arena, io, file.path) orelse builtInRules(arena, name) orelse return .utc;
             return .{ .name = name, .rules = rules };
         },
