@@ -6204,3 +6204,32 @@ Noted, not fixed:
   check whether a function with no declared result type may `return` a value. Both go with the
   diagnostics batch.
 
+
+## 2026-11-01: Batch 2, platform and tooling
+
+The last batch-2 PR, built on Windows with Zig 0.17.0; a Sonnet subagent wrote B13 and B14 in its
+own worktree and Claude reviewed and cherry-picked them. B13: when `TZ` names a zone the system
+cannot read, the local zone comes from the built-in database before UTC, and a zone name from
+`zoneinfo` or the `/etc/localtime` link is normalized lexically (`//UTC` is `UTC`); a `TZ` path
+outside `zoneinfo` keeps its name as written (review fix). B14: the formatter drops a byte-order
+mark (3.1, so `format --check` reports one) and the `\r` of CRLF comment lines; the language server
+sends `emerald format`'s text to the document's real end, and no edit for canonical text. B16: the
+user chose one separator style (2026-11-01): `Path.join`, `parent`, `absolute` and
+`Directory.list` give `/` everywhere, and on Windows the lexical operations also read `\`; 15.3
+and the File page say so. B17: `main` switches a Windows console's output code page to UTF-8 and
+restores it on return; checked by hand in a console on code page 437.
+
+The language-server tests printed an `OBJECT_PATH_INVALID` stack trace on Windows Debug while
+passing, which the build runner showed as a "failed command" (the subagent took it for a flaky
+failure). Cause: a test's `file:///deprecated-test.em` puts the document at a root, and
+`holdsEntryFile` probed `/\main.em`, a malformed UNC path; Zig prints a trace for that unexpected
+status before the error is caught. The probe no longer doubles a root's separator.
+
+Noted, not fixed:
+
+- The console's input code page is unchanged, so typing non-ASCII text at an `input` prompt in a
+  Windows console on code page 437 is untested and may raise `InputError` for invalid UTF-8.
+- B17 restores the code page when `main` returns; a Ctrl+C that kills the process leaves the
+  console on UTF-8, which is harmless.
+- B13's end-to-end path (a missing system file) cannot run on Windows, which ignores `TZ`; unit
+  tests cover its parts, and Linux CI runs them.

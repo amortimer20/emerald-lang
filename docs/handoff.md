@@ -7,19 +7,25 @@ belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 
 ## Current status
 
-**Where things stand (2026-10-31, paused by the user):** `v0.8.0-rc1` is published as a
+**Where things stand (2026-11-01):** `v0.8.0-rc1` is published as a
 prerelease (tag on `73b9b19`, all three assets, install scripts checked). The codebase review
 (roadmap item 10) has reported and been triaged in [`review/triage.md`](review/triage.md), with
 every decision accepted. Fix batch 1 is merged (PRs #57–#61: crashes, `exit()` in tasks, the
-language server, allocation failures). Fix batch 2 is three quarters merged: #62 (B4, B5, B7, B8,
-D1; `src/FloatMath.zig`), #63 (B6, B9, B11, D6) and #64 (B10, B12, D3). **Next, when the user says
-go:** batch 2's last PR, platform and tooling (B13, B14, B16, B17; B16 and B17 need the user's
-Windows check). Then the spec corrections and contract (E, D2, D8), then diagnostics in two
+language server, allocation failures). Fix batch 2's first three PRs are merged: #62 (B4, B5, B7,
+B8, D1; `src/FloatMath.zig`), #63 (B6, B9, B11, D6) and #64 (B10, B12, D3). Its last PR, platform
+and tooling, is open on `claude/platform-tooling`, built and checked on Windows: B13 (the local
+zone falls back to the built-in database; its name is normalized), B14 (the formatter drops a
+BOM and comments' CRs; the language server matches it and sends no edit for canonical text), B16
+(the user chose one style, 2026-11-01: paths Emerald produces use `/` on every platform, and
+Windows reads `\` as a separator too; 15.3), B17 (a Windows console shows UTF-8 output; its code
+page is restored on exit), and a doubled separator in `Project.holdsEntryFile` that printed a
+Debug stack trace from the language-server tests on Windows. The website's File page needs B16's
+separator paragraph when 0.8.0 ships. **Next, once that PR is merged:** the spec corrections and contract (E, D2, D8), then diagnostics in two
 batches (C, D4, D5, plus the `return`-in-a-block warning in the journal, 2026-10-30), then a rerun
 of the mutation sweep and allocation-failure harness. The user asked for Sonnet subagents for
 routine fixes to spare usage (Opus for subtle ones), one PR at a time. Still open: two
 allocation-failure programs (`min_max`, a caught index error) used memory nondeterministically,
-not investigated; and the follow-ups noted in the journal (2026-10-30). Then roadmap item 11's
+not investigated; and the follow-ups noted in the journal (2026-10-30 and 2026-11-01). Then roadmap item 11's
 plan, and the compiler.
 
 The Zig rewrite implements the current rewrite-context language surface: control flow,
