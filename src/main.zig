@@ -187,18 +187,33 @@ fn resolveLocalZone(arena: std.mem.Allocator, io: std.Io, environ_map: *const st
     switch (TimeZone.localSource(environ_map.get("TZ"), link)) {
         .utc => return .utc,
         .file => |file| {
-            const rules = readZoneFile(arena, io, file.path) orelse return .utc;
-            return .{ .name = arena.dupe(u8, file.name) catch return .utc, .rules = rules };
+            const name = canonicalName(arena, file.name) orelse return .utc;
+            const rules = readZoneFile(arena, io, file.path) orelse builtInRules(arena, name) orelse return .utc;
+            return .{ .name = name, .rules = rules };
         },
-        .named => |name| {
+        .named => |raw| {
             for (TimeZone.zoneinfo_directories) |directory| {
-                const path = std.mem.concat(arena, u8, &.{ directory, name }) catch return .utc;
-                if (readZoneFile(arena, io, path)) |rules| return .{ .name = name, .rules = rules };
+                const path = std.mem.concat(arena, u8, &.{ directory, raw }) catch return .utc;
+                if (readZoneFile(arena, io, path)) |rules| return .{ .name = canonicalName(arena, raw) orelse raw, .rules = rules };
             }
-            const rule = TimeZone.parsePosix(name) orelse return .utc;
-            return .{ .name = name, .rules = .{ .initial = rule.standard, .footer = rule } };
+            // No system file: the built-in database, so `TZ=GB` or
+            // `TZ=America/New_York` works on a machine without zoneinfo.
+            if (canonicalName(arena, raw)) |name| if (builtInRules(arena, name)) |rules| return .{ .name = name, .rules = rules };
+            const rule = TimeZone.parsePosix(raw) orelse return .utc;
+            return .{ .name = raw, .rules = .{ .initial = rule.standard, .footer = rule } };
         },
     }
+}
+
+/// `name` normalized (`TimeZone.normalizeName`), allocated in `arena`.
+fn canonicalName(arena: std.mem.Allocator, name: []const u8) ?[]const u8 {
+    const buffer = arena.alloc(u8, name.len) catch return null;
+    return TimeZone.normalizeName(buffer, name);
+}
+
+fn builtInRules(arena: std.mem.Allocator, name: []const u8) ?TimeZone.Rules {
+    const database = TimeZone.Database.load(arena) catch return null;
+    return (database.rules(arena, name) catch return null);
 }
 
 fn readZoneFile(arena: std.mem.Allocator, io: std.Io, path: []const u8) ?TimeZone.Rules {
