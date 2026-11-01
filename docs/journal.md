@@ -6225,11 +6225,20 @@ failure). Cause: a test's `file:///deprecated-test.em` puts the document at a ro
 `holdsEntryFile` probed `/\main.em`, a malformed UNC path; Zig prints a trace for that unexpected
 status before the error is caught. The probe no longer doubles a root's separator.
 
+`/code-review` at high effort raised seven points. Fixed: the built-in database was decompressed
+on every run with no `/etc/localtime` (the `Local` placeholder) or a POSIX `TZ`, so a `TZ` rule
+is now tried before the database and only a real zone name reaches it; and a name that does not
+normalize keeps its readable rules instead of falling to UTC. Not needed: `realPathFileAlloc`
+never returns a `\\?\` prefix for the separator rewrite to break. Left, and listed below: the
+console's input code page, two runs sharing one console restoring its page under each other,
+multi-line string spans keeping a CR, and reusing `std.fs.path.resolvePosix` for zone names.
+
 Noted, not fixed:
 
 - The console's input code page is unchanged, so typing non-ASCII text at an `input` prompt in a
   Windows console on code page 437 is untested and may raise `InputError` for invalid UTF-8.
 - B17 restores the code page when `main` returns; a Ctrl+C that kills the process leaves the
-  console on UTF-8, which is harmless.
+  console on UTF-8, which is harmless. The page belongs to the console, so two Emerald runs
+  sharing one console can restore it under each other; `WriteConsoleW` would avoid that.
 - B13's end-to-end path (a missing system file) cannot run on Windows, which ignores `TZ`; unit
   tests cover its parts, and Linux CI runs them.

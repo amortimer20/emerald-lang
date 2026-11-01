@@ -188,9 +188,14 @@ fn resolveLocalZone(arena: std.mem.Allocator, io: std.Io, environ_map: *const st
         .utc => return .utc,
         .file => |file| {
             // A path outside any `zoneinfo/` names itself, and keeps its
-            // leading `/`; only a zone name is normalized.
-            const name = if (std.mem.eql(u8, file.name, file.path)) file.name else canonicalName(arena, file.name) orelse return .utc;
-            const rules = readZoneFile(arena, io, file.path) orelse builtInRules(arena, name) orelse return .utc;
+            // leading `/`, as does the `Local` placeholder; only a zone name
+            // is normalized, and only a zone name is worth the built-in
+            // database, which a run otherwise never decompresses.
+            const zone_name = !std.mem.eql(u8, file.name, file.path) and !std.mem.eql(u8, file.name, "Local");
+            const normalized = if (zone_name) canonicalName(arena, file.name) else null;
+            const name = normalized orelse arena.dupe(u8, file.name) catch return .utc;
+            const rules = readZoneFile(arena, io, file.path) orelse
+                (if (normalized != null) builtInRules(arena, name) else null) orelse return .utc;
             return .{ .name = name, .rules = rules };
         },
         .named => |raw| {
@@ -198,11 +203,13 @@ fn resolveLocalZone(arena: std.mem.Allocator, io: std.Io, environ_map: *const st
                 const path = std.mem.concat(arena, u8, &.{ directory, raw }) catch return .utc;
                 if (readZoneFile(arena, io, path)) |rules| return .{ .name = canonicalName(arena, raw) orelse raw, .rules = rules };
             }
-            // No system file: the built-in database, so `TZ=GB` or
-            // `TZ=America/New_York` works on a machine without zoneinfo.
-            if (canonicalName(arena, raw)) |name| if (builtInRules(arena, name)) |rules| return .{ .name = name, .rules = rules };
-            const rule = TimeZone.parsePosix(raw) orelse return .utc;
-            return .{ .name = raw, .rules = .{ .initial = rule.standard, .footer = rule } };
+            // A POSIX rule such as `CET-1CEST` needs no database. Otherwise
+            // the built-in one, so `TZ=GB` or `TZ=America/New_York` works on
+            // a machine without zoneinfo.
+            if (TimeZone.parsePosix(raw)) |rule| return .{ .name = raw, .rules = .{ .initial = rule.standard, .footer = rule } };
+            const name = canonicalName(arena, raw) orelse return .utc;
+            const rules = builtInRules(arena, name) orelse return .utc;
+            return .{ .name = name, .rules = rules };
         },
     }
 }
