@@ -421,6 +421,16 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
     format_check_messy.addCheck(.{ .expect_stdout_match = "Run `emerald format " });
     test_step.dependOn(&format_check_messy.step);
 
+    // 3.1: the formatter writes UTF-8 without a byte-order mark, so a canonical
+    // file that starts with one is not formatted.
+    const canonical_with_bom = fixtures.add("canonical-with-bom.em", "\xEF\xBB\xBFvar name = \"Ava\"\nprint(name)\n");
+    const format_check_bom = b.addRunArtifact(exe);
+    format_check_bom.addArgs(&.{ "format", "--check" });
+    format_check_bom.addFileArg(canonical_with_bom);
+    format_check_bom.expectExitCode(1);
+    format_check_bom.addCheck(.{ .expect_stdout_match = "Would format " });
+    test_step.dependOn(&format_check_bom.step);
+
     // A separate fixture from the `--check` case above: both run against the
     // same `fixtures` step with no ordering between them, and this one is
     // actually rewritten in place.

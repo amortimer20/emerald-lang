@@ -195,6 +195,18 @@ const Printer = struct {
         try self.out.appendSlice(self.gpa, bytes);
     }
 
+    /// A comment's text as written, except that the output has one line-ending
+    /// style (3.1): a carriage return before a line feed, or ending the
+    /// comment, is a CRLF file's line break and is dropped. A lone one inside
+    /// a block comment is text and stays.
+    fn writeComment(self: *Printer, span: Source.Span) PrintError!void {
+        const text = self.source.text[span.start..span.end];
+        for (text, 0..) |byte, index| {
+            if (byte == '\r' and (index + 1 == text.len or text[index + 1] == '\n')) continue;
+            try self.out.append(self.gpa, byte);
+        }
+    }
+
     fn writeSpan(self: *Printer, span: Source.Span) PrintError!void {
         try self.write(self.source.text[span.start..span.end]);
     }
@@ -263,7 +275,7 @@ const Printer = struct {
                         pending_blank = false;
                     }
                     try self.writeIndent();
-                    try self.writeSpan(item.span);
+                    try self.writeComment(item.span);
                     try self.write("\n");
                 },
             }
@@ -288,7 +300,7 @@ const Printer = struct {
         if (item.kind == .blank_line or self.spansMultipleLines(after, item.span.start)) return;
         self.trivia_cursor += 1;
         try self.write(" ");
-        try self.writeSpan(item.span);
+        try self.writeComment(item.span);
     }
 
     // Top level.
@@ -1511,6 +1523,23 @@ test "a comment on the same line as a statement stays there" {
         "print(1) # explains itself\nprint(2)\n",
         "print(1) # explains itself\nprint(2)\n",
     );
+}
+
+test "comments on CRLF lines lose their carriage returns" {
+    try expectFormats("# c\r\nprint(1)  # trailing\r\nprint(2)\r\n", "# c\nprint(1) # trailing\nprint(2)\n");
+    try expectFormats("## doc\r\nfunc f() {}\r\n#[ a\r\n b ]#\r\nprint(1) # end\r", "## doc\nfunc f() { }\n#[ a\n b ]#\nprint(1) # end\n");
+    // The output has no carriage return at all.
+    const gpa = testing.allocator;
+    const formatted = try formatText(gpa, "# a\r\n#[ b\r\n c ]#\r\nvar x = 1 # d\r\n# e\r\n", .stroustrup);
+    defer gpa.free(formatted);
+    try testing.expect(std.mem.indexOfScalar(u8, formatted, '\r') == null);
+}
+
+test "a file's byte-order mark is not part of its formatted text" {
+    var source = try Source.init(testing.allocator, "test.em", "\xEF\xBB\xBFvar x = 1\n");
+    defer source.deinit(testing.allocator);
+    try testing.expect(source.byte_order_mark);
+    try expectFormats("\xEF\xBB\xBFvar x = 1\n", "var x = 1\n");
 }
 
 test "leading blank lines before comments disappear on the first pass" {
