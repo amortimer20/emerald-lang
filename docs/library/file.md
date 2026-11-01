@@ -71,6 +71,11 @@ and subdirectories; their order is unspecified.
 `absolute?(path: String) -> Bool` tests syntax; `absolute(path: String) -> String` resolves an
 existing path to an absolute path.
 
+Paths that `Path` and `Directory.list` give back use `/` on every operating system, so a
+program prints the same path on Windows, macOS, and Linux; Windows accepts `/` everywhere. On
+Windows, `\` in a path you pass in is also a separator: `Path.name("notes\\week1.txt")` is
+`week1.txt`, and `Path.join(["C:\\Users\\ada", "notes.txt"])` is `C:/Users/ada/notes.txt`.
+
 ## Raises
 
 Every non-predicate operation raises `FileError` for a missing path, denied access, invalid

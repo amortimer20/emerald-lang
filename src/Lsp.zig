@@ -1272,9 +1272,48 @@ fn onFormatting(server: *Server, gpa: std.mem.Allocator, uri: []const u8, id: st
     }
 
     const formatted = try Formatter.print(arena, source, tokenized.tokens, parsed.?.program, loaded.project.brace_style);
-    const whole_document = Source.Span{ .start = 0, .end = @intCast(document.text.items.len) };
-    const edit = TextEdit{ .range = lspRange(source, whole_document), .newText = formatted };
+
+    // The same text `emerald format` writes. A document that already is that
+    // text needs no edit; one that is not (a byte-order mark, a trailing lone
+    // carriage return) is replaced whole, to the document's real end.
+    if (std.mem.eql(u8, formatted, document.text.items)) {
+        try respond(gpa, out, id, @as([]const TextEdit, &.{}));
+        return;
+    }
+    const edit = TextEdit{
+        .range = .{ .start = .{ .line = 0, .character = 0 }, .end = documentEnd(document.text.items) },
+        .newText = formatted,
+    };
     try respond(gpa, out, id, &[_]TextEdit{edit});
+}
+
+/// The position just past the last character of `text`, as a client counts
+/// it: `\n`, `\r\n`, and a lone `\r` all end a line (the protocol's rule), and
+/// the character is UTF-16 code units into the last line. Unlike `lspPosition`,
+/// this does not trim a trailing `\r`, so the end is the document's real end.
+fn documentEnd(text: []const u8) Position {
+    var line: u32 = 0;
+    var line_start: usize = 0;
+    var index: usize = 0;
+    while (index < text.len) {
+        const byte = text[index];
+        index += 1;
+        if (byte == '\r' and index < text.len and text[index] == '\n') index += 1;
+        if (byte == '\n' or byte == '\r') {
+            line += 1;
+            line_start = index;
+        }
+    }
+    var character: u32 = 0;
+    var i: usize = line_start;
+    while (i < text.len) {
+        // A byte that is not valid UTF-8 counts as one unit.
+        const width = std.unicode.utf8ByteSequenceLength(text[i]) catch 1;
+        const code_point = if (i + width <= text.len) std.unicode.utf8Decode(text[i..][0..width]) catch null else null;
+        character += if (code_point) |cp| std.unicode.utf16CodepointSequenceLength(cp) catch 1 else 1;
+        i += if (code_point == null) 1 else width;
+    }
+    return .{ .line = line, .character = character };
 }
 
 // Hover.
@@ -5965,6 +6004,76 @@ test "completion handler answers type members and a bare visible name" {
         try labels.put(gpa, label.string, {});
     }
     try testing.expect(labels.contains("self"));
+}
+
+/// Asks the server to format `text` and returns the one edit's `newText` and
+/// end position, or null when it sends no edit. `response` owns the result.
+fn formatEdit(server: *Server, text: []const u8, response: *std.json.Parsed(std.json.Value)) !?struct { new_text: []const u8, end: Position } {
+    const gpa = testing.allocator;
+    const uri = "untitled:format.em";
+    try server.store(uri, text);
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    try onFormatting(server, gpa, uri, .{ .integer = 1 }, &out.writer);
+    var reader: std.Io.Reader = .fixed(out.written());
+    response.* = (try readMessage(gpa, &reader)).?;
+    const edits = response.value.object.get("result").?.array.items;
+    if (edits.len == 0) return null;
+    try testing.expectEqual(@as(usize, 1), edits.len);
+    const range = edits[0].object.get("range").?.object;
+    const start = range.get("start").?.object;
+    try testing.expectEqual(@as(i64, 0), start.get("line").?.integer);
+    try testing.expectEqual(@as(i64, 0), start.get("character").?.integer);
+    const end = range.get("end").?.object;
+    return .{
+        .new_text = edits[0].object.get("newText").?.string,
+        .end = .{ .line = @intCast(end.get("line").?.integer), .character = @intCast(end.get("character").?.integer) },
+    };
+}
+
+test "formatting covers the whole document, including a trailing lone carriage return" {
+    var server: Server = .{ .gpa = testing.allocator, .io = std.Io.Threaded.global_single_threaded.io() };
+    defer server.deinit();
+    var response: std.json.Parsed(std.json.Value) = undefined;
+
+    const edit = (try formatEdit(&server, "var x = 1\r", &response)).?;
+    defer response.deinit();
+    try testing.expectEqualStrings("var x = 1\n", edit.new_text);
+    // A lone carriage return ends a line, so the document ends at 1:0.
+    try testing.expectEqual(Position{ .line = 1, .character = 0 }, edit.end);
+
+    // A CRLF document, with comments, becomes all LF.
+    var crlf_response: std.json.Parsed(std.json.Value) = undefined;
+    const crlf = (try formatEdit(&server, "# c\r\nprint(1)  # t\r\nprint(2)\r\n", &crlf_response)).?;
+    defer crlf_response.deinit();
+    try testing.expectEqualStrings("# c\nprint(1) # t\nprint(2)\n", crlf.new_text);
+    try testing.expectEqual(Position{ .line = 3, .character = 0 }, crlf.end);
+}
+
+test "formatting gives emerald format's text for a byte-order mark, and no edit for canonical text" {
+    var server: Server = .{ .gpa = testing.allocator, .io = std.Io.Threaded.global_single_threaded.io() };
+    defer server.deinit();
+
+    var bom_response: std.json.Parsed(std.json.Value) = undefined;
+    const bom = (try formatEdit(&server, "\xEF\xBB\xBFvar x = 1\n", &bom_response)).?;
+    defer bom_response.deinit();
+    try testing.expectEqualStrings("var x = 1\n", bom.new_text);
+    try testing.expectEqual(Position{ .line = 1, .character = 0 }, bom.end);
+
+    var canonical_response: std.json.Parsed(std.json.Value) = undefined;
+    const canonical = try formatEdit(&server, "var x = 1\n", &canonical_response);
+    defer canonical_response.deinit();
+    try testing.expect(canonical == null);
+}
+
+test "documentEnd counts line terminators and UTF-16 units" {
+    try testing.expectEqual(Position{ .line = 0, .character = 0 }, documentEnd(""));
+    try testing.expectEqual(Position{ .line = 0, .character = 3 }, documentEnd("abc"));
+    try testing.expectEqual(Position{ .line = 1, .character = 0 }, documentEnd("abc\n"));
+    try testing.expectEqual(Position{ .line = 1, .character = 0 }, documentEnd("abc\r\n"));
+    try testing.expectEqual(Position{ .line = 2, .character = 0 }, documentEnd("a\r\r"));
+    // One scalar outside the Basic Multilingual Plane is two UTF-16 units.
+    try testing.expectEqual(Position{ .line = 1, .character = 3 }, documentEnd("x\n\u{1F600}y"));
 }
 
 test "typed library completion describes the checker-special call shapes" {

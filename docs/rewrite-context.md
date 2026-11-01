@@ -3083,7 +3083,10 @@ final unterminated line is still returned. `with_open` and `with_writer` close t
 after normal completion, return, or error. `read`, `read_lines`, `write`, `write_lines`,
 `append`, FileHandle reads, and FileWriter writes are UTF-8 text only; `write_lines` writes a
 newline after every line. `Path.absolute` is the one Path operation that consults the
-filesystem.
+filesystem. Paths Emerald produces (`Path.join`, `Path.parent`, `Path.absolute`, and
+`Directory.list`) use `/` on every platform, so a program prints the same path everywhere;
+on Windows, which accepts `/` throughout, the lexical operations also read `\` as a
+separator in the paths they are given, and `C:\Users\ada` comes back as `C:/Users/ada`.
 
 `File.write`, `File.write_binary`, `File.write_lines`, `File.append`, and `File.create` create a
 missing file (append starts from empty, as C#'s `File.AppendAllText` and Python's and Ruby's append
@@ -3386,9 +3389,12 @@ call into it, with the prelude's frames left out of the trace.
 by default, so `emerald check`, tests of Emerald itself, and embedded runs never depend on
 the machine they run on. `run`, `test`, and `repl` resolve the machine's zone the way glibc
 does. A `TZ` variable wins: empty means UTC; a name is looked up in the system's zoneinfo
-directories and otherwise read as a POSIX rule such as `EST5EDT,M3.2.0,M11.1.0`; a path
-names a zone file. Without `TZ`, `/etc/localtime` is read, and named from where it links.
-Windows reads its own current zone rules. Whatever cannot be read or understood leaves the
+directories, then read as a POSIX rule such as `EST5EDT,M3.2.0,M11.1.0`, and otherwise looked
+up in the built-in database (so `TZ=America/New_York` works on a machine with no zoneinfo); a path
+names a zone file. Without `TZ`, `/etc/localtime` is read, and named from where it links
+(a missing file falls back to the built-in database by that name). A zone's name is normalized
+lexically (repeated `/` collapsed, `.` dropped, `..` resolved, no leading `/`), so
+`/usr/share/zoneinfo//UTC` is `UTC` and equal zones have equal names. Windows reads its own current zone rules. Whatever cannot be read or understood leaves the
 program in UTC rather than stopping it. `TimeZone.local.name` is the zone's name, such as
 `America/New_York`.
 

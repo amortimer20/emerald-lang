@@ -380,6 +380,30 @@ pub fn zoneNameOf(path: []const u8) ?[]const u8 {
     return if (name.len == 0) null else name;
 }
 
+/// `name` with repeated `/` collapsed, `.` segments dropped, `..` resolved
+/// lexically (one above the start is dropped, as at a root), and any leading
+/// `/` removed, so equal zones get equal names: `/UTC` and `Europe/../Europe/London`
+/// become `UTC` and `Europe/London`. Written to `buffer`, which must be at
+/// least as long as `name`; null when nothing is left.
+pub fn normalizeName(buffer: []u8, name: []const u8) ?[]const u8 {
+    var length: usize = 0;
+    var segments = std.mem.tokenizeScalar(u8, name, '/');
+    while (segments.next()) |segment| {
+        if (std.mem.eql(u8, segment, ".")) continue;
+        if (std.mem.eql(u8, segment, "..")) {
+            length = if (std.mem.lastIndexOfScalar(u8, buffer[0..length], '/')) |slash| slash else 0;
+            continue;
+        }
+        if (length > 0) {
+            buffer[length] = '/';
+            length += 1;
+        }
+        @memcpy(buffer[length..][0..segment.len], segment);
+        length += segment.len;
+    }
+    return if (length == 0) null else buffer[0..length];
+}
+
 /// Where a named zone's TZif file may be, in the order glibc and macOS look.
 pub const zoneinfo_directories = [_][]const u8{
     "/usr/share/zoneinfo/",
@@ -465,6 +489,39 @@ test "POSIX rule forms" {
     for ([_][]const u8{ "", "E5", "EST", "EST5EDT,M3.2.0", "EST5EDT,M13.2.0,M11.1.0", "America/New_York", "EST25" }) |bad| {
         try testing.expect(parsePosix(bad) == null);
     }
+}
+
+test "zone names are normalized lexically" {
+    var buffer: [64]u8 = undefined;
+    const cases = [_][2][]const u8{
+        .{ "UTC", "UTC" },
+        .{ "/UTC", "UTC" },
+        .{ "//Europe///London", "Europe/London" },
+        .{ "Europe/../Europe/London", "Europe/London" },
+        .{ "./Europe/./London/", "Europe/London" },
+        .{ "../Europe/London", "Europe/London" },
+        .{ "America/Argentina/../New_York", "America/New_York" },
+    };
+    for (cases) |case| try testing.expectEqualStrings(case[1], normalizeName(&buffer, case[0]).?);
+    for ([_][]const u8{ "", "/", "//", ".", "a/..", "../.." }) |empty| try testing.expect(normalizeName(&buffer, empty) == null);
+}
+
+test "a zone path from zoneinfo names the same zone however it is written" {
+    var buffer: [64]u8 = undefined;
+    const link = localSource(null, "/usr/share/zoneinfo//UTC").file.name;
+    try testing.expectEqualStrings("UTC", normalizeName(&buffer, link).?);
+    const tz = localSource("/usr/share/zoneinfo/Europe/../Europe/London", null).file.name;
+    try testing.expectEqualStrings("Europe/London", normalizeName(&buffer, tz).?);
+}
+
+test "the built-in database answers for names the system may lack" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const database = try Database.load(arena.allocator());
+    for ([_][]const u8{ "GB", "US/Eastern", "America/New_York" }) |name| {
+        try testing.expect((try database.rules(arena.allocator(), name)) != null);
+    }
+    try testing.expect((try database.rules(arena.allocator(), "Not/AZone")) == null);
 }
 
 test "transitions, then the footer after the last one" {

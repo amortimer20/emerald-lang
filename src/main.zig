@@ -57,7 +57,36 @@ fn runtimeAllocator(init: std.process.Init) std.mem.Allocator {
     return if (builtin.mode == .debug) init.gpa else std.heap.smp_allocator;
 }
 
+/// A Windows console decodes output with its own code page, by default an
+/// OEM one such as 437, so Emerald's UTF-8 `print("é")` showed as `├⌐`.
+/// Every command writes UTF-8 (3.1), so the console reads it as UTF-8 while
+/// Emerald runs and gets its own code page back afterwards. Redirected output
+/// is bytes and never passes through a code page.
+const ConsoleCodePage = struct {
+    const utf8: c_uint = 65001;
+    extern "kernel32" fn GetConsoleOutputCP() callconv(.winapi) c_uint;
+    extern "kernel32" fn SetConsoleOutputCP(code_page: c_uint) callconv(.winapi) c_int;
+
+    /// The page to restore, or null when there is no console or it already reads UTF-8.
+    fn useUtf8() ?c_uint {
+        if (comptime builtin.os.tag != .windows) return null else {
+            const original = GetConsoleOutputCP();
+            if (original == 0 or original == utf8) return null;
+            if (SetConsoleOutputCP(utf8) == 0) return null;
+            return original;
+        }
+    }
+
+    fn restore(original: ?c_uint) void {
+        if (comptime builtin.os.tag != .windows) return else {
+            if (original) |page| _ = SetConsoleOutputCP(page);
+        }
+    }
+};
+
 pub fn main(init: std.process.Init) !u8 {
+    const original_code_page = ConsoleCodePage.useUtf8();
+    defer ConsoleCodePage.restore(original_code_page);
     const gpa = runtimeAllocator(init);
     const io = init.io;
 
@@ -158,18 +187,42 @@ fn resolveLocalZone(arena: std.mem.Allocator, io: std.Io, environ_map: *const st
     switch (TimeZone.localSource(environ_map.get("TZ"), link)) {
         .utc => return .utc,
         .file => |file| {
-            const rules = readZoneFile(arena, io, file.path) orelse return .utc;
-            return .{ .name = arena.dupe(u8, file.name) catch return .utc, .rules = rules };
+            // A path outside any `zoneinfo/` names itself, and keeps its
+            // leading `/`, as does the `Local` placeholder; only a zone name
+            // is normalized, and only a zone name is worth the built-in
+            // database, which a run otherwise never decompresses.
+            const zone_name = !std.mem.eql(u8, file.name, file.path) and !std.mem.eql(u8, file.name, "Local");
+            const normalized = if (zone_name) canonicalName(arena, file.name) else null;
+            const name = normalized orelse arena.dupe(u8, file.name) catch return .utc;
+            const rules = readZoneFile(arena, io, file.path) orelse
+                (if (normalized != null) builtInRules(arena, name) else null) orelse return .utc;
+            return .{ .name = name, .rules = rules };
         },
-        .named => |name| {
+        .named => |raw| {
             for (TimeZone.zoneinfo_directories) |directory| {
-                const path = std.mem.concat(arena, u8, &.{ directory, name }) catch return .utc;
-                if (readZoneFile(arena, io, path)) |rules| return .{ .name = name, .rules = rules };
+                const path = std.mem.concat(arena, u8, &.{ directory, raw }) catch return .utc;
+                if (readZoneFile(arena, io, path)) |rules| return .{ .name = canonicalName(arena, raw) orelse raw, .rules = rules };
             }
-            const rule = TimeZone.parsePosix(name) orelse return .utc;
-            return .{ .name = name, .rules = .{ .initial = rule.standard, .footer = rule } };
+            // A POSIX rule such as `CET-1CEST` needs no database. Otherwise
+            // the built-in one, so `TZ=GB` or `TZ=America/New_York` works on
+            // a machine without zoneinfo.
+            if (TimeZone.parsePosix(raw)) |rule| return .{ .name = raw, .rules = .{ .initial = rule.standard, .footer = rule } };
+            const name = canonicalName(arena, raw) orelse return .utc;
+            const rules = builtInRules(arena, name) orelse return .utc;
+            return .{ .name = name, .rules = rules };
         },
     }
+}
+
+/// `name` normalized (`TimeZone.normalizeName`), allocated in `arena`.
+fn canonicalName(arena: std.mem.Allocator, name: []const u8) ?[]const u8 {
+    const buffer = arena.alloc(u8, name.len) catch return null;
+    return TimeZone.normalizeName(buffer, name);
+}
+
+fn builtInRules(arena: std.mem.Allocator, name: []const u8) ?TimeZone.Rules {
+    const database = TimeZone.Database.load(arena) catch return null;
+    return (database.rules(arena, name) catch return null);
 }
 
 fn readZoneFile(arena: std.mem.Allocator, io: std.Io, path: []const u8) ?TimeZone.Rules {

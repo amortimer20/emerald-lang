@@ -33,7 +33,9 @@ Coordinated Universal Time, named `UTC`.
 The machine's own zone, decided once when the program starts, and the default wherever a
 zone is optional. `emerald run`, `test`, and `repl` read it the way the C library does: from
 the `TZ` environment variable if it is set, otherwise `/etc/localtime`; on Windows, from the
-system's settings. Anything that cannot be read leaves the program in UTC rather than
+system's settings. A zone name that the system has no file for is looked up in Emerald's
+built-in zones, and the zone's name is tidied (`/usr/share/zoneinfo//UTC` is `UTC`), so
+`TimeZone.local == TimeZone("UTC")` holds where it should. Anything that cannot be read leaves the program in UTC rather than
 stopping it. `emerald check`, tests of Emerald itself, and embedded runs always use UTC.
 
 ## TimeZone.fixed(hours: Int, minutes: Int = 0) -> TimeZone

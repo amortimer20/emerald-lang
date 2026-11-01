@@ -31,6 +31,10 @@ path: []const u8,
 text: []const u8,
 /// Byte offset of the first character of each line. Always has at least one entry.
 line_starts: []const u32,
+/// Whether the bytes it was made from began with a UTF-8 byte-order mark,
+/// which `text` leaves out. The formatter's output never has one (3.1), so a
+/// file that had one is not formatted.
+byte_order_mark: bool = false,
 
 pub const max_bytes = 64 * 1024 * 1024;
 
@@ -64,6 +68,7 @@ pub fn init(gpa: std.mem.Allocator, path: []const u8, bytes: []const u8) std.mem
         .path = owned_path,
         .text = owned_text,
         .line_starts = try starts.toOwnedSlice(gpa),
+        .byte_order_mark = body.len != bytes.len,
     };
 }
 
