@@ -4907,22 +4907,58 @@ fn callBuiltin(self: *Interpreter, expression: *const Ast.Expression, call: Ast.
     return self.evaluatePrint(call, std.mem.eql(u8, name, "print"));
 }
 
+const windows_paths = @import("builtin").os.tag == .windows;
+
 /// `Path.join` (15.3) is lexical, not a wrapper over the host's own path
 /// rules — a joined path reads the same on every platform, unlike
 /// `std.fs.path.join`, which uses `\` on Windows. The real filesystem calls
 /// this feeds still accept `/`-separated paths on every platform Emerald
-/// supports.
+/// supports. On Windows a part's `\` separators become `/`, so a path from
+/// `Path.absolute` or the user joins without mixing the two.
 fn joinPathParts(gpa: std.mem.Allocator, parts: []const []const u8) std.mem.Allocator.Error![]u8 {
+    return joinPathPartsFor(gpa, parts, windows_paths);
+}
+
+fn joinPathPartsFor(gpa: std.mem.Allocator, parts: []const []const u8, windows: bool) std.mem.Allocator.Error![]u8 {
     var joined: std.ArrayList(u8) = .empty;
     errdefer joined.deinit(gpa);
     for (parts) |part| {
         if (part.len == 0) continue;
-        const needs_separator = joined.items.len != 0 and joined.items[joined.items.len - 1] != '/' and part[0] != '/';
+        const start = joined.items.len;
+        const needs_separator = start != 0 and !isPathSeparator(joined.items[start - 1], windows) and !isPathSeparator(part[0], windows);
         if (needs_separator) try joined.append(gpa, '/');
-        const trims_separator = joined.items.len != 0 and joined.items[joined.items.len - 1] == '/' and part[0] == '/';
+        const trims_separator = start != 0 and isPathSeparator(joined.items[start - 1], windows) and isPathSeparator(part[0], windows);
         try joined.appendSlice(gpa, if (trims_separator) part[1..] else part);
+        if (windows) portablePathSeparators(joined.items[start..]);
     }
     return joined.toOwnedSlice(gpa);
+}
+
+fn isPathSeparator(byte: u8, windows: bool) bool {
+    return byte == '/' or (windows and byte == '\\');
+}
+
+/// Paths Emerald produces use `/` on every platform (15.3); Windows accepts
+/// it everywhere. Elsewhere `\` is an ordinary file-name character.
+fn portablePathSeparators(path: []u8) void {
+    std.mem.replaceScalar(u8, path, '\\', '/');
+}
+
+test "Path.join gives one separator style on every platform" {
+    const gpa = std.testing.allocator;
+    const cases = [_]struct { parts: []const []const u8, windows: bool, expected: []const u8 }{
+        .{ .parts = &.{ "notes", "2026", "draft.txt" }, .windows = false, .expected = "notes/2026/draft.txt" },
+        .{ .parts = &.{ "notes/", "/draft.txt" }, .windows = false, .expected = "notes/draft.txt" },
+        .{ .parts = &.{ "a\\b", "c" }, .windows = false, .expected = "a\\b/c" },
+        .{ .parts = &.{ "C:\\Users\\ada", "notes.txt" }, .windows = true, .expected = "C:/Users/ada/notes.txt" },
+        .{ .parts = &.{ "C:\\Users\\ada\\", "\\notes.txt" }, .windows = true, .expected = "C:/Users/ada/notes.txt" },
+        .{ .parts = &.{ "\\\\server\\share", "", "x" }, .windows = true, .expected = "//server/share/x" },
+    };
+    for (cases) |case| {
+        const joined = try joinPathPartsFor(gpa, case.parts, case.windows);
+        defer gpa.free(joined);
+        try std.testing.expectEqualStrings(case.expected, joined);
+    }
 }
 
 fn isFilesystemKey(key: []const u8) bool {
@@ -5004,7 +5040,11 @@ fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: 
         const extension = std.fs.path.extension(values[0].data.string.bytes);
         return self.heap.copyText(if (extension.len == 0) extension else extension[1..]);
     }
-    if (std.mem.eql(u8, suffix, "Path::parent")) return self.heap.copyText(std.fs.path.dirname(values[0].data.string.bytes) orelse "");
+    if (std.mem.eql(u8, suffix, "Path::parent")) {
+        const parent = try self.gpa.dupe(u8, std.fs.path.dirname(values[0].data.string.bytes) orelse "");
+        if (windows_paths) portablePathSeparators(parent);
+        return .{ .data = .{ .string = try self.heap.createText(parent) } };
+    }
     if (std.mem.eql(u8, suffix, "Path::join")) {
         const list = values[0].data.list;
         const parts = try self.gpa.alloc([]const u8, list.items.items.len);
@@ -5017,6 +5057,7 @@ fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: 
         const resolved = self.blocking(std.Io.Dir.realPathFileAlloc, .{ cwd, io, values[0].data.string.bytes, self.gpa }) catch return self.raiseFilePath(span, values[0].data.string.bytes, "find");
         defer self.gpa.free(resolved);
         const absolute = try self.gpa.dupe(u8, resolved);
+        if (windows_paths) portablePathSeparators(absolute);
         return .{ .data = .{ .string = try self.heap.createText(absolute) } };
     }
     if (std.mem.eql(u8, suffix, "File::read_binary")) {

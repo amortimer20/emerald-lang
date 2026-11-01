@@ -3083,7 +3083,10 @@ final unterminated line is still returned. `with_open` and `with_writer` close t
 after normal completion, return, or error. `read`, `read_lines`, `write`, `write_lines`,
 `append`, FileHandle reads, and FileWriter writes are UTF-8 text only; `write_lines` writes a
 newline after every line. `Path.absolute` is the one Path operation that consults the
-filesystem.
+filesystem. Paths Emerald produces (`Path.join`, `Path.parent`, `Path.absolute`, and
+`Directory.list`) use `/` on every platform, so a program prints the same path everywhere;
+on Windows, which accepts `/` throughout, the lexical operations also read `\` as a
+separator in the paths they are given, and `C:\Users\ada` comes back as `C:/Users/ada`.
 
 `File.write`, `File.write_binary`, `File.write_lines`, `File.append`, and `File.create` create a
 missing file (append starts from empty, as C#'s `File.AppendAllText` and Python's and Ruby's append
