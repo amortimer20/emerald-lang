@@ -57,7 +57,36 @@ fn runtimeAllocator(init: std.process.Init) std.mem.Allocator {
     return if (builtin.mode == .debug) init.gpa else std.heap.smp_allocator;
 }
 
+/// A Windows console decodes output with its own code page, by default an
+/// OEM one such as 437, so Emerald's UTF-8 `print("é")` showed as `├⌐`.
+/// Every command writes UTF-8 (3.1), so the console reads it as UTF-8 while
+/// Emerald runs and gets its own code page back afterwards. Redirected output
+/// is bytes and never passes through a code page.
+const ConsoleCodePage = struct {
+    const utf8: c_uint = 65001;
+    extern "kernel32" fn GetConsoleOutputCP() callconv(.winapi) c_uint;
+    extern "kernel32" fn SetConsoleOutputCP(code_page: c_uint) callconv(.winapi) c_int;
+
+    /// The page to restore, or null when there is no console or it already reads UTF-8.
+    fn useUtf8() ?c_uint {
+        if (comptime builtin.os.tag != .windows) return null else {
+            const original = GetConsoleOutputCP();
+            if (original == 0 or original == utf8) return null;
+            if (SetConsoleOutputCP(utf8) == 0) return null;
+            return original;
+        }
+    }
+
+    fn restore(original: ?c_uint) void {
+        if (comptime builtin.os.tag != .windows) return else {
+            if (original) |page| _ = SetConsoleOutputCP(page);
+        }
+    }
+};
+
 pub fn main(init: std.process.Init) !u8 {
+    const original_code_page = ConsoleCodePage.useUtf8();
+    defer ConsoleCodePage.restore(original_code_page);
     const gpa = runtimeAllocator(init);
     const io = init.io;
 
