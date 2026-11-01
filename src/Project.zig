@@ -234,13 +234,27 @@ fn enclosingProject(
 
 fn holdsEntryFile(io: std.Io, base: std.Io.Dir, directory: []const u8) bool {
     var buffer: [std.fs.max_path_bytes]u8 = undefined;
-    const candidate = std.fmt.bufPrint(&buffer, "{s}{s}{s}", .{
-        directory,
-        if (directory.len == 0) "" else std.fs.path.sep_str,
-        entry_file_name,
-    }) catch return false;
+    const candidate = entryCandidate(&buffer, directory) orelse return false;
     base.access(io, candidate, .{}) catch return false;
     return true;
+}
+
+/// `main.em` inside `directory`, with no doubled separator when `directory`
+/// is a root such as `/`: on Windows `/\main.em` reads as a malformed UNC path.
+fn entryCandidate(buffer: []u8, directory: []const u8) ?[]const u8 {
+    const separator = directory.len != 0 and !std.fs.path.isSep(directory[directory.len - 1]);
+    return std.fmt.bufPrint(buffer, "{s}{s}{s}", .{
+        directory,
+        if (separator) std.fs.path.sep_str else "",
+        entry_file_name,
+    }) catch null;
+}
+
+test "the entry file of a root directory has one separator" {
+    var buffer: [64]u8 = undefined;
+    try std.testing.expectEqualStrings("main.em", entryCandidate(&buffer, "").?);
+    try std.testing.expectEqualStrings("/main.em", entryCandidate(&buffer, "/").?);
+    try std.testing.expectEqualStrings("notes" ++ std.fs.path.sep_str ++ "main.em", entryCandidate(&buffer, "notes").?);
 }
 
 /// Whether two paths name the same file, where one may use `/` and the other
