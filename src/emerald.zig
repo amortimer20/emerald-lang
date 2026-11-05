@@ -3982,7 +3982,7 @@ test "crossing a function boundary allows reusing a module-level name" {
 }
 
 test "functions and variables share one namespace" {
-    try expectFailure("var greet = 1\nfunc greet() {\n}\n", "`greet` is already declared on line 2");
+    try expectFailure("var greet = 1\nfunc greet() {\n}\n", "`greet` is also declared on line 2");
     try expectFailure("func f() {\n}\nfunc f() {\n}\n", "`f` is already declared on line 1");
     try expectFailure("func f() {\n}\nf = 1\n", "`f` is a function and cannot be assigned to");
 }

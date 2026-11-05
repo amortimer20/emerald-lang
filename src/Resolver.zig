@@ -1342,11 +1342,15 @@ fn reportDuplicate(self: *Resolver, name: []const u8, span: Source.Span, key: []
     }
     if (self.facts.declarations.get(key)) |first| {
         if (first.file == self.file and first.span.start != span.start) {
-            const line = self.files[self.file].source.location(first.span.start).line;
+            const source = &self.files[self.file].source;
+            const line = source.location(first.span.start).line;
+            // A function is known before the lines above it run (7.1), so the
+            // declaration it clashes with may be written after this one.
+            const earlier = line < source.location(span.start).line;
             return self.report(
                 span,
-                "`{s}` is already declared on line {d}",
-                .{ name, line },
+                "`{s}` is {s} declared on line {d}",
+                .{ name, if (earlier) "already" else "also", line },
                 "Each name can have one declaration in a scope. Choose a different name, or remove the duplicate.",
             );
         }
