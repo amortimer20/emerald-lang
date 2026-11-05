@@ -3903,7 +3903,8 @@ fn checkDeclaration(self: *Checker, declaration: Ast.Declaration) Error!void {
                         .type_mismatch,
                         "this is {f}, but `{s}` was declared as {f}",
                         .{ actual, declaration.name, declared },
-                        mismatchHelp(actual, declared, "Give the declaration the type of its value, or convert the value to match."),
+                        (try self.optionalMismatchHelp(actual, declared, initializer.span, true)) orelse
+                            mismatchHelp(actual, declared, "Give the declaration the type of its value, or convert the value to match."),
                     );
                 }
             }
@@ -4458,6 +4459,41 @@ fn requireReadyForSet(self: *Checker, assignment: Ast.Assignment, name: []const 
 /// The correction for a value that does not fit where it is used. Two list
 /// types get their own, because section 4.4's invariance is a surprise to
 /// anyone used to a language where an `[Int]` can pass for a `[Float]`.
+/// A value that may be nothing given where one is needed, or `nothing` itself
+/// given to a declaration that cannot hold it: the fix is a fallback, a check,
+/// or a question mark on the declared type.
+fn optionalMismatchHelp(self: *Checker, actual: Type, expected: Type, span: Source.Span, declaring: bool) Error!?[]const u8 {
+    if (expected.optional) return null;
+    if (declaring and actual.kind == .nothing and !actual.optional and expected.kind != .invalid and expected.kind != .nothing) {
+        return try std.fmt.allocPrint(
+            self.arena,
+            "`{f}` cannot hold nothing. To allow it, write the type with a question mark: `{f}?`.",
+            .{ expected, expected },
+        );
+    }
+    if (!actual.optional or !actual.payload().assignableTo(expected)) return null;
+    const text = self.spanText(span);
+    if (!quotable(text)) return null;
+    const fallback: []const u8 = switch (expected.kind) {
+        .int => "0",
+        .float => "0.0",
+        .string => "\"\"",
+        .bool => "false",
+        .list => "[]",
+        else => "...",
+    };
+    if (declaring) return try std.fmt.allocPrint(
+        self.arena,
+        "`{s}` may be nothing. Give it a fallback with `{s}.or({s})`, or declare the type as `{f}?`.",
+        .{ text, try receiverText(self.arena, text), fallback, expected },
+    );
+    return try std.fmt.allocPrint(
+        self.arena,
+        "`{s}` may be nothing. Give it a fallback with `{s}.or({s})`, or check `{s} != nothing` first.",
+        .{ text, try receiverText(self.arena, text), fallback, text },
+    );
+}
+
 fn mismatchHelp(actual: Type, expected: Type, general: []const u8) []const u8 {
     if (actual.kind == .list and expected.kind == .list) {
         return "A list keeps the element type it was built with, so one list type cannot stand in for another. Build the list with the type it needs, as in `var rates: List[Float] = [1, 2]`.";
@@ -5397,7 +5433,8 @@ fn typeFieldValue(self: *Checker, key: []const u8) Error!Type {
             field.field.initializer.span,
             "this is {f}, but `{s}` was declared as {f}",
             .{ actual, try Resolver.displayKey(self.arena, key), declared },
-            mismatchHelp(actual, declared, "Give the declaration the type of its value, or convert the value to match."),
+            (try self.optionalMismatchHelp(actual, declared, field.field.initializer.span, true)) orelse
+                mismatchHelp(actual, declared, "Give the declaration the type of its value, or convert the value to match."),
         );
     }
     return declared;
@@ -6373,7 +6410,25 @@ fn requireConditionBeside(self: *Checker, expression: *const Ast.Expression, bes
         "a condition must be a Bool, but this is {f}",
         .{actual},
         (try self.shortcutOrHelp(expression, beside)) orelse
+            (try self.optionalConditionHelp(expression, actual)) orelse
             "Compare it to something, as in `count > 0`. Emerald has no truthy or falsey values.",
+    );
+}
+
+/// `if found {` with `found` possibly nothing: ask whether it is there.
+fn optionalConditionHelp(self: *Checker, expression: *const Ast.Expression, actual: Type) Error!?[]const u8 {
+    if (!actual.optional) return null;
+    const text = self.spanText(expression.span);
+    if (!quotable(text)) return null;
+    if (actual.payload().kind == .bool) return try std.fmt.allocPrint(
+        self.arena,
+        "`{s}` may be nothing as well as true or false. Say which you want: `{s} == true`, or `{s} != nothing` to ask only whether it is there.",
+        .{ text, text, text },
+    );
+    return try std.fmt.allocPrint(
+        self.arena,
+        "`{s}` may be nothing. To ask whether it is there, write `{s} != nothing`.",
+        .{ text, text },
     );
 }
 
@@ -8843,6 +8898,12 @@ fn requirePresent(
             "Give it a fallback with `.or(...)`, or check it first with `if {s} != nothing {{ ... }}`.",
             .{at.data.name},
         )
+    else if (at.data == .member and at.data.member.optional and member != null and quotable(self.spanText(at.span)))
+        try std.fmt.allocPrint(
+            self.arena,
+            "Each link after a `?.` needs its own `?.`. Write `{s}?.{s}`.",
+            .{ self.spanText(at.span), member.? },
+        )
     else
         "Give it a fallback with `.or(...)`, or put it in a name and check that against `nothing` first.";
 
@@ -10986,6 +11047,35 @@ fn textMixHelp(
     );
 }
 
+/// `n > 3` with `n` possibly nothing: order needs a number, so give it one.
+fn optionalOrderHelp(
+    self: *Checker,
+    operator: Ast.ComparisonOperator,
+    left: Type,
+    right: Type,
+    left_span: Source.Span,
+    right_span: Source.Span,
+) Error!?[]const u8 {
+    const left_absent = left.optional and left.payload().isNumber();
+    const right_absent = right.optional and right.payload().isNumber();
+    if (!left_absent and !right_absent) return null;
+    const absent_span = if (left_absent) left_span else right_span;
+    const absent = self.spanText(absent_span);
+    const other = self.spanText(if (left_absent) right_span else left_span);
+    if (!quotable(absent) or !quotable(other)) return null;
+    const checked = try receiverText(self.arena, absent);
+    const fallback: []const u8 = if ((if (left_absent) left else right).payload().kind == .float) "0.0" else "0";
+    const compared = if (left_absent)
+        try std.fmt.allocPrint(self.arena, "{s}.or({s}) {s} {s}", .{ checked, fallback, operator.lexeme(), other })
+    else
+        try std.fmt.allocPrint(self.arena, "{s} {s} {s}.or({s})", .{ other, operator.lexeme(), checked, fallback });
+    return try std.fmt.allocPrint(
+        self.arena,
+        "`{s}` may be nothing, so it has no order yet. Give it a fallback, as in `{s}`, or check `{s} != nothing` first.",
+        .{ absent, compared, absent },
+    );
+}
+
 /// Help for `==`, `>=`, and the other comparisons between text and a number.
 fn textNumberComparisonHelp(
     self: *Checker,
@@ -11786,7 +11876,8 @@ fn typeOfComparison(self: *Checker, comparison: Ast.Expression.Comparison) Error
                 pair,
                 "`{s}` needs numbers, but these are {f} values",
                 .{ operator.lexeme(), left },
-                "Only numbers and Strings are ordered. Use `==` or `!=` to compare other values.",
+                (try self.optionalOrderHelp(operator, left, right, left_node.span, operand_node.span)) orelse
+                    "Only numbers and Strings are ordered. Use `==` or `!=` to compare other values.",
             );
         }
         left = right;
@@ -13528,7 +13619,8 @@ fn checkArguments(
                 argument.span,
                 "this is {f}, but {s} `{s}` of `{s}` needs {f}",
                 .{ actual, parameters.noun, parameter_name, name, expected },
-                mismatchHelp(actual, expected, parameters.mismatch_help),
+                (try self.optionalMismatchHelp(actual, expected, argument.span, false)) orelse
+                    mismatchHelp(actual, expected, parameters.mismatch_help),
             );
         }
         if (parameters.declared) |declared| try self.markWidening(argument, declared[position], expected, actual);
@@ -13572,7 +13664,8 @@ fn checkArguments(
                 pending.argument.span,
                 "this is {f}, but {s} `{s}` of `{s}` needs {f}",
                 .{ actual, parameters.noun, pending.name, name, target },
-                mismatchHelp(actual, target, parameters.mismatch_help),
+                (try self.optionalMismatchHelp(actual, target, pending.argument.span, false)) orelse
+                    mismatchHelp(actual, target, parameters.mismatch_help),
             );
         }
         try self.markWidening(pending.argument, pending.declared, target, actual);
@@ -13660,7 +13753,8 @@ fn typeOfValueCall(self: *Checker, call: Ast.Expression.Call, callee: Type, name
             argument.span,
             "this is {f}, but {f} is expected here",
             .{ actual, expected },
-            mismatchHelp(actual, expected, "Pass a value of the expected type, or convert it first."),
+            (try self.optionalMismatchHelp(actual, expected, argument.span, false)) orelse
+                mismatchHelp(actual, expected, "Pass a value of the expected type, or convert it first."),
         );
     }
     return signature.return_type;

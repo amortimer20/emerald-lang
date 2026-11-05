@@ -13,4 +13,4 @@ Call it with the variable's name, as in `Program.environment("HOME")`.
 diagnostics/program-environment.em:6:22: this is String?, but `home` was declared as String
   const home: String = Program.environment("HOME")
                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-Give the declaration the type of its value, or convert the value to match.
+`Program.environment("HOME")` may be nothing. Give it a fallback with `Program.environment("HOME").or("")`, or declare the type as `String?`.
