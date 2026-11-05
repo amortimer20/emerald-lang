@@ -9034,6 +9034,7 @@ fn typeOfEach(
         try self.requireIndexedBlock(call, member, base) orelse return .nothing
     else
         try self.requireBlock(call, member, base, .invalid) orelse return .nothing;
+    try self.warnReturnLeavesBlock(block, member.name);
     if (block.data == .lambda and block.data.lambda.body == .expression) {
         const body = block.data.lambda.body.expression;
         if (body.data != .call) {
@@ -10703,6 +10704,7 @@ fn typeOfCountingBlock(self: *Checker, expression: *const Ast.Expression, call: 
     });
     const block = call.arguments[wanted - 1];
     const actual = try self.typeOfExpected(block, expected);
+    try self.warnReturnLeavesBlock(block, member.name);
     if (actual.kind != .function and actual.kind != .invalid) {
         try self.reportWithHelp(
             block.span,
@@ -14215,6 +14217,59 @@ fn warnPrintedNothing(self: *Checker, name: []const u8, arguments: []const *cons
             "Call it on its own line instead.";
         try self.reportWarning(argument.span, "this prints `nothing`, because {s} gives back no value", .{quoted}, help);
     }
+}
+
+/// `items.each_with_index { item, index => return index if ... }`: `return`
+/// leaves only the block (6.5), and a method that ignores what its block gives
+/// back (`each`, `each_with_index`, `reverse_each`, `times`, `up_to`,
+/// `down_to`) simply carries on, so a `return` with a value there was meant
+/// for the enclosing function. A bare `return`, which skips to the next item,
+/// is left alone.
+fn warnReturnLeavesBlock(self: *Checker, block: *const Ast.Expression, method: []const u8) Error!void {
+    if (!self.checkingProgramFile()) return;
+    if (block.data != .lambda or block.data.lambda.body != .block) return;
+    const returned = firstValueReturn(block.data.lambda.body.block.statements) orelse return;
+    try self.reportWarning(
+        returned.keyword_span,
+        "this `return` leaves only the block, and `{s}` carries on with the next item",
+        .{method},
+        if (self.in_function)
+            "A block's `return` does not leave the function around it, and this method ignores what the block gives back. To return from the function, loop with `for` instead."
+        else
+            "A block's `return` leaves only the block, and this method ignores what the block gives back. To stop early, loop with `for` and use `break`.",
+    );
+}
+
+/// The first `return` carrying a value in a block, at any depth of `if`,
+/// loop, `case`, or `try`, but not inside a nested function or lambda, whose
+/// `return` is its own.
+fn firstValueReturn(statements: []const Ast.Statement) ?Ast.Return {
+    for (statements) |statement| {
+        const found: ?Ast.Return = switch (statement.data) {
+            .return_statement => |returned| if (returned.value != null) returned else null,
+            .conditional => |conditional| firstValueReturn(conditional.then_block.statements) orelse
+                if (conditional.otherwise) |otherwise| switch (otherwise) {
+                    .block => |other| firstValueReturn(other.statements),
+                    .chained => |chained| firstValueReturn(chained[0..1]),
+                } else null,
+            .while_loop => |loop| firstValueReturn(loop.body.statements),
+            .for_loop => |loop| firstValueReturn(loop.body.statements),
+            .try_statement => |protected| found: {
+                if (firstValueReturn(protected.body.statements)) |returned| break :found returned;
+                for (protected.catches) |caught| if (firstValueReturn(caught.body.statements)) |returned| break :found returned;
+                if (protected.finally_block) |cleanup| break :found firstValueReturn(cleanup.statements);
+                break :found null;
+            },
+            .case_statement => |case| found: {
+                for (case.arms) |arm| if (firstValueReturn(arm.body.block.statements)) |returned| break :found returned;
+                if (case.otherwise) |otherwise| break :found firstValueReturn(otherwise.block.statements);
+                break :found null;
+            },
+            else => null,
+        };
+        if (found) |returned| return returned;
+    }
+    return null;
 }
 
 /// A List method with a `!` form that changes the list in place (8.5).

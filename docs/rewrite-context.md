@@ -1032,7 +1032,11 @@ User-defined integration with `for` through an `Iterable` trait is deferred. Ini
 ### 6.5 Returns and guards
 
 `return` leaves the nearest function or lambda. It does not leave an enclosing function
-when written inside a lambda.
+when written inside a lambda. A `return` carrying a value inside the block of a method that
+ignores what its block gives back (`each`, `each_with_index`, `reverse_each`, `times`,
+`up_to`, `down_to`) was almost certainly meant for the enclosing function, which instead
+carries on, so it is a warning (17.1) that suggests a `for` loop. A bare `return` there,
+which moves on to the next item, is not reported.
 
 A function returning no value has the return type `Nothing`, which may be written or
 omitted, and it may use bare `return`. A recursive function that returns a value requires
@@ -3841,6 +3845,8 @@ never silently missed, but the checked program still runs. Warnings currently re
   result is discarded (5.2);
 - `${name}` or `{name}` in a double-quoted string, where `name` is in scope (5.1);
 - printing a call that gives back no value, which prints `nothing` (15.2);
+- a `return` with a value inside the block of a method that ignores the block's result,
+  such as `each` (6.5);
 - a use of a `@deprecated` declaration (16.1);
 - a `##` documentation comment that describes no declaration (3.2);
 - a program declaration whose casing breaks 3.3's conventions, with the corrected spelling;
