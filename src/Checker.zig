@@ -3989,7 +3989,11 @@ fn checkAssignmentTo(self: *Checker, assignment: Ast.Assignment) Error!void {
         const result = if (try self.typeOfAnnotatedOperatorAssignment(assignment, operation, binding.type, value)) |selected|
             selected
         else
-            try self.arithmetic(assignment.name_span, operation, binding.type, value);
+            try self.arithmetic(assignment.name_span, operation, binding.type, value, .{
+                .left = self.spanText(assignment.name_span),
+                .right = self.spanText(assignment.value.span),
+                .compound = true,
+            });
 
         if (!result.assignableTo(binding.type)) {
             // Worth explaining rather than only reporting. `/` always produces a
@@ -4270,7 +4274,11 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
         const result = if (try self.typeOfAnnotatedOperatorAssignment(assignment, operation, element, value)) |selected|
             selected
         else
-            try self.arithmetic(assignment.target_span, operation, element, value);
+            try self.arithmetic(assignment.target_span, operation, element, value, .{
+                .left = self.spanText(assignment.target_span),
+                .right = self.spanText(assignment.value.span),
+                .compound = true,
+            });
         if (!result.assignableTo(element)) {
             try self.report(
                 assignment.target_span,
@@ -4395,7 +4403,11 @@ fn checkSuperAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
         const result = if (try self.typeOfAnnotatedOperatorAssignment(assignment, operation, element, value)) |selected|
             selected
         else
-            try self.arithmetic(assignment.target_span, operation, element, value);
+            try self.arithmetic(assignment.target_span, operation, element, value, .{
+                .left = self.spanText(assignment.target_span),
+                .right = self.spanText(assignment.value.span),
+                .compound = true,
+            });
         if (!result.assignableTo(element)) {
             try self.report(
                 assignment.target_span,
@@ -10611,7 +10623,10 @@ fn typeOfBinary(
     if (left.kind == .struct_value and !left.optional) {
         if (try self.typeOfAnnotatedOperatorCall(expression, binary, left, right)) |result| return result;
     }
-    return self.arithmetic(expression.span, binary.operator, left, right);
+    return self.arithmetic(expression.span, binary.operator, left, right, .{
+        .left = self.spanText(binary.left.span),
+        .right = self.spanText(binary.right.span),
+    });
 }
 
 const AnnotatedOperatorSelection = struct {
@@ -10746,12 +10761,317 @@ fn typeOfAnnotatedOperatorAssignment(
     return selected.signature.return_type;
 }
 
+/// The program's own text for each operand of an arithmetic operation, so a
+/// help can write the fix with the names the reader used.
+const Written = struct {
+    left: []const u8 = "",
+    right: []const u8 = "",
+    /// `left += right` rather than `left + right`.
+    compound: bool = false,
+};
+
+fn spanText(self: *Checker, span: Source.Span) []const u8 {
+    return self.files[self.file].source.text[span.start..span.end];
+}
+
+/// A written operand short enough to quote in a help, on one line.
+fn quotable(text: []const u8) bool {
+    return text.len > 0 and text.len <= 40 and std.mem.indexOfScalar(u8, text, '\n') == null;
+}
+
+fn isNumberLiteral(text: []const u8) bool {
+    if (text.len == 0) return false;
+    for (text) |character| {
+        if (!std.ascii.isDigit(character) and character != '.' and character != '_') return false;
+    }
+    return true;
+}
+
+fn isStringLiteral(text: []const u8) bool {
+    return text.len >= 2 and text[0] == '"' and text[text.len - 1] == '"' and
+        std.mem.indexOf(u8, text, "#{") == null and std.mem.indexOfScalar(u8, text, '\\') == null;
+}
+
+/// `text`, in parentheses when it has a space outside brackets and quotes,
+/// so that a method can be called on it.
+fn receiverText(arena: std.mem.Allocator, text: []const u8) Error![]const u8 {
+    var depth: usize = 0;
+    var in_quote = false;
+    var loose = false;
+    for (text) |character| {
+        if (character == '"') in_quote = !in_quote;
+        if (in_quote) continue;
+        switch (character) {
+            '(', '[', '{' => depth += 1,
+            ')', ']', '}' => depth -|= 1,
+            ' ' => if (depth == 0) {
+                loose = true;
+            },
+            else => {},
+        }
+    }
+    if (!loose) return text;
+    return std.fmt.allocPrint(arena, "({s})", .{text});
+}
+
+fn conversionOf(self: *Checker, text: []const u8, other: Type) Error![]const u8 {
+    return std.fmt.allocPrint(self.arena, "{s}.{s}()", .{
+        try receiverText(self.arena, text),
+        if (other.kind == .float) "to_float" else "to_int",
+    });
+}
+
+/// `text` as it reads inside `"..."` interpolation: a literal keeps its own
+/// characters, anything else is interpolated.
+fn interpolated(self: *Checker, text: []const u8) Error![]const u8 {
+    if (isNumberLiteral(text)) return text;
+    if (isStringLiteral(text)) return text[1 .. text.len - 1];
+    return std.fmt.allocPrint(self.arena, "#{{{s}}}", .{text});
+}
+
+/// Help for `+`, `-`, `*`, and the rest when one side is text: converting the
+/// text to a number, repeating text, taking text off the end, or filling a
+/// `%` placeholder. Null when no concrete fix applies.
+fn textMixHelp(
+    self: *Checker,
+    operator: Ast.BinaryOperator,
+    left: Type,
+    right: Type,
+    written: Written,
+) Error!?[]const u8 {
+    if (left.optional or right.optional) return null;
+    if (!quotable(written.left) or !quotable(written.right)) return null;
+    const text_left = left.kind == .string;
+    const text_right = right.kind == .string;
+
+    if (text_left and text_right) {
+        if (written.compound) return null;
+        switch (operator) {
+            .subtract => return try std.fmt.allocPrint(
+                self.arena,
+                "To take text off the end, write `{s}.remove_suffix({s})`. `remove_prefix` takes it off the start.",
+                .{ try receiverText(self.arena, written.left), written.right },
+            ),
+            .remainder => {
+                if (!isStringLiteral(written.left)) return null;
+                const at = std.mem.indexOfScalar(u8, written.left, '%') orelse return null;
+                if (at + 1 >= written.left.len or !std.ascii.isAlphabetic(written.left[at + 1])) return null;
+                if (std.mem.indexOfScalarPos(u8, written.left, at + 1, '%') != null) return null;
+                const filled = try std.fmt.allocPrint(self.arena, "{s}#{{{s}}}{s}", .{
+                    written.left[0..at],
+                    written.right,
+                    written.left[at + 2 ..],
+                });
+                return try std.fmt.allocPrint(
+                    self.arena,
+                    "Emerald has no `%` formatting. Put the value in the text with interpolation: `{s}`.",
+                    .{filled},
+                );
+            },
+            else => return null,
+        }
+    }
+    if (text_left == text_right) return null;
+
+    const other = if (text_left) right else left;
+    if (!other.isNumber()) return null;
+    const text = if (text_left) written.left else written.right;
+    const number = if (text_left) written.right else written.left;
+
+    // Words are not a number that conversion could rescue.
+    if (isStringLiteral(text) and !isNumberLiteral(text[1 .. text.len - 1])) {
+        if (written.compound) return null;
+        if (operator == .multiply and other.kind == .int) return try std.fmt.allocPrint(
+            self.arena,
+            "To repeat text, write `{s}.repeat({s})`.",
+            .{ text, number },
+        );
+        if (operator != .add) return null;
+        const joined = if (text_left)
+            try std.fmt.allocPrint(self.arena, "\"{s}{s}\"", .{ try self.interpolated(text), try self.interpolated(number) })
+        else
+            try std.fmt.allocPrint(self.arena, "\"{s}{s}\"", .{ try self.interpolated(number), try self.interpolated(text) });
+        return try std.fmt.allocPrint(
+            self.arena,
+            "To join text and a number, put the number in the text with interpolation: `{s}`.",
+            .{joined},
+        );
+    }
+
+    if (written.compound) {
+        if (text_left) {
+            // `line += 5`: the number is joined on, not added.
+            if (operator != .add) return null;
+            return try std.fmt.allocPrint(
+                self.arena,
+                "`{s}` is text, so only text can be added to it. To put the number on the end, write `{s} += \"#{{{s}}}\"`.",
+                .{ text, text, number },
+            );
+        }
+        return try std.fmt.allocPrint(
+            self.arena,
+            "`{s}` is text. To do arithmetic with it, convert it: `{s} {s}= {s}`.",
+            .{ text, number, operator.lexeme(), try self.conversionOf(text, other) },
+        );
+    }
+
+    const converted = try self.conversionOf(text, other);
+    const arithmetic_form = if (text_left)
+        try std.fmt.allocPrint(self.arena, "{s} {s} {s}", .{ converted, operator.lexeme(), number })
+    else
+        try std.fmt.allocPrint(self.arena, "{s} {s} {s}", .{ number, operator.lexeme(), converted });
+    switch (operator) {
+        .add => {
+            const joined = if (text_left)
+                try std.fmt.allocPrint(self.arena, "\"{s}{s}\"", .{ try self.interpolated(text), try self.interpolated(number) })
+            else
+                try std.fmt.allocPrint(self.arena, "\"{s}{s}\"", .{ try self.interpolated(number), try self.interpolated(text) });
+            return try std.fmt.allocPrint(
+                self.arena,
+                "`{s}` is text. To add, write `{s}`. To join them as text, write `{s}`.",
+                .{ text, arithmetic_form, joined },
+            );
+        },
+        .multiply => if (other.kind == .int) {
+            const repeated = try receiverText(self.arena, text);
+            if (isStringLiteral(text)) return try std.fmt.allocPrint(
+                self.arena,
+                "To repeat text, write `{s}.repeat({s})`.",
+                .{ repeated, number },
+            );
+            return try std.fmt.allocPrint(
+                self.arena,
+                "To repeat text, write `{s}.repeat({s})`. To multiply, convert it first: `{s}`.",
+                .{ repeated, number, arithmetic_form },
+            );
+        },
+        else => {},
+    }
+    return try std.fmt.allocPrint(
+        self.arena,
+        "`{s}` is text. To do arithmetic with it, convert it first: `{s}`.",
+        .{ text, arithmetic_form },
+    );
+}
+
+/// Help for `==`, `>=`, and the other comparisons between text and a number.
+fn textNumberComparisonHelp(
+    self: *Checker,
+    operator: Ast.ComparisonOperator,
+    left: Type,
+    right: Type,
+    left_span: Source.Span,
+    right_span: Source.Span,
+) Error!?[]const u8 {
+    if (left.optional or right.optional) return null;
+    const text_left = left.kind == .string;
+    if (text_left == (right.kind == .string)) return null;
+    const other = if (text_left) right else left;
+    if (!other.isNumber()) return null;
+    const text = self.spanText(if (text_left) left_span else right_span);
+    const number = self.spanText(if (text_left) right_span else left_span);
+    if (!quotable(text) or !quotable(number)) return null;
+
+    const converted = try self.conversionOf(text, other);
+    const compared = if (text_left)
+        try std.fmt.allocPrint(self.arena, "{s} {s} {s}", .{ converted, operator.lexeme(), number })
+    else
+        try std.fmt.allocPrint(self.arena, "{s} {s} {s}", .{ number, operator.lexeme(), converted });
+    if (operator.isEquality() and isNumberLiteral(number)) {
+        const as_text = if (text_left)
+            try std.fmt.allocPrint(self.arena, "{s} {s} \"{s}\"", .{ text, operator.lexeme(), number })
+        else
+            try std.fmt.allocPrint(self.arena, "\"{s}\" {s} {s}", .{ number, operator.lexeme(), text });
+        return try std.fmt.allocPrint(
+            self.arena,
+            "`{s}` is text. To compare numbers, convert it: `{s}`. To compare text, write `{s}`.",
+            .{ text, compared, as_text },
+        );
+    }
+    return try std.fmt.allocPrint(
+        self.arena,
+        "`{s}` is text. To compare numbers, convert it: `{s}`.",
+        .{ text, compared },
+    );
+}
+
+/// Help for `when 1` on a text subject (or `when "1"` on a number).
+fn whenTextHelp(
+    self: *Checker,
+    subject: Type,
+    actual: Type,
+    subject_span: Source.Span,
+    alternative_span: Source.Span,
+) Error!?[]const u8 {
+    if (subject.optional or actual.optional) return null;
+    const subject_text = self.spanText(subject_span);
+    const alternative_text = self.spanText(alternative_span);
+    if (!quotable(subject_text) or !quotable(alternative_text)) return null;
+    if (subject.kind == .string and actual.isNumber()) {
+        if (!isNumberLiteral(alternative_text)) return null;
+        return try std.fmt.allocPrint(
+            self.arena,
+            "`{s}` is text, so each `when` is text: write `when \"{s}\"`. To match numbers instead, convert the subject: `case {s} {{`.",
+            .{ subject_text, alternative_text, try self.conversionOf(subject_text, actual) },
+        );
+    }
+    if (subject.isNumber() and actual.kind == .string and isStringLiteral(alternative_text)) {
+        const inner = alternative_text[1 .. alternative_text.len - 1];
+        if (!isNumberLiteral(inner)) return null;
+        return try std.fmt.allocPrint(
+            self.arena,
+            "`{s}` is a number, so each `when` is a number: write `when {s}`.",
+            .{ subject_text, inner },
+        );
+    }
+    return null;
+}
+
+/// An operand that is the Nothing a function gives back because it declares
+/// no result: say so, since the operator is not at fault.
+fn nothingOperandHelp(self: *Checker, left: Type, right: Type, written: Written) Error!?[]const u8 {
+    for ([_]struct { Type, []const u8 }{ .{ left, written.left }, .{ right, written.right } }) |operand| {
+        if (operand[0].kind != .nothing or operand[0].optional) continue;
+        const text = operand[1];
+        const open = std.mem.indexOfScalar(u8, text, '(') orelse continue;
+        if (open == 0 or text[text.len - 1] != ')') continue;
+        const name = text[0..open];
+        for (name) |character| {
+            if (!std.ascii.isAlphanumeric(character) and character != '_') break;
+        } else {
+            const binding = self.find(name) orelse continue;
+            if (!binding.is_function) continue;
+            return try std.fmt.allocPrint(
+                self.arena,
+                "`{s}` gives back nothing, because it declares no result. Give it a result type and `return` the value instead of printing it.",
+                .{name},
+            );
+        }
+    }
+    return null;
+}
+
+/// `scores + 3` with a List and one of its elements.
+fn listElementHelp(self: *Checker, operator: Ast.BinaryOperator, left: Type, right: Type, written: Written) Error!?[]const u8 {
+    if (operator != .add or left.kind != .list or left.optional or right.optional) return null;
+    if (written.compound or !quotable(written.left) or !quotable(written.right)) return null;
+    const element = left.element orelse return null;
+    if (!right.assignableTo(element.*)) return null;
+    const list = try receiverText(self.arena, written.left);
+    return try std.fmt.allocPrint(
+        self.arena,
+        "To add an item to a list, write `{s}.append({s})` on its own line; it changes the list. To make a new list instead, write `{s}.chain([{s}])`.",
+        .{ list, written.right, list, written.right },
+    );
+}
+
 fn arithmetic(
     self: *Checker,
     span: Source.Span,
     operator: Ast.BinaryOperator,
     left: Type,
     right: Type,
+    written: Written,
 ) Error!Type {
     // `+` joins two Strings; nothing else mixes text and arithmetic. A String
     // that may be absent is not one until it is proved present (4.5).
@@ -10773,14 +11093,16 @@ fn arithmetic(
                 if (left.optional or right.optional)
                     "One of these may be absent. Give it a fallback with `.or(\"\")`, or check it against `nothing` first."
                 else
-                    "Convert the value with `to_string()`, or use interpolation, as in `\"#{name}: #{score}\"`.",
+                    try self.textMixHelp(operator, left, right, written) orelse
+                        "Convert the value with `to_string()`, or use interpolation, as in `\"#{name}: #{score}\"`.",
             );
         } else {
             try self.report(
                 span,
                 "{s} needs numbers, but this is {f} and {f}",
                 .{ operator.describe(), left, right },
-                "Strings have no arithmetic. `+` is the one operator for them, and it joins two Strings.",
+                try self.textMixHelp(operator, left, right, written) orelse
+                    "Strings have no arithmetic. `+` is the one operator for them, and it joins two Strings.",
             );
         }
         return .invalid;
@@ -10796,8 +11118,12 @@ fn arithmetic(
             // different fix from a value that is the wrong kind entirely.
             if ((left.optional and left.payload().isNumber()) or (right.optional and right.payload().isNumber()))
                 "One of these may be absent. Give it a fallback with `.or(0)`, or check it against `nothing` first."
+            else if (try self.nothingOperandHelp(left, right, written)) |help|
+                help
             else if (operator == .add and left.kind == .list and right.kind == .list and !left.optional and !right.optional)
                 "Join two lists with `chain`, as in `first.chain(second)`."
+            else if (try self.listElementHelp(operator, left, right, written)) |help|
+                help
             else if (left.kind == .struct_value and !left.optional)
                 "Register `+`, `-`, `*`, or `/` on this type with `@operator(\"...\")`, or write a named method instead."
             else if (right.kind == .struct_value and !right.optional and switch (operator) {
@@ -10969,7 +11295,7 @@ fn checkCase(self: *Checker, case: *const Ast.Case, expected: ?Type) Error!Type 
         }
         for (arm.alternatives) |alternative| {
             if (subject) |subject_type| {
-                try self.checkAlternative(alternative, subject_type, &covered);
+                try self.checkAlternative(alternative, subject_type, case.subject.?.span, &covered);
             } else {
                 try self.requireCondition(alternative);
                 self.narrow(alternative, true);
@@ -11144,6 +11470,7 @@ fn checkAlternative(
     self: *Checker,
     alternative: *const Ast.Expression,
     subject: Type,
+    subject_span: Source.Span,
     covered: *std.StringHashMapUnmanaged(void),
 ) Error!void {
     // Section 12: `when Download.finished(path)` selects a choice. Its data
@@ -11188,6 +11515,8 @@ fn checkAlternative(
             "{s}",
             .{if (isTrait(subject) or isTrait(actual))
                 "A struct compares by its fields and an object by identity, and a trait may hold either. Match on a concrete value instead."
+            else if (try self.whenTextHelp(subject, actual, subject_span, alternative.span)) |help|
+                help
             else
                 "Each alternative is a value of the subject's type, compared with it by `==`."},
         );
@@ -11412,6 +11741,8 @@ fn typeOfComparison(self: *Checker, comparison: Ast.Expression.Comparison) Error
                 .{ left, right },
                 if (isClass(left.payload()) and isClass(right.payload()))
                     "Two objects can be compared only when one's class is the other's or extends it, since only then can they be the same object."
+                else if (try self.textNumberComparisonHelp(operator, left, right, left_node.span, operand_node.span)) |help|
+                    help
                 else
                     "`==` and `!=` compare two values of the same type, and Int and Float compare with each other.",
             );

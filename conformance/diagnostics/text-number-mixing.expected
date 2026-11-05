@@ -1,0 +1,28 @@
+diagnostics/text-number-mixing.em:2:7: `+` joins two Strings, but this is String and Int
+  print(age + 1)
+        ^^^^^^^
+`age` is text. To add, write `age.to_int() + 1`. To join them as text, write `"#{age}1"`.
+diagnostics/text-number-mixing.em:3:4: String and Int cannot be compared
+  if age >= 18 {
+     ^^^^^^^^^
+`age` is text. To compare numbers, convert it: `age.to_int() >= 18`.
+diagnostics/text-number-mixing.em:6:4: String and Int cannot be compared
+  if age == 18 {
+     ^^^^^^^^^
+`age` is text. To compare numbers, convert it: `age.to_int() == 18`. To compare text, write `age == "18"`.
+diagnostics/text-number-mixing.em:11:5: `+` joins two Strings, but this is Int and String
+      total += part
+      ^^^^^
+`part` is text. To do arithmetic with it, convert it: `total += part.to_int()`.
+diagnostics/text-number-mixing.em:14:7: multiplication needs numbers, but this is Float and String
+  print(decimal * age)
+        ^^^^^^^^^^^^^
+`age` is text. To do arithmetic with it, convert it first: `decimal * age.to_float()`.
+diagnostics/text-number-mixing.em:16:1: `+` joins two Strings, but this is String and Int
+  line += 5
+  ^^^^
+`line` is text, so only text can be added to it. To put the number on the end, write `line += "#{5}"`.
+diagnostics/text-number-mixing.em:19:10: `when` compares this with the subject by `==`, but String and Int cannot be compared
+      when 1 {
+           ^
+`choice` is text, so each `when` is text: write `when "1"`. To match numbers instead, convert the subject: `case choice.to_int() {`.
