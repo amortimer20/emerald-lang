@@ -1,0 +1,4 @@
+diagnostics/new-keyword.em:5:9: Emerald has no `new`
+  var p = new Point(1, 2)
+          ^^^
+Write `Point(1, 2)`: call the type directly, with no `new` in front.

@@ -1,0 +1,4 @@
+diagnostics/name-with-hyphen.em:1:5: a name cannot contain `-`
+  var first-name = "Ava"
+      ^^^^^^^^^^
+Use `_` between the words: write `first_name`.

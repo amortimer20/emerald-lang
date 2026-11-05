@@ -1,0 +1,4 @@
+diagnostics/except-keyword.em:5:1: `except` is written `catch` in Emerald
+  except error: RuntimeError {
+  ^^^^^^
+Write `catch error { ... }`, or `catch error: RuntimeError { ... }` to handle one kind of error.

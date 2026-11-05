@@ -1,0 +1,4 @@
+diagnostics/reserved-word-as-parameter.em:1:15: `when` is one of Emerald's reserved words, so it cannot be a name
+  func describe(when: String) {
+                ^^^^
+Try `my_when`, or another word that is not reserved.
