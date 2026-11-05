@@ -3072,6 +3072,12 @@ fn parseIf(self: *Parser) Error!Ast.Statement {
             otherwise = .{ .chained = chained };
             end = chained.span;
         } else {
+            // Python's `else:` is the brace with a colon in front of it.
+            if (self.check(.colon)) return self.report(
+                self.peek().span,
+                "expected `{` to open a block, found :",
+                "Emerald writes no `:` after `else`: write `else {`.",
+            );
             if (!self.atLeftBrace()) if (self.elseCondition()) |written| {
                 return self.reportFmt(
                     self.peek().span,

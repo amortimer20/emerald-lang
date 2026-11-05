@@ -1,0 +1,4 @@
+diagnostics/else-with-colon.em:5:5: expected `{` to open a block, found :
+  else: {
+      ^
+Emerald writes no `:` after `else`: write `else {`.
