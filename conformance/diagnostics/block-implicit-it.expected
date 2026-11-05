@@ -1,0 +1,4 @@
+diagnostics/block-implicit-it.em:2:11: a block names what it receives, then `=>`
+  nums.each { print(it) }
+            ^
+Write `{ n => print(n) }`: a name for what the block receives, then `=>`, then what to do with it.

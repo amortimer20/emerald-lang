@@ -310,7 +310,7 @@ fn lexToken(self: *Lexer) std.mem.Allocator.Error!Token {
             },
             switch (c) {
                 '&' => "Write `and` to require both conditions.",
-                '|' => "Write `or` to accept either condition. A block names what it receives before `=>`, as in `{ n => print(n) }`.",
+                '|' => "A block names what it receives before `=>`, as in `{ n => print(n) }`. To accept either condition, write `or`.",
                 else => "Write `**` for a power, as in `side ** 2`.",
             },
         );

@@ -1,0 +1,4 @@
+diagnostics/do-while-loop.em:2:1: Emerald has no `do ... while` loop
+  do {
+  ^^
+Write `while` with the condition first, as in `while i < 3 { ... }`. To run the body once before the first test, use `while true { ... }` and `break` out of it.

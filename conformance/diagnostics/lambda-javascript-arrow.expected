@@ -1,0 +1,4 @@
+diagnostics/lambda-javascript-arrow.em:2:16: a lambda is written in braces in Emerald
+  print(nums.map((x) => x * 2))
+                 ^^^^^^
+Write `{ x => x * 2 }`: the names it receives, then `=>`, then its result.

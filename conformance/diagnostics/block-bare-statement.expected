@@ -1,0 +1,4 @@
+diagnostics/block-bare-statement.em:3:1: a block is not a statement on its own
+  {
+  ^
+Braces open a block only after a declaration or control flow such as `if`, `while`, or `for`. For a separate scope, move the statements into a named function.

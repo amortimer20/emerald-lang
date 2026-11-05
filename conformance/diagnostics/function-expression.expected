@@ -1,0 +1,4 @@
+diagnostics/function-expression.em:1:16: a function written as a value is a lambda in Emerald
+  const double = func(n: Int): Int {
+                 ^^^^
+Write a lambda in braces, as in `{ n => n * 2 }`. `func` declares a function that has a name.

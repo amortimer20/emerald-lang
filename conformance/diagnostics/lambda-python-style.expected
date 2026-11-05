@@ -1,0 +1,4 @@
+diagnostics/lambda-python-style.em:1:16: a lambda is written in braces in Emerald
+  const double = lambda x: x * 2
+                 ^^^^^^
+Write `{ x => x * 2 }`: the names it receives, then `=>`, then its result.
