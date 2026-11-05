@@ -414,6 +414,10 @@ function_parameters: std.StringHashMapUnmanaged([]const *const Type.Parameter) =
 /// with or without `else`. A statement `case` among them cannot finish without
 /// running an arm, which is what `stmtCompletes` needs to know.
 exhaustive_cases: std.AutoHashMapUnmanaged(*const Ast.Case, void) = .empty,
+/// Calls of the built-in `exit` (14.1, 15.2), which never come back: like
+/// `raise`, one ends its path for `stmtCompletes`. A program function named
+/// `exit` is an ordinary call and is not listed.
+exit_calls: std.AutoHashMapUnmanaged(*const Ast.Expression, void) = .empty,
 /// The loops enclosing the statement being checked, innermost last. Empty at
 /// the start of every function body, since a `break` cannot leave a function.
 loops: std.ArrayList(Loop) = .empty,
@@ -12229,6 +12233,8 @@ fn typeOfCall(
                     return .invalid;
                 }
             }
+            // Only a call that checks: a broken one is already reported.
+            try self.exit_calls.put(self.arena, expression, {});
             return .nothing;
         }
         try self.typeArguments(call.arguments);
@@ -13961,7 +13967,7 @@ fn reportUnreachable(self: *Checker, statements: []const Ast.Statement, from: us
             header,
             "this loop has no `break`, so the code after it never runs",
             .{},
-            "The loop ends only by returning or raising. Add a `break` where the loop should stop, or remove the code after it.",
+            "The loop ends only by returning, raising, or calling `exit()`. Add a `break` where the loop should stop, or remove the code after it.",
         );
         return self.reportWarning(
             header,
@@ -13974,12 +13980,12 @@ fn reportUnreachable(self: *Checker, statements: []const Ast.Statement, from: us
         first.span,
         "this code can never run",
         .{},
-        "Every path above it already returns, raises, breaks, continues, or loops forever. Remove it, or move it earlier.",
+        "Every path above it already returns, raises, breaks, continues, calls `exit()`, or loops forever. Remove it, or move it earlier.",
     );
 }
 
-/// Whether a loop body can leave the function it is in, by `return` or
-/// `raise`, at any depth. A nested function or lambda is a statement or an
+/// Whether a loop body can leave the function it is in, by `return`, `raise`,
+/// or `exit()`, at any depth. A nested function or lambda is a statement or an
 /// expression here, so its own `return` is never counted.
 fn blockLeavesLoop(self: *const Checker, statements: []const Ast.Statement) bool {
     for (statements) |statement| {
@@ -13991,6 +13997,7 @@ fn blockLeavesLoop(self: *const Checker, statements: []const Ast.Statement) bool
 fn stmtLeavesLoop(self: *const Checker, statement: Ast.Statement) bool {
     return switch (statement.data) {
         .return_statement, .raise_statement => true,
+        .expression => |expression| self.exit_calls.contains(expression),
         .conditional => |conditional| blk: {
             if (self.blockLeavesLoop(conditional.then_block.statements)) break :blk true;
             const otherwise = conditional.otherwise orelse break :blk false;
@@ -14014,7 +14021,7 @@ fn stmtLeavesLoop(self: *const Checker, statement: Ast.Statement) bool {
             const otherwise = case.otherwise orelse break :blk false;
             break :blk self.blockLeavesLoop(otherwise.block.statements);
         },
-        .expression, .declaration, .assignment, .function_declaration, .struct_declaration => false,
+        .declaration, .assignment, .function_declaration, .struct_declaration => false,
         .break_statement, .continue_statement, .assert_statement => false,
         .destructuring, .destructuring_assignment => false,
     };
@@ -14046,7 +14053,8 @@ fn stmtCompletes(self: *const Checker, statement: Ast.Statement) bool {
         },
         // Only a `break` ends `while true`. Any other loop can end on its own.
         .while_loop => |loop| !isLiteralTrue(loop.condition) or self.blockBreaks(loop.body.statements),
-        .for_loop, .expression, .declaration, .assignment, .function_declaration, .struct_declaration, .assert_statement => true,
+        .expression => |expression| !self.exit_calls.contains(expression),
+        .for_loop, .declaration, .assignment, .function_declaration, .struct_declaration, .assert_statement => true,
         .try_statement => |protected| blk: {
             if (protected.finally_block) |cleanup| if (!self.blockCompletes(cleanup.statements)) break :blk false;
             if (self.blockCompletes(protected.body.statements)) break :blk true;

@@ -1024,13 +1024,17 @@ A function returning no value has the return type `Nothing`, which may be writte
 omitted, and it may use bare `return`. A recursive function that returns a value requires
 an explicit return type so checking does not depend on circular inference (7.2).
 
-A statement that follows one that can never complete — `return`, `raise`, `break`, or
-`continue`, a `while true` with no `break`, or an `if`/`case` every branch of which can't —
-is a warning (17.1), reported once at the first such statement in its block. When the cause
-is a `while true` with no `break` just above, the warning points at that loop instead and
-says it has no `break`, since the loop is the mistake. A loop that is merely infinite in
-some other way (a condition that never changes) is not detected: that is undecidable in
-general, and a guess would fire on intended code. A nested function declared after a `return`
+A statement that follows one that can never complete — `return`, `raise`, `break`,
+`continue`, a call of the built-in `exit()`, a `while true` with no `break`, or an
+`if`/`case` every branch of which can't — is a warning (17.1), reported once at the first
+such statement in its block. When the cause is a `while true` with no `break` just above,
+the warning points at that loop instead and says it has no `break`, since the loop is the
+mistake. A loop that is merely infinite in some other way (a condition that never changes)
+is not detected: that is undecidable in general, and a guess would fire on intended code.
+`exit()` ends its path just as `raise` does everywhere a path's end matters: for this
+warning, for 7.2's rule that every path returns a value, and for narrowing (`if name == nothing {
+exit(1) }` leaves `name` present after it). A program function or method that
+happens to be named `exit` is an ordinary call. A nested function declared after a `return`
 is not itself unreachable code: it is hoisted (7.1), so its position relative to a `return`
 in the same block does not matter.
 
@@ -3804,8 +3808,8 @@ never silently missed, but the checked program still runs. Warnings currently re
 
 - a nonexhaustive statement `case` with a coverable subject (6.3, 12);
 - an `is` test already known to be true, or known to be false (4.4);
-- code after a statement that can never complete, such as after `return` (6.5), or, at
-  the loop itself, a `while true` with no `break` that has code after it;
+- code after a statement that can never complete, such as after `return` or `exit()`
+  (6.5), or, at the loop itself, a `while true` with no `break` that has code after it;
 - a use of a `@deprecated` declaration (16.1);
 - a `##` documentation comment that describes no declaration (3.2);
 - a program declaration whose casing breaks 3.3's conventions, with the corrected spelling;

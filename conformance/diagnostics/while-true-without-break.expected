@@ -5,7 +5,7 @@ Add a `break` where the loop should stop, or replace `true` with a condition tha
 diagnostics/while-true-without-break.em:10:5: warning: this loop has no `break`, so the code after it never runs
       while true {
       ^^^^^^^^^^
-The loop ends only by returning or raising. Add a `break` where the loop should stop, or remove the code after it.
+The loop ends only by returning, raising, or calling `exit()`. Add a `break` where the loop should stop, or remove the code after it.
 diagnostics/while-true-without-break.em:21:5: warning: this loop has no `break`, so it never ends and the code after it never runs
       while true {
       ^^^^^^^^^^
