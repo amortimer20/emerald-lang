@@ -6917,6 +6917,39 @@ fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression, expected:
     };
 }
 
+/// `random.randint(1, 6)`, `print.log`: a member asked of a prelude function,
+/// which is not a value that has any. Reports it as that, rather than as the
+/// function being used as a value, and says how the function is called.
+fn reportMemberOfBuiltinFunction(self: *Checker, member: Ast.Expression.Member) Error!bool {
+    if (member.base.data != .name) return false;
+    const name = member.base.data.name;
+    const binding = self.find(name) orelse return false;
+    if (!binding.is_function) return false;
+    const key = binding.function_key orelse self.keyOf(name);
+    if (self.declarations.contains(key)) return false;
+    const builtin = Resolver.builtinFunctionName(key) orelse for (Resolver.prelude) |prelude_name| {
+        if (std.mem.eql(u8, prelude_name, name)) break prelude_name;
+    } else return false;
+    if (std.mem.eql(u8, builtin, "random")) {
+        try self.reportWithHelp(
+            member.base.span,
+            "`random` is a built-in function, so it has no `{s}`",
+            .{member.name},
+            "Call it with a range, as in `random(1..6)`, which gives a whole number from 1 through 6.",
+            .{},
+        );
+    } else {
+        try self.reportWithHelp(
+            member.base.span,
+            "`{s}` is a built-in function, so it has no `{s}`",
+            .{ builtin, member.name },
+            "Call it with parentheses, as in `{s}(...)`.",
+            .{builtin},
+        );
+    }
+    return true;
+}
+
 /// Section 7.5's captured function. Section 15.2's prelude functions are the
 /// exception: `print` and `write` take any number of arguments of any type, and
 /// no type that can be written describes that, so they can only be called.
@@ -7877,6 +7910,7 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
         );
         return .invalid;
     }
+    if (try self.reportMemberOfBuiltinFunction(member)) return .invalid;
     const base = try self.typeOf(member.base);
     if (base.kind == .invalid) return .invalid;
     if (!try self.requirePresent(base, member.base, member.name)) return .invalid;
@@ -8226,6 +8260,10 @@ fn typeOfMethodCall(
         }
     }
 
+    if (try self.reportMemberOfBuiltinFunction(member)) {
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    }
     const base = try self.typeOf(member.base);
     if (base.kind == .invalid) {
         try self.typeArguments(call.arguments);
@@ -10057,6 +10095,15 @@ fn requireChangeable(self: *Checker, member: Ast.Expression.Member) Error!void {
 /// A member that does not exist, with the Emerald name for what the writer
 /// probably meant when they reached for another language's.
 fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member, comptime what: []const u8) Error!void {
+    if (familiarSpecialHelp(base, member.name)) |help| {
+        return self.reportCoded(
+            member.name_span,
+            .unknown_member,
+            "{f} has no " ++ what ++ " `{s}`",
+            .{ base, member.name },
+            help,
+        );
+    }
     const candidate: ?[]const u8 = switch (base.kind) {
         .list => familiarListName(member.name),
         .string => familiarStringName(member.name),
@@ -10070,21 +10117,36 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
     else
         null;
     if (suggestion) |name| {
-        try self.reportWithHelpCoded(
+        const owner = instanceCatalogOwner(base);
+        const target = if (owner) |type_name| Builtins.find(try self.catalog(), type_name, name) else null;
+        // The replacement may be the other shape: `size()` becomes the property
+        // `count`, whose parentheses must go, and `isEmpty` as a property read
+        // becomes the call `empty?()`. Say so, so that following the help
+        // literally is not a second error.
+        const help = if (target) |found| switch (found.kind) {
+            .property => if (std.mem.eql(u8, what, "method"))
+                try std.fmt.allocPrint(self.arena, "Emerald calls this `{s}`. It is a property, so write `.{s}` without parentheses.", .{ name, name })
+            else
+                try std.fmt.allocPrint(self.arena, "Emerald calls this `{s}`.", .{name}),
+            .method => if (std.mem.eql(u8, what, "method"))
+                try std.fmt.allocPrint(self.arena, "Emerald calls this `{s}`.", .{name})
+            else
+                try std.fmt.allocPrint(self.arena, "Emerald calls this `{s}`. It is a method, so write `.{s}()` with parentheses.", .{ name, name }),
+            else => try std.fmt.allocPrint(self.arena, "Emerald calls this `{s}`.", .{name}),
+        } else try std.fmt.allocPrint(self.arena, "Emerald calls this `{s}`.", .{name});
+        try self.reportCoded(
             member.name_span,
             .unknown_member,
             "{f} has no " ++ what ++ " `{s}`",
             .{ base, member.name },
-            "Emerald calls this `{s}`.",
-            .{name},
+            help,
         );
         // Renaming alone must preserve whether this is a property or a call.
         // Indexing hints and changes such as length() -> count need structural
         // edits; this slice offers only exact name replacements.
-        const owner = instanceCatalogOwner(base) orelse return;
-        const target = Builtins.find(try self.catalog(), owner, name) orelse return;
-        if ((std.mem.eql(u8, what, "method") and target.kind == .method) or
-            (std.mem.eql(u8, what, "property") and target.kind == .property))
+        const found = target orelse return;
+        if ((std.mem.eql(u8, what, "method") and found.kind == .method) or
+            (std.mem.eql(u8, what, "property") and found.kind == .property))
         {
             self.diagnostics.items[self.diagnostics.items.len - 1].replacement = .{
                 .span = member.name_span,
@@ -10100,6 +10162,16 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
         .{ base, member.name },
         unknownMemberHelp(base) orelse "Check the spelling, or what kind of value this is.",
     );
+}
+
+/// Spellings from other languages whose Emerald equivalent is not a renamed
+/// member, so the help says what to write instead.
+fn familiarSpecialHelp(base: Type, name: []const u8) ?[]const u8 {
+    if (base.kind != .string) return null;
+    if (std.mem.eql(u8, name, "join")) return "`join` belongs to the list, not the separator: write `words.join(\", \")`, with the separator as the argument.";
+    if (std.mem.eql(u8, name, "format")) return "A String has no `format`. Put values in the text with interpolation, as in `\"Hello #{name}\"`.";
+    if (std.mem.eql(u8, name, "charAt") or std.mem.eql(u8, name, "char_at")) return "A String is indexed with brackets: `word[0]` is its first character.";
+    return null;
 }
 
 fn unknownMemberHelp(base: Type) ?[]const u8 {
@@ -10231,6 +10303,7 @@ fn familiarMapName(name: []const u8, set: bool) ?[]const u8 {
             .{ "has", "contains?" },
             .{ "includes", "contains?" },
             .{ "member?", "contains?" },
+            .{ "intersect", "intersection" },
             .{ "insert", "add" },
             .{ "append", "add" },
             .{ "push", "add" },
@@ -10247,6 +10320,8 @@ fn familiarMapName(name: []const u8, set: bool) ?[]const u8 {
         .{ "contains?", "contains_key?" },
         .{ "has_key", "contains_key?" },
         .{ "has_key?", "contains_key?" },
+        .{ "containsKey", "contains_key?" },
+        .{ "contains_key", "contains_key?" },
         .{ "includes?", "contains_key?" },
         .{ "key?", "contains_key?" },
         .{ "items", "entries" },
@@ -10268,6 +10343,15 @@ fn familiarStringName(name: []const u8) ?[]const u8 {
         .{ "downcase", "lower" },
         .{ "lowercase", "lower" },
         .{ "to_lower", "lower" },
+        .{ "toUpperCase", "upper" },
+        .{ "toLowerCase", "lower" },
+        .{ "isEmpty", "empty?" },
+        .{ "startsWith", "starts_with?" },
+        .{ "endsWith", "ends_with?" },
+        .{ "pad_left", "pad_start" },
+        .{ "pad_right", "pad_end" },
+        .{ "ljust", "pad_end" },
+        .{ "rjust", "pad_start" },
         .{ "strip", "trim" },
         .{ "isalpha", "letter?" },
         .{ "is_letter", "letter?" },
@@ -10318,6 +10402,8 @@ fn familiarListName(name: []const u8) ?[]const u8 {
         .{ "has", "contains?" },
         .{ "empty", "empty?" },
         .{ "is_empty", "empty?" },
+        .{ "isEmpty", "empty?" },
+        .{ "forEach", "each" },
         .{ "delete", "remove" },
         .{ "delete_at", "remove_at" },
         .{ "for_each", "each" },

@@ -1,0 +1,36 @@
+diagnostics/familiar-member-names.em:5:13: List[String] has no method `size`
+  print(names.size())
+              ^^^^
+Emerald calls this `count`. It is a property, so write `.count` without parentheses.
+diagnostics/familiar-member-names.em:6:13: List[String] has no property `isEmpty`
+  print(names.isEmpty)
+              ^^^^^^^
+Emerald calls this `empty?`. It is a method, so write `.empty?()` with parentheses.
+diagnostics/familiar-member-names.em:7:12: Dict[String, Int] has no method `containsKey`
+  print(ages.containsKey("Ava"))
+             ^^^^^^^^^^^
+Emerald calls this `contains_key?`.
+diagnostics/familiar-member-names.em:8:12: String has no method `toUpperCase`
+  print(word.toUpperCase())
+             ^^^^^^^^^^^
+Emerald calls this `upper`.
+diagnostics/familiar-member-names.em:9:12: String has no method `join`
+  print(", ".join(names))
+             ^^^^
+`join` belongs to the list, not the separator: write `words.join(", ")`, with the separator as the argument.
+diagnostics/familiar-member-names.em:10:18: String has no method `format`
+  print("Hello {}".format(word))
+                   ^^^^^^
+A String has no `format`. Put values in the text with interpolation, as in `"Hello #{name}"`.
+diagnostics/familiar-member-names.em:11:12: String has no method `charAt`
+  print(word.charAt(0))
+             ^^^^^^
+A String is indexed with brackets: `word[0]` is its first character.
+diagnostics/familiar-member-names.em:12:12: String has no method `pad_left`
+  print(word.pad_left(8))
+             ^^^^^^^^
+Emerald calls this `pad_start`.
+diagnostics/familiar-member-names.em:13:12: Set[Int] has no method `intersect`
+  print(tags.intersect([1]))
+             ^^^^^^^^^
+Emerald calls this `intersection`.
