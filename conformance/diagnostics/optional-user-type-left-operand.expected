@@ -1,0 +1,4 @@
+diagnostics/optional-user-type-left-operand.em:12:7: multiplication needs a value on the left, but this is Money?, which may be `nothing`
+  print(price * 3)
+        ^^^^^^^^^
+Check it against `nothing` first, or unwrap it, and then use `*` on the Money itself.

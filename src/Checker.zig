@@ -10717,7 +10717,14 @@ fn typeOfUnary(
                 expression.span,
                 "`-` needs a number, but this is {f}",
                 .{operand},
-                "Use `not` to invert a Bool.",
+                if (operand.kind == .bool and !operand.optional)
+                    "Use `not` to invert a Bool."
+                else if (operand.optional and operand.payload().isNumber())
+                    "This may be `nothing`. Give it a fallback with `.or(0)`, or check it against `nothing` first."
+                else if (operand.kind == .struct_value and !operand.optional)
+                    "Unary `-` works only on Int and Float, and a type cannot define it. Write a named method such as `negated()` instead."
+                else
+                    "Unary `-` works only on Int and Float.",
             );
         },
         .not => {
@@ -11259,6 +11266,16 @@ fn arithmetic(
 
     // Section 5.3: `/` always produces a Float.
     return Type.arithmeticResult(left, right, operator == .divide) orelse {
+        if (left.optional and left.kind == .struct_value) {
+            try self.reportWithHelp(
+                span,
+                "{s} needs a value on the left, but this is {f}, which may be `nothing`",
+                .{ operator.describe(), left },
+                "Check it against `nothing` first, or unwrap it, and then use `{s}` on the {f} itself.",
+                .{ operator.lexeme(), left.payload() },
+            );
+            return .invalid;
+        }
         try self.report(
             span,
             "{s} needs numbers, but this is {f} and {f}",
@@ -11274,7 +11291,14 @@ fn arithmetic(
             else if (try self.listElementHelp(operator, left, right, written)) |help|
                 help
             else if (left.kind == .struct_value and !left.optional)
-                "Register `+`, `-`, `*`, or `/` on this type with `@operator(\"...\")`, or write a named method instead."
+                switch (operator) {
+                    .add, .subtract, .multiply, .divide => try std.fmt.allocPrint(
+                        self.arena,
+                        "{f} does not define `{s}`. Register it with `@operator(\"{s}\")` on a public method, or write a named method instead.",
+                        .{ left, operator.lexeme(), operator.lexeme() },
+                    ),
+                    else => "Only Int and Float have this operator; a type cannot define it.",
+                }
             else if (right.kind == .struct_value and !right.optional and switch (operator) {
                 .add, .subtract, .multiply, .divide => true,
                 else => false,
