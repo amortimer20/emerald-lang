@@ -215,7 +215,11 @@ const Renderer = struct {
             copied.* = try self.remap(arena, related.*);
             diagnostic.related = copied;
         }
-        if (self.topLevelDeclaration(original) and std.mem.indexOf(u8, diagnostic.message, "is already declared") != null) diagnostic.help = "Declare a different name, or type :reset to start over.";
+        if (self.topLevelDeclaration(original)) if (std.mem.indexOf(u8, diagnostic.message, "is already declared")) |at| {
+            // A line number would count the whole session's text, not an entry.
+            diagnostic.message = diagnostic.message[0 .. at + "is already declared".len];
+            diagnostic.help = "Declare a different name, or type :reset to start over.";
+        };
         return diagnostic;
     }
 

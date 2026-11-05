@@ -1,4 +1,4 @@
-diagnostics/duplicate-type-method-call.em:9:8: `S` is already declared
+diagnostics/duplicate-type-method-call.em:9:8: `S` is already declared on line 3
   struct S {
          ^
 Each name can have one declaration in a scope. Choose a different name, or remove the duplicate.

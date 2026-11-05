@@ -2905,7 +2905,7 @@ test "assignment is a statement and cannot be chained" {
 }
 
 test "shadowing a visible local is rejected, including across a block" {
-    try expectFailure("var n = 1\nvar n = 2\n", "`n` is already declared");
+    try expectFailure("var n = 1\nvar n = 2\n", "`n` is already declared on line 1");
     try expectFailure("var n = 1\nif true {\n  var n = 2\n}\n", "`n` is already declared");
 }
 
@@ -3982,7 +3982,7 @@ test "crossing a function boundary allows reusing a module-level name" {
 }
 
 test "functions and variables share one namespace" {
-    try expectFailure("var greet = 1\nfunc greet() {\n}\n", "`greet` is already declared");
+    try expectFailure("var greet = 1\nfunc greet() {\n}\n", "`greet` is already declared on line 2");
     try expectFailure("func f() {\n}\nfunc f() {\n}\n", "`f` is already declared");
     try expectFailure("func f() {\n}\nf = 1\n", "`f` is a function and cannot be assigned to");
 }
