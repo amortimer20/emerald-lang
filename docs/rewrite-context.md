@@ -1034,8 +1034,8 @@ the warning points at that loop instead and says it has no `break`, since the lo
 mistake. A loop that is merely infinite in some other way (a condition that never changes)
 is not detected: that is undecidable in general, and a guess would fire on intended code.
 `exit()` ends its path just as `raise` does everywhere a path's end matters: for this
-warning, for 7.2's rule that every path returns a value, and for narrowing (`if name == nothing {
-exit(1) }` leaves `name` present after it). A program function or method that
+warning, for 7.2's rule that every path returns a value, and for narrowing (`if name ==
+nothing { exit(1) }` leaves `name` present after it). A program function or method that
 happens to be named `exit` is an ordinary call. A nested function declared after a `return`
 is not itself unreachable code: it is hoisted (7.1), so its position relative to a `return`
 in the same block does not matter.
@@ -1189,17 +1189,21 @@ position; its shape and the overall callable arity are checked statically, and e
 name remains read-only. This does not spread a dictionary entry into two parameters: an
 entry is still one tuple item unless the method explicitly promises another argument.
 
-Every method remains capturable. When a built-in higher-order method has an output type
-that depends on a future block, a bare capture requires an expected callable type:
+Every method a program declares is capturable (7.5). Capturing a built-in method, such as
+`numbers.map` or `name.upper`, is deferred (21): a block around the call does the same
+thing, as in `{ text => text.upper() }`, and the diagnostic for a bare built-in method
+offers exactly that. When built-in capture arrives, a built-in higher-order method whose
+output type depends on a future block will need an expected callable type:
 
-```emerald
+```text
 const mapper: func(func(Int): String): List[String] = numbers.map
 ```
 
-A capture such as `const mapper = numbers.map` lacks enough evidence to choose the mapped
-element type and receives an inference diagnostic showing the needed annotation. Emerald
-does not create an implicitly generic callable or defer the binding's type decision until
-a later call. Methods whose signatures are already concrete infer normally.
+A capture such as `const mapper = numbers.map` would lack enough evidence to choose the
+mapped element type and would receive an inference diagnostic showing the needed
+annotation. Emerald will not create an implicitly generic callable or defer the binding's
+type decision until a later call. Methods whose signatures are already concrete would infer
+normally.
 
 Trailing lambdas provide Ruby-like block expressiveness without making blocks a second
 calling convention. Parameter types are inferred when the receiver determines them.
@@ -1236,8 +1240,9 @@ named result on the line before (`const found = items.any? { ... }`), which usua
 ### 7.5 Method values
 
 Methods are first-class callable values. `player.greet()` invokes the method and
-`player.greet` captures it. Capturing any method is allowed. A class receiver remains the
-shared object; a struct receiver is copied and the captured copy persists across calls.
+`player.greet` captures it. Capturing any method a program declares is allowed (a built-in
+method is not yet, 7.4). A class receiver remains the shared object; a struct receiver is
+copied and the captured copy persists across calls.
 
 The struct rule is ordinary value semantics rather than a special case, and it is taught
 through its equivalence: capturing a method from a struct behaves exactly as if the struct
@@ -1536,8 +1541,10 @@ they explicitly sort or reverse, evaluate blocks from left to right exactly once
 visited value, and produce new collections. `find`, `any?`, `all?`, `none?`, and `one?`
 stop as soon as their answers are known. Dictionary and set iteration is deterministic.
 Invalid indices and sizes produce clear errors rather than being silently adjusted.
-Looping over a range need not allocate a list, but an eager transformation such as
-`range.map` returns a completed list before the next operation begins.
+Looping over a range need not allocate a list. A range itself offers only `count`,
+`empty?`, `step`, `reverse`, and `to_list`; the collection operations on a range (`map`,
+`take`, `drop`, and the rest) are deferred (21), since `to_list()` first gives the same
+completed list: `(1..4).to_list().map { n => n * n }`.
 
 `each` is for side effects and returns `Nothing`. `reduce` requires an initial value, so
 empty input is defined and the accumulator may differ from the element type. `filter_map`
@@ -1550,10 +1557,11 @@ collection may itself contain `nothing`; use `contains?`, or `find_index` when t
 position is needed. This follows the non-nesting rule and companion table in 4.5.
 
 `filter` and `reject` preserve the receiver's collection kind for lists, dictionaries,
-and sets. `take(count)` and `drop(count)` do the same, using insertion order for
-dictionaries and sets. The corresponding operations on a range return a completed list.
-Strings and heterogeneous tuples do not receive these general collection operations
-initially.
+and sets. `take(count)` and `drop(count)` are List operations; on dictionaries and sets
+(which would keep the receiver's kind, in insertion order) they are deferred (21), since a
+list made first gives the same portion: `ages.entries().take(2)`, or `colors.map { color =>
+color }.take(2)` for a set. Strings and heterogeneous tuples do not receive these general
+collection operations initially.
 
 A negative `take` or `drop` count is an error. Zero is valid. A count beyond the available
 items is not an error: `take` returns every item and `drop` returns an empty collection.
@@ -3835,11 +3843,11 @@ Like every warning, each makes the command exit `1`.
 - Warnings should be scarce enough to be read.
 - Errors and warning text receive behavioral tests.
 
-Because braces determine scope, indentation remains nonsemantic. The checker warns only
-when indentation strongly depicts a different brace scope—for example, a line visually
-nested beneath a statement that opened no block. The warning explains the scope the parser
-actually used and offers the formatter's indentation. Ordinary personal spacing does not
-produce semantic warnings.
+Because braces determine scope, indentation remains nonsemantic, and ordinary personal
+spacing never produces a warning. A warning for indentation that strongly depicts a
+different brace scope (a line visually nested beneath a statement that opened no block) is
+deferred (21): `emerald format` already re-indents the program to the scope the parser
+used, which makes the real scope visible.
 
 `emerald explain <diagnostic-code>` expands a diagnostic into a short worked example. The
 initial catalog is intentionally small: only diagnostics with a stable code in their CLI
@@ -4290,7 +4298,13 @@ The following are deliberately outside the initial implementation:
 - implicit destructors and deterministic finalization syntax;
 - weak references, generational, moving, or concurrent GC;
 - an optimizing native compiler;
-- broad automatic foreign-library exposure.
+- broad automatic foreign-library exposure;
+- capturing a built-in method as a value (7.4), which a block around the call covers;
+- `map`, `take`, `drop`, and the other collection operations on a `Range`, and `take` and
+  `drop` on a `Dict` or `Set` (8.6), which a list made first covers (`to_list()`,
+  `entries()`);
+- a warning for indentation that suggests a different brace scope (17.2), which
+  `emerald format` makes unnecessary.
 
 Deferred means the design leaves room without reserving unnecessary syntax. A future
 feature still has to justify itself.
