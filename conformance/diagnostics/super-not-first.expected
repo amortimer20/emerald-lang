@@ -1,0 +1,4 @@
+diagnostics/super-not-first.em:9:9: `super(...)` has to be the first statement of the constructor
+          super(name)
+          ^^^^^
+Move it to the constructor's first line, before `self.tricks = 0`, so the base class's part of the object is built before anything else runs.

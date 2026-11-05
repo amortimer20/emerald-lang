@@ -5652,7 +5652,7 @@ fn checkConstructorBody(self: *Checker, key: []const u8) Error!void {
     const constructor = self.constructors.get(key).?.constructor.?;
     const super_call = superCallOf(constructor.body.statements);
     if (self.structs.get(key).?.user.?.base) |base| {
-        if (super_call == null and try self.constructionNeedsArguments(base.name)) {
+        if (super_call == null and !hasLaterSuperCall(constructor.body.statements) and try self.constructionNeedsArguments(base.name)) {
             try self.reportWithHelp(
                 constructor.keyword_span,
                 "this constructor has to start with `super(...)`, because building `{s}` takes arguments",
@@ -13317,7 +13317,18 @@ fn typeOfSuperCall(self: *Checker, expression: *const Ast.Expression, call: Ast.
         return .nothing;
     };
     if (building.super_call != expression) {
-        try self.report(
+        const statements = building.declaration.constructor.?.body.statements;
+        if (statements.len > 0 and !(statements[0].data == .expression and statements[0].data.expression == expression)) {
+            const text = self.files[self.file].source.text[statements[0].span.start..statements[0].span.end];
+            const first_line = std.mem.trim(u8, text[0 .. std.mem.indexOfScalar(u8, text, '\n') orelse text.len], " \t\r");
+            try self.reportWithHelp(
+                call.callee.span,
+                "`super(...)` has to be the first statement of the constructor",
+                .{},
+                "Move it to the constructor's first line, before `{s}`, so the base class's part of the object is built before anything else runs.",
+                .{first_line},
+            );
+        } else try self.report(
             call.callee.span,
             "`super(...)` can only begin a constructor",
             .{},
@@ -13341,6 +13352,17 @@ fn typeOfSuperCall(self: *Checker, expression: *const Ast.Expression, call: Ast.
 }
 
 /// Whether a constructor body starts with `super(...)`, and if so that call.
+/// A `super(...)` written as a statement after the first one.
+fn hasLaterSuperCall(statements: []const Ast.Statement) bool {
+    if (statements.len < 2) return false;
+    for (statements[1..]) |statement| {
+        if (statement.data != .expression) continue;
+        const expression = statement.data.expression;
+        if (expression.data == .call and isSuper(expression.data.call.callee)) return true;
+    }
+    return false;
+}
+
 fn superCallOf(statements: []const Ast.Statement) ?*const Ast.Expression {
     if (statements.len == 0 or statements[0].data != .expression) return null;
     const expression = statements[0].data.expression;
