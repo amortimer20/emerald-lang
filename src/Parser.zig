@@ -1076,7 +1076,8 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
             self.peek().span,
             "expected `{{` after `{s}`, found {s}",
             .{ self.text(name), self.peek().kind.describe() },
-            try std.fmt.allocPrint(self.arena, "A {s} body is enclosed in braces, as in `{s} Marker {{ }}`.", .{ word, word }),
+            (try self.typeHeaderHelp(word, name)) orelse
+                try std.fmt.allocPrint(self.arena, "A {s} body is enclosed in braces, as in `{s} Marker {{ }}`.", .{ word, word }),
         );
     }
     const saved_class = self.in_class;
@@ -2038,6 +2039,28 @@ fn parseWhile(self: *Parser) Error!Ast.Statement {
     };
 }
 
+/// Another language's way of naming a base class or a trait, found where the
+/// header should have ended: `class Dog(Animal)` or `struct Square implements Shape`.
+fn typeHeaderHelp(self: *Parser, word: []const u8, name: Token) Error!?[]const u8 {
+    const next = self.peek();
+    const after = self.peekAfterNext();
+    if (next.kind == .left_paren and after.kind == .identifier and std.mem.eql(u8, word, "class")) {
+        return try std.fmt.allocPrint(
+            self.arena,
+            "A class names the class it builds on with `extends`: write `class {s} extends {s} {{`.",
+            .{ self.text(name), self.text(after) },
+        );
+    }
+    if (next.kind == .identifier and std.mem.eql(u8, self.text(next), "implements") and after.kind == .identifier) {
+        return try std.fmt.allocPrint(
+            self.arena,
+            "A type adopts a trait with `with`: write `{s} {s} with {s} {{`.",
+            .{ word, self.text(name), self.text(after) },
+        );
+    }
+    return null;
+}
+
 /// Section 6.4: `for name in iterable { body }`.
 fn parseFor(self: *Parser) Error!Ast.Statement {
     const keyword = self.advance();
@@ -2062,7 +2085,14 @@ fn parseFor(self: *Parser) Error!Ast.Statement {
             self.peek().span,
             "expected `in` after `{s}`, found {s}",
             .{ self.text(name), self.peek().kind.describe() },
-            "Write what to loop over after `in`, as in `for number in 1..5`.",
+            if (self.check(.comma) and self.peekAfterNext().kind == .identifier)
+                try std.fmt.allocPrint(
+                    self.arena,
+                    "To take two names from each entry, put them in parentheses: `for ({s}, {s}) in ...`.",
+                    .{ self.text(name), self.text(self.peekAfterNext()) },
+                )
+            else
+                "Write what to loop over after `in`, as in `for number in 1..5`.",
         );
     }
 
@@ -2362,7 +2392,13 @@ fn parseNamedType(self: *Parser, name: Token, context: NamedTypeContext) Error!N
             self.peek().span,
             "expected `:` and a type after `{s}`, found {s}",
             .{ self.text(name), self.peek().kind.describe() },
-            if (context == .parameter)
+            if (self.peek().kind == .identifier and name.kind == .identifier and std.ascii.isUpper(self.text(name)[0]))
+                try std.fmt.allocPrint(
+                    self.arena,
+                    "Write the name first, then its type: `{s}: {s}`.",
+                    .{ self.text(self.peek()), self.text(name) },
+                )
+            else if (context == .parameter)
                 "Every parameter needs an explicit type, as in `count: Int`."
             else
                 "Every stored field needs an explicit type, as in `var x: Float`.",
@@ -2502,7 +2538,7 @@ fn parseDeclaration(self: *Parser, mutable: bool) Error!Ast.Statement {
     // Section 4.1: an uninitialized variable is allowed only with an explicit
     // type, because there is nothing else to infer one from.
     if (annotation != null and !self.check(.equal)) {
-        try self.rejectGuardedDeclaration(name);
+        try self.rejectGuardedDeclaration(name, null);
         try self.expectStatementEnd();
         return .{
             .span = spanning(keyword.span, annotation.?.span),
@@ -2529,7 +2565,7 @@ fn parseDeclaration(self: *Parser, mutable: bool) Error!Ast.Statement {
     _ = self.advance();
 
     const initializer = try self.parseExpression();
-    try self.rejectGuardedDeclaration(name);
+    try self.rejectGuardedDeclaration(name, initializer);
     try self.expectStatementEnd();
 
     return .{
@@ -2577,11 +2613,61 @@ fn parseDestructuring(self: *Parser, keyword: Token, mutable: bool) Error!Ast.St
     };
 }
 
+/// `var` or `const`, whichever introduced `name`.
+fn declarationWord(self: *Parser, name: Token) []const u8 {
+    const before = std.mem.trimEnd(u8, self.source.text[0..name.span.start], " ");
+    const start = if (std.mem.lastIndexOfAny(u8, before, " \n")) |at| at + 1 else 0;
+    return before[start..];
+}
+
+const PythonConditional = struct {
+    condition: []const u8,
+    otherwise: []const u8,
+};
+
+/// `"adult" if age >= 18 else "child"`: the text of the condition and of the
+/// answer after `else`, when the rest of the line has that Python shape.
+fn pythonConditional(self: *Parser, value: *const Ast.Expression) ?PythonConditional {
+    _ = value;
+    const keyword = self.peek();
+    var at = self.index + 1;
+    var otherwise: ?usize = null;
+    var depth: usize = 0;
+    while (at < self.tokens.len) : (at += 1) {
+        switch (self.tokens[at].kind) {
+            .left_paren, .left_bracket, .left_brace => depth += 1,
+            .right_paren, .right_bracket, .right_brace => depth -|= 1,
+            .keyword_else => if (depth == 0 and otherwise == null) {
+                otherwise = at;
+            },
+            .newline, .eof => break,
+            else => {},
+        }
+    }
+    const split = otherwise orelse return null;
+    if (split == self.index + 1 or split + 1 >= at) return null;
+    const condition = self.source.text[self.tokens[self.index + 1].span.start..self.tokens[split - 1].span.end];
+    const answer = self.source.text[self.tokens[split + 1].span.start..self.tokens[at - 1].span.end];
+    _ = keyword;
+    return .{ .condition = condition, .otherwise = answer };
+}
+
 /// A trailing `if` would put the declaration inside a block of its own, where
 /// section 6.1 would end its scope on the same line, so it could never be used.
-fn rejectGuardedDeclaration(self: *Parser, name: Token) Error!void {
+fn rejectGuardedDeclaration(self: *Parser, name: Token, initializer: ?*const Ast.Expression) Error!void {
     const keyword = self.peek();
     if (keyword.kind != .keyword_if) return;
+    if (initializer) |value| if (self.pythonConditional(value)) |written| {
+        return self.report(
+            keyword.span,
+            "a declaration cannot have a trailing `if`",
+            try std.fmt.allocPrint(
+                self.arena,
+                "Emerald puts the condition first: write `{s} {s} = if {s} then {s} else {s}`.",
+                .{ self.declarationWord(name), self.text(name), written.condition, self.source.text[value.span.start..value.span.end], written.otherwise },
+            ),
+        );
+    };
     const help = try std.fmt.allocPrint(
         self.arena,
         "Declare `{s}` on its own line first, then assign it with the trailing `if`, as in `{s} = value if condition`.",
@@ -2926,6 +3012,26 @@ fn parseFunctionType(self: *Parser) Error!Ast.TypeExpression {
     };
 }
 
+/// The condition written after an `else`, up to the `{` that ends its line.
+fn elseCondition(self: *Parser) ?[]const u8 {
+    const first = self.peek();
+    if (first.kind == .eof or first.kind == .newline) return null;
+    var at = self.index;
+    while (at < self.tokens.len) : (at += 1) {
+        const token = self.tokens[at];
+        switch (token.kind) {
+            .left_brace => {
+                if (at == self.index) return null;
+                const last = self.tokens[at - 1];
+                return self.source.text[first.span.start..last.span.end];
+            },
+            .newline, .eof => return null,
+            else => {},
+        }
+    }
+    return null;
+}
+
 fn parseIf(self: *Parser) Error!Ast.Statement {
     const keyword = self.advance();
     const condition = try self.parseHeaderCondition();
@@ -2949,6 +3055,18 @@ fn parseIf(self: *Parser) Error!Ast.Statement {
             otherwise = .{ .chained = chained };
             end = chained.span;
         } else {
+            if (!self.atLeftBrace()) if (self.elseCondition()) |written| {
+                return self.reportFmt(
+                    self.peek().span,
+                    "expected `{{` to open a block, found {s}",
+                    .{self.peek().kind.describe()},
+                    try std.fmt.allocPrint(
+                        self.arena,
+                        "`else` takes no condition. To test another condition, write `else if {s} {{`. To cover every other case, write `else {{`.",
+                        .{written},
+                    ),
+                );
+            };
             const block = try self.parseBlock();
             otherwise = .{ .block = block };
             end = block.span;

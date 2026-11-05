@@ -350,6 +350,8 @@ current_return_type: ?Type = null,
 /// is legal instead (14.1), since the entry file's top level is the only
 /// other place a `return` statement can appear (`checkReturn`).
 in_function: bool = false,
+/// Checking the body of a block such as `each { ... }`, which is not a loop.
+in_block: bool = false,
 /// Bare `raise` is valid only while a catch body is being checked.
 catch_depth: usize = 0,
 /// The loop depth on entry to an active `finally`, for exits that would leave it.
@@ -3331,7 +3333,7 @@ fn checkRaise(self: *Checker, raised: Ast.Raise) Error!void {
         return;
     };
     const actual = try self.typeOfExpected(value, self.errorType());
-    if (actual.kind != .invalid and !actual.assignableTo(self.errorType())) try self.report(value.span, "only an Error can be raised, but this is {f}", .{actual}, "Raise an Error value, such as `Error(\"what went wrong\")`.");
+    if (actual.kind != .invalid and !actual.assignableTo(self.errorType())) try self.report(value.span, "only an Error can be raised, but this is {f}", .{actual}, (try self.raiseHelp(actual)) orelse "Raise an Error value, such as `Error(\"what went wrong\")`.");
 }
 
 fn checkAssert(self: *Checker, assertion: Ast.Assert) Error!void {
@@ -3873,7 +3875,11 @@ fn enclosingLoop(self: *Checker, span: Source.Span, comptime keyword: []const u8
             "`" ++ keyword ++ "` can only be used inside a loop",
             .{},
             // Inside a function, the likely intent is ending the caller's loop.
-            if (self.in_function)
+            if (self.in_block and std.mem.eql(u8, keyword, "break"))
+                "`break` ends a `for` or `while` loop; a block passed to `each` or `map` is not a loop. Write a `for` loop over the items instead, as in `for item in items`."
+            else if (self.in_block and std.mem.eql(u8, keyword, "continue"))
+                "`continue` moves to the next turn of a `for` or `while` loop; a block is not a loop. To skip an item, `return` from the block."
+            else if (self.in_function)
                 "A function cannot end the loop that called it. Return a value the caller can check instead."
             else
                 "Put it inside a `while` or `for` loop, or remove it.",
@@ -4491,6 +4497,18 @@ fn optionalMismatchHelp(self: *Checker, actual: Type, expected: Type, span: Sour
         self.arena,
         "`{s}` may be nothing. Give it a fallback with `{s}.or({s})`, or check `{s} != nothing` first.",
         .{ text, try receiverText(self.arena, text), fallback, text },
+    );
+}
+
+/// `raise BadScore(...)` where `BadScore` is a class that does not extend `Error`.
+fn raiseHelp(self: *Checker, actual: Type) Error!?[]const u8 {
+    if (actual.kind != .struct_value or actual.optional) return null;
+    const user = actual.user orelse return null;
+    if (!user.class) return null;
+    return try std.fmt.allocPrint(
+        self.arena,
+        "Only an `Error` can be raised. Declare it as `class {s} extends Error`, so it can be raised and caught.",
+        .{user.display_name},
     );
 }
 
@@ -7671,6 +7689,7 @@ fn checkLambdaBody(
 
     const outer_return_type = self.current_return_type;
     const outer_in_function = self.in_function;
+    const outer_in_block = self.in_block;
     const outer_loops = self.loops;
     const outer_pending = self.pending_return_types;
     const outer_catch_depth = self.catch_depth;
@@ -7679,6 +7698,7 @@ fn checkLambdaBody(
         _ = self.scopes.pop();
         self.current_return_type = outer_return_type;
         self.in_function = outer_in_function;
+        self.in_block = outer_in_block;
         self.loops = outer_loops;
         self.pending_return_types = outer_pending;
         self.catch_depth = outer_catch_depth;
@@ -7693,6 +7713,7 @@ fn checkLambdaBody(
     self.finally_loop_depth = null;
     self.pending_return_types = .empty;
     self.in_function = true;
+    self.in_block = true;
     self.current_return_type = wanted_result;
 
     switch (lambda.body) {
@@ -8821,6 +8842,12 @@ fn typeOfMethodCall(
                     "Pass a whole number."
                 else if (operand == .list)
                     "Pass a List of the same element type."
+                else if (std.mem.eql(u8, member.name, "remove") and actual.kind == .int and !actual.optional)
+                    try std.fmt.allocPrint(
+                        self.arena,
+                        "`remove` takes the item itself, not its position. To remove the item at a position, write `{s}.remove_at({s})`.",
+                        .{ self.spanText(member.base.span), self.spanText(argument.span) },
+                    )
                 else
                     "Pass a value of the type the list holds, or convert it first.",
             );

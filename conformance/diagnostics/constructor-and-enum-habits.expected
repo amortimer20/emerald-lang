@@ -1,0 +1,8 @@
+diagnostics/constructor-and-enum-habits.em:5:9: `Point` has no type-level member named `new`
+  var p = Point.new(1, 2)
+          ^^^^^^^^^
+A value is built by calling the type's name, with no `.new`: write `Point(1, 2)`.
+diagnostics/constructor-and-enum-habits.em:9:16: `red` is not defined
+  var c: Color = red
+                 ^^^
+`red` is a choice of `Color`, so write it with the type: `Color.red`.

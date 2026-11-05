@@ -1,0 +1,4 @@
+diagnostics/implements-keyword.em:4:15: expected `{` after `Square`, found a name
+  struct Square implements Shape {
+                ^^^^^^^^^^
+A type adopts a trait with `with`: write `struct Square with Shape {`.

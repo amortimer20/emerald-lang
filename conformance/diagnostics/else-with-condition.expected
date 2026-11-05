@@ -1,0 +1,4 @@
+diagnostics/else-with-condition.em:8:6: expected `{` to open a block, found (
+  else (x > 0) {
+       ^
+`else` takes no condition. To test another condition, write `else if (x > 0) {`. To cover every other case, write `else {`.

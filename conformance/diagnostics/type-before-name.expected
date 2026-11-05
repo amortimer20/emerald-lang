@@ -1,0 +1,4 @@
+diagnostics/type-before-name.em:1:17: expected `:` and a type after `Int`, found a name
+  func square(Int n): Int {
+                  ^
+Write the name first, then its type: `n: Int`.

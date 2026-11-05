@@ -1,0 +1,4 @@
+diagnostics/class-base-in-parentheses.em:4:10: expected `{` after `Dog`, found (
+  class Dog(Animal) {
+           ^
+A class names the class it builds on with `extends`: write `class Dog extends Animal {`.
