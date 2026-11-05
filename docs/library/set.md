@@ -70,6 +70,8 @@ for the shared `const`-collection diagnostic.
 
 Ordinary set operations: everything in either set; only what both share; everything in the
 receiver but not `other`; everything in exactly one of the two. None changes either operand.
+The result keeps the receiver's order for the receiver's elements, followed by `other`'s
+remaining elements in `other`'s order: `{3, 1}.union({2, 1})` is `{3, 1, 2}`.
 
 ## subset?(other: Set[T]) -> Bool
 
