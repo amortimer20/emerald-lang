@@ -4641,7 +4641,7 @@ fn describeInstanceMember(gpa: std.mem.Allocator, analysis: *const emerald.Analy
             const source = &analysis.files[target.file].source;
             for (s.fields) |field| if (std.mem.eql(u8, field.name, label)) return (try Completion.field(gpa, source, label, field.name_span, field.annotation, null, null, 5)).deprecate(field.deprecated);
             for (s.properties) |property| if (std.mem.eql(u8, property.name, label)) return (try Completion.field(gpa, source, label, property.name_span, property.annotation, null, null, 10)).deprecate(property.deprecated);
-            for (s.methods) |method| if (std.mem.eql(u8, method.name, label)) return try describeFunction(gpa, analysis, target.file, method, label, 2);
+            for (s.methods) |method| if (std.mem.eql(u8, method.name, label)) return try describeMethod(gpa, analysis, target.file, key, method, label);
         }
     }
     if (analysis.resolved.facts.bases.get(key)) |base| {
@@ -4707,6 +4707,88 @@ fn describeFunction(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, f
     return Completion.function(gpa, &analysis.files[file].source, function, label, kind, result);
 }
 
+/// A method of the type known by `owner_key`, described as `describeFunction`
+/// does. Section 3.2: an override or trait implementation with no `##` of its
+/// own shows the documentation of what it overrides or satisfies instead,
+/// labelled with where it came from.
+fn describeMethod(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, file: u32, owner_key: ?[]const u8, method: Ast.FunctionDeclaration, label: []const u8) !CompletionItem {
+    var item = try describeFunction(gpa, analysis, file, method, label, 2);
+    errdefer item.deinit(gpa);
+    if (item.documentation != null or method.override_span == null) return item;
+    const key = owner_key orelse return item;
+    item.documentation = try inheritedDocumentation(gpa, analysis, key, method.name);
+    return item;
+}
+
+/// The key a type declaration is known by, found from where its name is written.
+fn structKey(analysis: *const emerald.Analysis, file: u32, declaration: Ast.StructDeclaration) ?[]const u8 {
+    var declarations = analysis.resolved.facts.declarations.iterator();
+    while (declarations.next()) |entry| {
+        if (entry.value_ptr.file == file and entry.value_ptr.span.start == declaration.name_span.start) return entry.key_ptr.*;
+    }
+    return null;
+}
+
+const InheritedDocumentation = struct {
+    /// `Animal.speak`, owned.
+    source: []const u8,
+    /// Owned.
+    text: []const u8,
+};
+
+/// Section 3.2's inherited documentation for the member `name` of the type
+/// `key`: the nearest documented declaration it overrides along the base
+/// classes, and each documented trait requirement it satisfies. Each source is
+/// labelled; text that several sources share is shown once, under the first.
+fn inheritedDocumentation(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, key: []const u8, name: []const u8) !?[]const u8 {
+    var found: std.ArrayList(InheritedDocumentation) = .empty;
+    defer {
+        for (found.items) |entry| {
+            gpa.free(entry.source);
+            gpa.free(entry.text);
+        }
+        found.deinit(gpa);
+    }
+    try collectInheritedDocumentation(gpa, analysis, key, name, &found, 0);
+    if (found.items.len == 0) return null;
+    var text: std.Io.Writer.Allocating = .init(gpa);
+    defer text.deinit();
+    for (found.items, 0..) |entry, index| {
+        if (index != 0) try text.writer.writeAll("\n\n");
+        try text.writer.print("*Documentation from `{s}`:*\n\n{s}", .{ entry.source, entry.text });
+    }
+    return try text.toOwnedSlice();
+}
+
+fn collectInheritedDocumentation(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, key: []const u8, name: []const u8, found: *std.ArrayList(InheritedDocumentation), depth: usize) std.mem.Allocator.Error!void {
+    if (depth > 64) return;
+    if (analysis.resolved.facts.bases.get(key)) |base| try inheritedDocumentationFrom(gpa, analysis, base, name, found, depth + 1);
+    if (analysis.resolved.facts.adopted.get(key)) |traits| for (traits) |trait_key| {
+        try inheritedDocumentationFrom(gpa, analysis, trait_key, name, found, depth + 1);
+    };
+}
+
+/// The documentation of `name` as the type `key` declares it, or, when it
+/// declares it with none or not at all, as its own bases and traits do.
+fn inheritedDocumentationFrom(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, key: []const u8, name: []const u8, found: *std.ArrayList(InheritedDocumentation), depth: usize) std.mem.Allocator.Error!void {
+    const target = analysis.resolved.facts.declarations.get(key) orelse return;
+    const declaration = findStructDeclarationAt(analysis, target) orelse return;
+    for (declaration.methods) |method| {
+        if (!std.mem.eql(u8, method.name, name)) continue;
+        const text = try Completion.documentation(gpa, &analysis.files[target.file].source, method.name_span) orelse break;
+        for (found.items) |entry| if (std.mem.eql(u8, entry.text, text)) {
+            gpa.free(text);
+            return;
+        };
+        errdefer gpa.free(text);
+        const source = try std.fmt.allocPrint(gpa, "{s}.{s}", .{ declaration.name, name });
+        errdefer gpa.free(source);
+        try found.append(gpa, .{ .source = source, .text = text });
+        return;
+    }
+    try collectInheritedDocumentation(gpa, analysis, key, name, found, depth);
+}
+
 fn describeModuleItem(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, target: Resolver.Target, label: []const u8) !?CompletionItem {
     const source = &analysis.files[target.file].source;
     for (analysis.parsed[target.file].program.statements) |statement| switch (statement.data) {
@@ -4761,7 +4843,9 @@ fn describeTarget(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, tar
 
 fn describeStructTarget(gpa: std.mem.Allocator, analysis: *const emerald.Analysis, file: u32, declaration: Ast.StructDeclaration, start: u32) !?CompletionItem {
     const source = &analysis.files[file].source;
-    for (declaration.methods) |method| if (method.name_span.start == start) return try describeFunction(gpa, analysis, file, method, method.name, 2);
+    for (declaration.methods) |method| if (method.name_span.start == start) {
+        return try describeMethod(gpa, analysis, file, structKey(analysis, file, declaration), method, method.name);
+    };
     for (declaration.properties) |property| if (property.name_span.start == start) {
         return (try Completion.field(gpa, source, property.name, property.name_span, property.annotation, null, null, 10)).deprecate(property.deprecated);
     };
@@ -5169,6 +5253,39 @@ test "definitionAt jumps from a written type annotation to the struct it names" 
     const target = (try definitionAt(gpa, &analysis, 0, use_offset)).?;
     const decl_offset: u32 = @intCast(std.mem.indexOf(u8, text, "struct Circle").? + "struct ".len);
     try testing.expectEqual(decl_offset, target.span.start);
+}
+
+test "an undocumented override shows the documentation it inherits, labelled (3.2)" {
+    const gpa = testing.allocator;
+    const text =
+        "trait Named {\n    ## The name to show.\n    func name(): String\n}\n" ++
+        "class Animal {\n    ## Makes the animal's sound.\n    func speak() {\n        print(\"...\")\n    }\n}\n" ++
+        "class Dog extends Animal with Named {\n    @override\n    func speak() {\n        print(\"Woof\")\n    }\n" ++
+        "    @override\n    func name(): String {\n        return \"Dog\"\n    }\n}\n" ++
+        "class Puppy extends Dog {\n    @override\n    func speak() {\n        print(\"Yip\")\n    }\n}\n" ++
+        "class Cat extends Animal {\n    ## Meows, unless asleep.\n    @override\n    func speak() {\n        print(\"Meow\")\n    }\n}\n";
+    var source = try Source.init(gpa, "t.em", text);
+    defer source.deinit(gpa);
+    var files = [_]emerald.Project.File{.{ .source = source, .namespace = "", .entry = true }};
+    const project: emerald.Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+    var analysis = (try emerald.analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+    try testing.expect(analysis.checked.diagnostics.len == 0);
+
+    const cases = [_]struct { needle: []const u8, expected: []const u8 }{
+        .{ .needle = "speak() {\n        print(\"Woof\")", .expected = "*Documentation from `Animal.speak`:*\n\nMakes the animal's sound." },
+        .{ .needle = "name(): String {", .expected = "*Documentation from `Named.name`:*\n\nThe name to show." },
+        // Through an undocumented override in between.
+        .{ .needle = "speak() {\n        print(\"Yip\")", .expected = "*Documentation from `Animal.speak`:*\n\nMakes the animal's sound." },
+        // Its own documentation wins, unlabelled.
+        .{ .needle = "speak() {\n        print(\"Meow\")", .expected = "Meows, unless asleep." },
+    };
+    for (cases) |case| {
+        const start: u32 = @intCast(std.mem.indexOf(u8, text, case.needle).?);
+        const item = (try describeTarget(gpa, &analysis, .{ .file = 0, .span = .{ .start = start, .end = start + 4 } })).?;
+        defer item.deinit(gpa);
+        try testing.expectEqualStrings(case.expected, item.documentation.?);
+    }
 }
 
 test "task bodies and generic task and channel elements support hover and definition" {

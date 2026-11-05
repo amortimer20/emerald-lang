@@ -161,8 +161,10 @@ to program files, not the prelude.
 An override or trait implementation uses its own documentation when present. Otherwise,
 documentation tools inherit the text from the overridden declaration or satisfied trait
 requirement and label its source. If several requirements contribute different text, the
-tool presents each source rather than silently choosing one. Private helper documentation
-does not become part of an adopter's public API.
+tool presents each source rather than silently choosing one. The language server's hover
+and completion do this, labelling the text as, for example, "Documentation from
+`Animal.speak`". Private helper documentation does not become part of an adopter's public
+API.
 
 ### 3.3 Naming
 
