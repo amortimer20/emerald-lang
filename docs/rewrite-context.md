@@ -2648,6 +2648,15 @@ narrow sense; error values and catch bindings remain statically typed.
 try {
     load_game()
 }
+The text of every message Emerald raises itself (an index outside a list, a division by zero,
+an overflow, a failed conversion, a library error such as `FileError`) is part of the
+language, since a program reads it through `message`. The conformance suite's `run/` and
+`runtime-errors/` cases are its specification, and every backend gives exactly that text; a
+compiler shares the interpreter's message-building code rather than writing its own copy.
+
+Exhausting memory ends the program with a message and a nonzero status; it is not catchable
+and does not run `finally`.
+
 catch error: FileError {
     print(error.message)
 }
@@ -4515,6 +4524,7 @@ recorded in their normative sections:
 | Console nesting and `Console.plain`'s scope (15.6) | Re-closing to the terminal's bare default at every inner span, and a `plain` that strips any recognizable escape sequence | Closing to the default would lose the outer style after any nested span, which is wrong wherever one helper's output is interpolated into another's (`Console.bold("... #{Console.dim(x)} ...")`); reopening the enclosing style after both an inner close and a bare `ESC[0m` found in the input keeps composition correct either way. `plain` is scoped to undoing Console's own SGR styling — not a general sanitizer for untrusted terminal output — because the latter is a different, security-shaped problem (arbitrary cursor and mode-switching sequences, not just color) that this slice never claimed to solve. |
 | Date and time type shape (15.8) | One type per meaning, with no zoned date-time or calendar-period type | Temporal, java.time, and kotlinx-datetime all separate dates, clock times, wall-clock date-times, exact moments, and durations, which is what lets the checker catch a birthday used as a timestamp. kotlinx-datetime also shows a zoned type can be left out: converting with an explicit zone covers the need without a sixth type to teach. A period type is replaced by named units on `add`. |
 | Date and time arithmetic (15.8) | Operators only where arithmetic is exact (`Duration`, `Instant`); named methods with named units for calendar steps | "One month" and "one day" depend on where they start, and a `+` would hide that. The rule is short enough to teach in one sentence. |
+| Runtime error message text (13.1) | Part of the language, specified by the conformance cases; a compiler shares the interpreter's message code (the user, 2026-10-29, review item D2) | A program reads the text through `message`, and 49 `run/` cases print it, so leaving it unspecified would make those cases unportable while a compiler could only pass by copying every string. Declaring it unportable instead would have meant rewriting those cases and teaching students that an error's words may change. One shared source keeps a beginner's error identical however the program runs. |
 | Month arithmetic past a month's end (15.8) | Use the new month's last day | What Temporal, java.time, and kotlinx-datetime do by default. Raising would make `add(months: 1)` fail on 31 January, the most common case a beginner tries. |
 | Positional time units (7.3, 15.8) | A check-time error for the `Duration` constructor and a date's `add` and `subtract`, listing the units | `Duration(5)` otherwise means five days, and `date.add(1)` one year, silently. A general named-only parameter feature was considered and deferred: it is new syntax, and these calls are the only ones that need it so far. Factories such as `Duration.seconds(5)` would be a second way to build the same value. |
 | Month and weekday representation (15.8) | Month as an `Int` 1–12 with `month_name`; weekday as the `Weekday` enum | Month numbers are universal and keep `Date(2026, 9, 25)` short. Weekday numbers are not: systems disagree on whether Sunday or Monday comes first and whether counting starts at 0 or 1. |
