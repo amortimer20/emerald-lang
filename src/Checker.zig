@@ -6937,7 +6937,9 @@ fn reportMemberOfBuiltinFunction(self: *Checker, member: Ast.Expression.Member) 
     const builtin = Resolver.builtinFunctionName(key) orelse for (Resolver.prelude) |prelude_name| {
         if (std.mem.eql(u8, prelude_name, name)) break prelude_name;
     } else return false;
-    if (std.mem.eql(u8, builtin, "random")) {
+    // Python's `random.randint(1, 6)` and `random.randrange(1, 7)` meant a whole
+    // number in a range, which is what `random` gives when called with one.
+    if (std.mem.eql(u8, builtin, "random") and (std.mem.eql(u8, member.name, "randint") or std.mem.eql(u8, member.name, "randrange"))) {
         try self.reportWithHelp(
             member.base.span,
             "`random` is a built-in function, so it has no `{s}`",

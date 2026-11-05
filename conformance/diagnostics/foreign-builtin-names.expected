@@ -23,22 +23,26 @@ diagnostics/foreign-builtin-names.em:9:23: `null` is not defined
                         ^^^^
 Emerald writes absence as `nothing`. A value that may be absent has an optional type, as in `String?`.
 diagnostics/foreign-builtin-names.em:10:1: `console` is not defined
-  console.log("hello")
+  console.log("hello", age)
   ^^^^^^^
-Emerald prints with `print`, as in `print("hello")`; `write` does the same without the line break.
+Emerald prints with `print`, as in `print("hello", age)`; `write` does the same without the line break.
 diagnostics/foreign-builtin-names.em:12:7: `sqrt` is not defined
   print(sqrt(x))
         ^^^^
 Emerald has no `sqrt` function. A Float takes its own square root: `x.square_root()`.
-diagnostics/foreign-builtin-names.em:13:7: `max` is not defined
+diagnostics/foreign-builtin-names.em:13:7: `sqrt` is not defined
+  print(sqrt(16))
+        ^^^^
+Emerald has no `sqrt` function. A Float takes its own square root: `16.0.square_root()`.
+diagnostics/foreign-builtin-names.em:14:7: `max` is not defined
   print(max(age, 3))
         ^^^
 Emerald has no `max` function. Write `Math.max(age, 3)` for two values.
-diagnostics/foreign-builtin-names.em:14:7: `read_line` is not defined
+diagnostics/foreign-builtin-names.em:15:7: `read_line` is not defined
   print(read_line())
         ^^^^^^^^^
 Emerald reads a line of input with `input()`, as in `input("Name? ")`, or `input_maybe()` when the end of input is expected.
-diagnostics/foreign-builtin-names.em:15:1: `Kernel` is not defined
+diagnostics/foreign-builtin-names.em:16:1: `Kernel` is not defined
   Kernel.print("hi")
   ^^^^^^
 Emerald has no `Kernel`. Its built-ins, such as `print` and `input`, are written bare.

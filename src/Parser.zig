@@ -691,7 +691,7 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
             "this `}` does not close anything",
             "Remove it, or look above for a block that is missing its opening `{`.",
         ),
-        .identifier => if (std.mem.eql(u8, self.text(self.peek()), "do") and self.peekAfterNext().kind == .left_brace)
+        .identifier => if (std.mem.eql(u8, self.text(self.peek()), "do") and self.peekAfterNext().kind == .left_brace and self.doWhileAhead())
             self.reportDoWhile()
         else
             self.parseSimpleStatement(),
@@ -3465,19 +3465,24 @@ fn reportUnusedExpression(self: *Parser, expression: *const Ast.Expression) Erro
             );
         }
         if (written.len >= 3) {
-            if (closeKeyword(written)) |keyword| {
-                return self.report(
-                    expression.span,
-                    try std.fmt.allocPrint(self.arena, "`{s}` is not an Emerald word", .{written}),
-                    try std.fmt.allocPrint(self.arena, "Did you mean `{s}`?", .{keyword}),
-                );
-            }
+            if (closeKeyword(written)) |keyword| if (keywordFits(keyword, next.kind)) return self.report(
+                expression.span,
+                try std.fmt.allocPrint(self.arena, "`{s}` is not an Emerald word", .{written}),
+                try std.fmt.allocPrint(self.arena, "Did you mean `{s}`?", .{keyword}),
+            );
         }
         if (next.kind == .identifier) {
             if (std.mem.eql(u8, written, "print")) return self.reportCallParentheses(expression, written, self.restOfLine(self.index));
             const name = self.text(next);
             const after_index = self.skipDocCommentsFrom(self.index + 1);
             const value = if (self.tokens[after_index].kind == .equal) self.restOfLine(after_index + 1) else null;
+            if (declaredTypeText(written) == null) {
+                return self.report(
+                    spanning(expression.span, next.span),
+                    "a name cannot contain spaces",
+                    try std.fmt.allocPrint(self.arena, "Use `_` between the words: write `var {s}_{s} = {s}`.", .{ written, name, value orelse "..." }),
+                );
+            }
             const help = if (declaredTypeText(written)) |type_name|
                 try std.fmt.allocPrint(self.arena, "Write `var {s}: {s} = {s}`, or `const` in place of `var` for a value that never changes.", .{ name, type_name, value orelse "..." })
             else
@@ -3542,6 +3547,16 @@ fn reportCallParentheses(self: *Parser, expression: *const Ast.Expression, word:
     );
 }
 
+/// Whether `keyword` can be followed by a token of `kind`: `retrun x` is a
+/// misspelled `return`, but `form "x"` is a call of `form`, since `for` is never
+/// followed by a literal.
+fn keywordFits(keyword: []const u8, kind: Token.Kind) bool {
+    return switch (kind) {
+        .string_literal, .raw_string_literal, .multiline_string_literal, .string_start, .int_literal, .float_literal => wordIn(keyword, &.{ "return", "raise", "assert", "if", "while", "case" }),
+        else => true,
+    };
+}
+
 /// The one statement keyword `written` most likely misspells, if any.
 fn closeKeyword(written: []const u8) ?[]const u8 {
     var close = Spelling.init(written);
@@ -3550,8 +3565,8 @@ fn closeKeyword(written: []const u8) ?[]const u8 {
 }
 
 const statement_keywords = [_][]const u8{
-    "func", "return", "while", "for",   "if",       "else",  "var",   "const", "class", "struct",
-    "enum", "trait",  "try",   "catch", "raise",    "assert", "break", "continue", "case", "using",
+    "func",    "return", "while", "for",   "if",    "else",   "var",   "const",    "class", "struct",
+    "enum",    "trait",  "try",   "catch", "raise", "assert", "break", "continue", "case",  "using",
     "finally",
 };
 
@@ -4129,6 +4144,29 @@ fn replaceWord(arena: std.mem.Allocator, snippet: []const u8, word: []const u8, 
 
 fn isNameByte(byte: u8) bool {
     return std.ascii.isAlphanumeric(byte) or byte == '_';
+}
+
+/// Whether the `do {` here closes with `} while`: only then is it the loop from
+/// another language, rather than a call of a function named `do` with a block.
+fn doWhileAhead(self: *const Parser) bool {
+    var depth: usize = 0;
+    var at = self.index + 1;
+    while (at < self.tokens.len) : (at += 1) {
+        switch (self.tokens[at].kind) {
+            .left_brace => depth += 1,
+            .right_brace => {
+                depth -= 1;
+                if (depth == 0) {
+                    var next = at + 1;
+                    while (next < self.tokens.len and self.tokens[next].kind == .newline) next += 1;
+                    return next < self.tokens.len and self.tokens[next].kind == .keyword_while;
+                }
+            },
+            .eof => return false,
+            else => {},
+        }
+    }
+    return false;
 }
 
 /// Java and C's `do { ... } while (condition)`, read in full so its body and

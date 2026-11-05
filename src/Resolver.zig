@@ -1475,6 +1475,14 @@ const read_help = "Check the spelling, or declare it before this line.";
 /// The help of an unknown name being assigned.
 const assign_help = "Declare it first with `var`, or check the spelling.";
 
+/// How an unknown name was used, which decides the help `reportUndefined` gives.
+const UndefinedUse = union(enum) {
+    read,
+    assign,
+    /// A help that already says exactly what is wrong.
+    explained: []const u8,
+};
+
 /// The one name in scope a writer most likely meant by `name`, if any.
 fn closeName(self: *Resolver, name: []const u8) ?[]const u8 {
     var spelling = Spelling.init(name);
@@ -1581,6 +1589,13 @@ fn postfixSafe(expression: []const u8) bool {
     return true;
 }
 
+/// Whether `text` is a whole-number literal, as in `16`.
+fn isWholeLiteral(text: []const u8) bool {
+    if (text.len == 0) return false;
+    for (text) |c| if (!std.ascii.isDigit(c) and c != '_') return false;
+    return true;
+}
+
 /// `expression` written so a `.method` or `..<` may follow it.
 fn asReceiver(self: *Resolver, expression: []const u8) Error![]const u8 {
     if (postfixSafe(expression)) return expression;
@@ -1660,6 +1675,12 @@ fn foreignHelp(self: *Resolver, span: Source.Span, name: []const u8) Error!?[]co
     const arena = self.arena;
     // The one argument as a receiver, or `fallback` when there is not one.
     const only: []const u8 = if (count == 1) try self.asReceiver(parts[0]) else "";
+    // A Float-only method (`square_root`, `floor`) on a whole-number literal
+    // needs the literal written as a Float first.
+    const only_float: []const u8 = if (count == 1 and isWholeLiteral(parts[0]))
+        try std.fmt.allocPrint(arena, "{s}.0", .{parts[0]})
+    else
+        only;
     const word = switch (which) {
         .max => "max",
         .min => "min",
@@ -1760,17 +1781,17 @@ fn foreignHelp(self: *Resolver, span: Source.Span, name: []const u8) Error!?[]co
             try std.fmt.allocPrint(
                 arena,
                 "Emerald has no `round` function. A Float rounds itself: `{s}.round()`.",
-                .{if (count == 1) only else "x"},
+                .{if (count == 1) only_float else "x"},
             ),
         .floor, .ceil => try std.fmt.allocPrint(
             arena,
             "Emerald has no `{s}` function. A Float does it itself: `{s}.{s}()`.",
-            .{ word, if (count == 1) only else "x", word },
+            .{ word, if (count == 1) only_float else "x", word },
         ),
         .sqrt => try std.fmt.allocPrint(
             arena,
             "Emerald has no `sqrt` function. A Float takes its own square root: `{s}.square_root()`.",
-            .{if (count == 1) only else "x"},
+            .{if (count == 1) only_float else "x"},
         ),
         .pow => if (count == 2)
             try std.fmt.allocPrint(
@@ -1791,7 +1812,7 @@ fn foreignHelp(self: *Resolver, span: Source.Span, name: []const u8) Error!?[]co
         .print_like => try std.fmt.allocPrint(
             arena,
             "Emerald prints with `print`, as in `print({s})`; `write` does the same without the line break.",
-            .{if (count >= 1) parts[0] else "\"hello\""},
+            .{if (count >= 1) written.? else "\"hello\""},
         ),
         .printf => "Emerald has no format strings. Print with `print`, and put a value in the text with interpolation, as in `print(\"n = #{n}\")`.",
         .kernel => "Emerald has no `Kernel`. Its built-ins, such as `print` and `input`, are written bare.",
@@ -1803,7 +1824,12 @@ fn foreignHelp(self: *Resolver, span: Source.Span, name: []const u8) Error!?[]co
 /// declared further down, the reader has most likely run into section 7.1's
 /// "variables are visible only from their declarations", so that is what the
 /// diagnostic says.
-fn reportUndefined(self: *Resolver, span: Source.Span, name: []const u8, help: []const u8) Error!void {
+fn reportUndefined(self: *Resolver, span: Source.Span, name: []const u8, use: UndefinedUse) Error!void {
+    const help = switch (use) {
+        .read => read_help,
+        .assign => assign_help,
+        .explained => |text| text,
+    };
     // A namespace is a real thing with a real name; it is just not a value.
     if (self.namespaces.contains(self.namespaceFor(name))) {
         return self.report(
@@ -1929,11 +1955,11 @@ fn reportUndefined(self: *Resolver, span: Source.Span, name: []const u8, help: [
 
     // What Emerald writes where another language has a built-in, when the
     // name is read as a value.
-    const reading = std.mem.eql(u8, help, read_help);
+    const reading = use == .read;
     const better = if (reading) try self.foreignHelp(span, name) else null;
     // Section 17.2: a name one edit away from one in scope. A specific help
     // above takes precedence.
-    const close: ?[]const u8 = if (better == null and (reading or std.mem.eql(u8, help, assign_help)))
+    const close: ?[]const u8 = if (better == null and use != .explained)
         self.closeName(name)
     else
         null;
@@ -2463,7 +2489,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
                 return self.reportUndefined(
                     assignment.name_span,
                     assignment.name,
-                    assign_help,
+                    .assign,
                 );
             };
             try self.noteModuleUse(found);
@@ -2565,7 +2591,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
                     try self.reportUndefined(
                         name.span,
                         name.text,
-                        assign_help,
+                        .assign,
                     );
                     continue;
                 };
@@ -3318,12 +3344,12 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
                 if (self.match_names.get(name)) |matched| if (sameFunction(matched.function, self.current_function)) return self.reportUndefined(
                     expression.span,
                     name,
-                    try std.fmt.allocPrint(self.arena, "The `{s}` match names `{s}` only inside its own arm. Use it there, or declare a variable before the `case` and assign it in the arm.", .{ try displayKey(self.arena, matched.key), name }),
+                    .{ .explained = try std.fmt.allocPrint(self.arena, "The `{s}` match names `{s}` only inside its own arm. Use it there, or declare a variable before the `case` and assign it in the arm.", .{ try displayKey(self.arena, matched.key), name }) },
                 );
                 return self.reportUndefined(
                     expression.span,
                     name,
-                    read_help,
+                    .read,
                 );
             };
             // Creating a lambda does not read its module captures. Their
