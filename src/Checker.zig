@@ -5278,11 +5278,13 @@ fn checkBodyWithSelfIn(
     const outer_constructing = self.constructing;
     const outer_catch_depth = self.catch_depth;
     const outer_try_depth = self.try_depth;
+    const outer_in_block = self.in_block;
     const outer_finally_loop_depth = self.finally_loop_depth;
     defer {
         self.scopes = outer_scopes;
         self.current_return_type = outer_return_type;
         self.in_function = outer_in_function;
+        self.in_block = outer_in_block;
         self.loops = outer_loops;
         self.constructing = outer_constructing;
         self.catch_depth = outer_catch_depth;
@@ -5299,6 +5301,8 @@ fn checkBodyWithSelfIn(
     try self.scopes.append(self.arena, parameters);
     self.current_return_type = expected_return_type;
     self.in_function = true;
+    // A function declared inside a block is not itself a block (`enclosingLoop`).
+    self.in_block = false;
     self.constructing = constructing;
 
     // Section 7.3's defaults, each against its parameter's type. The resolver
@@ -10913,7 +10917,7 @@ const Written = struct {
     compound: bool = false,
 };
 
-fn spanText(self: *Checker, span: Source.Span) []const u8 {
+fn spanText(self: *const Checker, span: Source.Span) []const u8 {
     return self.files[self.file].source.text[span.start..span.end];
 }
 
@@ -13339,7 +13343,7 @@ fn typeOfSuperCall(self: *Checker, expression: *const Ast.Expression, call: Ast.
     if (building.super_call != expression) {
         const statements = building.declaration.constructor.?.body.statements;
         if (statements.len > 0 and !(statements[0].data == .expression and statements[0].data.expression == expression)) {
-            const text = self.files[self.file].source.text[statements[0].span.start..statements[0].span.end];
+            const text = self.spanText(statements[0].span);
             const first_line = std.mem.trim(u8, text[0 .. std.mem.indexOfScalar(u8, text, '\n') orelse text.len], " \t\r");
             try self.reportWithHelp(
                 call.callee.span,
@@ -14064,9 +14068,8 @@ fn checkingProgramFile(self: *const Checker) bool {
 /// spans lines, to quote in a correction.
 fn quotableSpan(self: *const Checker, span: Source.Span) ?[]const u8 {
     if (self.file >= self.files.len) return null;
-    const text = self.files[self.file].source.text[span.start..span.end];
-    if (text.len > 48 or std.mem.indexOfScalar(u8, text, '\n') != null) return null;
-    return text;
+    const text = self.spanText(span);
+    return if (quotable(text)) text else null;
 }
 
 /// `name.trim()` or `scores.sort()` written as a whole statement. A built-in
@@ -14147,7 +14150,7 @@ fn bindingInScope(self: *Checker, name: []const u8) ?*Binding {
 fn warnForeignInterpolation(self: *Checker, expression: *const Ast.Expression) Error!void {
     if (!self.checkingProgramFile()) return;
     if (self.file >= self.files.len) return;
-    const text = self.files[self.file].source.text[expression.span.start..expression.span.end];
+    const text = self.spanText(expression.span);
     if (text.len == 0 or text[0] != '"') return;
     if ((try self.interpolation_warned.getOrPut(self.arena, expression)).found_existing) return;
     var index: usize = 0;
@@ -14280,7 +14283,8 @@ fn isInPlaceCounterpart(name: []const u8) bool {
     return false;
 }
 
-// Control-flow shape, computed from the AST alone.
+// Control-flow shape, computed from the AST and, for `exit()`, from the calls
+// already checked (`exit_calls`), so each is asked only after checking.
 
 /// Whether control can reach the end of a block, rather than leaving it
 /// through `return`, `break`, or `continue`, or looping forever. Once one

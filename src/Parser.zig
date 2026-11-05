@@ -2631,9 +2631,7 @@ const PythonConditional = struct {
 
 /// `"adult" if age >= 18 else "child"`: the text of the condition and of the
 /// answer after `else`, when the rest of the line has that Python shape.
-fn pythonConditional(self: *Parser, value: *const Ast.Expression) ?PythonConditional {
-    _ = value;
-    const keyword = self.peek();
+fn pythonConditional(self: *Parser) ?PythonConditional {
     var at = self.index + 1;
     var otherwise: ?usize = null;
     var depth: usize = 0;
@@ -2652,7 +2650,6 @@ fn pythonConditional(self: *Parser, value: *const Ast.Expression) ?PythonConditi
     if (split == self.index + 1 or split + 1 >= at) return null;
     const condition = self.source.text[self.tokens[self.index + 1].span.start..self.tokens[split - 1].span.end];
     const answer = self.source.text[self.tokens[split + 1].span.start..self.tokens[at - 1].span.end];
-    _ = keyword;
     return .{ .condition = condition, .otherwise = answer };
 }
 
@@ -2661,7 +2658,7 @@ fn pythonConditional(self: *Parser, value: *const Ast.Expression) ?PythonConditi
 fn rejectGuardedDeclaration(self: *Parser, name: Token, initializer: ?*const Ast.Expression) Error!void {
     const keyword = self.peek();
     if (keyword.kind != .keyword_if) return;
-    if (initializer) |value| if (self.pythonConditional(value)) |written| {
+    if (initializer) |value| if (self.pythonConditional()) |written| {
         return self.report(
             keyword.span,
             "a declaration cannot have a trailing `if`",
