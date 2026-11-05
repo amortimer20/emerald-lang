@@ -215,7 +215,7 @@ const Renderer = struct {
             copied.* = try self.remap(arena, related.*);
             diagnostic.related = copied;
         }
-        if (self.topLevelDeclaration(original) and std.mem.endsWith(u8, diagnostic.message, "is already declared")) diagnostic.help = "Declare a different name, or type :reset to start over.";
+        if (self.topLevelDeclaration(original) and std.mem.indexOf(u8, diagnostic.message, "is already declared") != null) diagnostic.help = "Declare a different name, or type :reset to start over.";
         return diagnostic;
     }
 
