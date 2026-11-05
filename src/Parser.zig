@@ -1133,8 +1133,8 @@ fn parseStructDeclaration(self: *Parser) Error!Ast.Statement {
     }
     const closing = self.advance();
     try self.expectStatementEnd();
-    if (enumeration and members.type_fields.items.len == 0 or
-        enumeration and members.type_fields.items[0].enum_value == null)
+    if (enumeration and !members.misplaced_enum_value and
+        (members.type_fields.items.len == 0 or members.type_fields.items[0].enum_value == null))
     {
         try self.note(
             name.span,
@@ -1298,6 +1298,9 @@ const StructMembers = struct {
     type_functions: std.ArrayList(Ast.StructDeclaration.TypeFunction) = .empty,
     type_fields: std.ArrayList(Ast.StructDeclaration.TypeField) = .empty,
     types: std.ArrayList(Ast.StructDeclaration.NestedType) = .empty,
+    /// An enum value was found after a member and reported. The enum does have
+    /// values, so "needs at least one value" would be false.
+    misplaced_enum_value: bool = false,
 
     const Counts = struct { fields: usize, methods: usize, properties: usize, type_functions: usize, type_fields: usize, types: usize };
 
@@ -1409,6 +1412,7 @@ fn parseAnnotatedMember(self: *Parser, name: Token, members: *StructMembers, giv
     }
     if (self.in_enum and self.startsEnumValue()) {
         _ = self.advance();
+        members.misplaced_enum_value = true;
         return self.reportFmt(
             marker.span,
             "`{s}` has to be listed with the other values, before any member",
