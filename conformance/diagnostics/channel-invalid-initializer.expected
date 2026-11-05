@@ -9,4 +9,4 @@ Wrap the value in a struct.
 diagnostics/channel-invalid-initializer.em:3:24: `Missing` is not a type
   const unknown: Channel[Missing] = Channel()
                          ^^^^^^^
-Check the spelling or declare the struct in this project.
+Check the spelling, or declare the type in this program.

@@ -1,0 +1,20 @@
+diagnostics/familiar-type-names.em:1:15: `void` is not a type
+  func greet(): void {
+                ^^^^
+A function with nothing to give back leaves the return type out, or writes `Nothing`.
+diagnostics/familiar-type-names.em:4:18: `str` is not a type
+  func shout(text: str): str {
+                   ^^^
+Did you mean `String`?
+diagnostics/familiar-type-names.em:4:24: `str` is not a type
+  func shout(text: str): str {
+                         ^^^
+Did you mean `String`?
+diagnostics/familiar-type-names.em:7:12: `boolean` is not a type
+  var ready: boolean = true
+             ^^^^^^^
+Did you mean `Bool`?
+diagnostics/familiar-type-names.em:12:14: `ValueError` is not a type
+  catch error: ValueError {
+               ^^^^^^^^^^
+Emerald has no `ValueError`. `to_int`, `to_float`, and the other failures Emerald raises itself are a `RuntimeError`, so write `catch error: RuntimeError`, or `catch error` to handle any error.

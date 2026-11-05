@@ -9,7 +9,7 @@ diagnostics/type-tests.em:15:12: Animal has no method named `bark`
 diagnostics/type-tests.em:16:18: `Missing` is not a type
       if animal is Missing {
                    ^^^^^^^
-Check the spelling or declare the struct in this project.
+Check the spelling, or declare the type in this program.
 diagnostics/type-tests.em:18:12: `type_name` cannot be set
       animal.type_name = "Dog"
              ^^^^^^^^^

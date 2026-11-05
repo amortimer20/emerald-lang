@@ -6501,7 +6501,7 @@ fn resolveWrittenType(self: *Checker, annotation: Ast.TypeExpression) Error!Type
         annotation.span,
         "`{s}` is not a type",
         .{annotation.name},
-        try self.misspeltTypeHelp(annotation.name, "Check the spelling or declare the struct in this project."),
+        try self.misspeltTypeHelp(annotation.name, "Check the spelling, or declare the type in this program."),
     );
     return .invalid;
 }
@@ -10240,8 +10240,35 @@ fn closeType(self: *Checker, name: []const u8) ?[]const u8 {
 
 /// `general`, or "Did you mean ...?" when a type name is a small edit away.
 fn misspeltTypeHelp(self: *Checker, name: []const u8, general: []const u8) Error![]const u8 {
+    if (familiarTypeHelp(name)) |help| return help;
     const close = self.closeType(name) orelse return general;
     return std.fmt.allocPrint(self.arena, "Did you mean `{s}`?", .{close});
+}
+
+/// Type names from other languages, answered with the Emerald type to write
+/// (or, for `void` and the error classes, what to do instead).
+fn familiarTypeHelp(name: []const u8) ?[]const u8 {
+    const Entry = struct { []const u8, []const u8 };
+    const table = [_]Entry{
+        .{ "void", "A function with nothing to give back leaves the return type out, or writes `Nothing`." },
+        .{ "str", "Did you mean `String`?" },
+        .{ "boolean", "Did you mean `Bool`?" },
+        .{ "integer", "Did you mean `Int`?" },
+        .{ "long", "Did you mean `Int`?" },
+        .{ "short", "Did you mean `Int`?" },
+        .{ "double", "Did you mean `Float`?" },
+        .{ "char", "Emerald has no separate character type. A single character is a `String`." },
+        .{ "Exception", "Did you mean `Error`? Every error Emerald raises extends `Error`." },
+        .{ "ValueError", "Emerald has no `ValueError`. `to_int`, `to_float`, and the other failures Emerald raises itself are a `RuntimeError`, so write `catch error: RuntimeError`, or `catch error` to handle any error." },
+        .{ "TypeError", "Emerald has no `TypeError`; type mistakes are found before the program runs. To handle a failure at run time, write `catch error: RuntimeError`, or `catch error` to handle any error." },
+        .{ "ParseError", "Emerald has no `ParseError`. `to_int`, `to_float`, and the other failures Emerald raises itself are a `RuntimeError`, so write `catch error: RuntimeError`, or `catch error` to handle any error." },
+        .{ "NumberFormatException", "Emerald has no `NumberFormatException`. `to_int` and `to_float` raise a `RuntimeError`, so write `catch error: RuntimeError`, or `catch error` to handle any error." },
+        .{ "IOError", "Did you mean `FileError`?" },
+    };
+    for (table) |entry| {
+        if (std.mem.eql(u8, name, entry[0])) return entry[1];
+    }
+    return null;
 }
 
 /// Spellings from other languages whose Emerald equivalent is not a renamed
