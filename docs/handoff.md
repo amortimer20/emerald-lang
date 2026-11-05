@@ -18,12 +18,12 @@ report (2026-11-05): S17 keeps 6.3's definition of known duplicates, so a repeat
 not an error, and S14 leaves out "an oversized result raises an Int overflow". The website needs,
 when 0.8.0 ships: B16's separator paragraph on the File page, the set-algebra order on the Set
 page, and the message-text and out-of-memory notes on the Errors page. Batch 4, the parse-time and naming diagnostics (C1-C4, D4's close spellings,
-F24), is open on `claude/diagnostics-parse`: other languages' keywords, operators, comments,
+F24), is merged (#67, `2ae67f9`): other languages' keywords, operators, comments,
 quotes, braces, lambdas and built-ins are named with the Emerald spelling, an unclosed `(` is
 reported where it opens, and unknown names, members and types get "Did you mean ...?"
 (`src/spelling.zig`). On the error corpus, 103 of 314 first diagnostics changed (message or help) and the place
 check went from 284 to 288 right; the journal (2026-11-05) has the details and what was left.
-**Next, once batch 4 is merged and the user says go:** batch 5, the checker's helps and the
+**Next, when the user says go:** batch 5, the checker's helps and the
 new warnings (C5-C7, the rest of D4, D5, and the `return`-in-a-block warning in the journal,
 2026-10-30), then a rerun of the mutation sweep and allocation-failure harness. The user asked for Sonnet subagents for
 routine fixes to spare usage (Opus for subtle ones), one PR at a time. Still open: two
