@@ -2871,6 +2871,19 @@ fn parseTupleType(self: *Parser) Error!Ast.TypeExpression {
     }
     _ = self.advance();
 
+    // `(Int) -> Int` is another language's function type, not a tuple.
+    if (self.check(.minus) and self.peekAfterNext().kind == .greater and self.peek().span.end == self.peekAfterNext().span.start) {
+        _ = self.advance();
+        _ = self.advance();
+        const result = try self.parseTypeExpression();
+        const written = self.source.text[opening.span.end..closing.span.start];
+        return self.report(
+            spanning(opening.span, result.span),
+            "Emerald does not write function types with `->`",
+            try std.fmt.allocPrint(self.arena, "Write `func({s}): {s}`; a function type reuses declaration syntax.", .{ written, self.source.text[result.span.start..result.span.end] }),
+        );
+    }
+
     if (positions.items.len < 2) {
         return self.report(
             spanning(opening.span, closing.span),
