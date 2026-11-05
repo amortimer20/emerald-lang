@@ -27,7 +27,7 @@ Batch 5, the checker's helps and the new warnings (C5-C7, F14, the rest of D4, D
 `return`-in-a-block warning), is open on `claude/diagnostics-check`: helps that, followed
 literally, fix the program (`age.to_int()`, `String?`, `n.or(0)`, `"-".repeat(20)`,
 `extends Animal`, `Color.red`), truer checker messages, `super(...)` reported where it is
-written, `exit()` ending a path, inherited hover documentation, five new warnings, and the
+written, `exit()` ending a path, inherited hover documentation, four new warnings, and the
 deferred D4 features moved to section 21. On the error corpus, 45 of 314 first diagnostics
 changed and the place check went from 288 to 297 right; the journal (2026-11-05, batch 5) has
 the details and what was left. **Next, once batch 5 is merged and the user says go:** a rerun

@@ -6361,7 +6361,7 @@ corpus diagnostic, and reviewed.
   Dict/Set's collection additions, and the misleading-indentation warning are deferred (section
   21). Correction to the triage: `to_list()` does not cover Dict and Set; the spec now gives
   `map { ... }.take(n)`.
-- D5 and 6.5, five warnings, each in 17.1's list: a discarded result of a built-in method that
+- D5 and 6.5, four warnings, each in 17.1's list: a discarded result of a built-in method that
   does not change its receiver (`name.trim()`, with `sort!()` offered for `sort()`); `${name}` and
   `{name}` in a String when the braces hold a name in scope; printing a call that gives back
   nothing; and a `return` with a value in a block passed to `each`, `each_with_index`,
