@@ -12313,6 +12313,8 @@ const JsonEncodeIssue = struct {
     /// field is the useful correction: it points at the declaration the
     /// programmer changes rather than at an opaque call site.
     field_path: []const u8 = "",
+    /// Section 11.3: Csv does not take a generic struct; `type` is that struct.
+    generic_struct: bool = false,
 };
 
 /// Section 12: a plain enum is saved as its choice's name; one whose choices
@@ -12364,7 +12366,14 @@ fn typeOfTypedEncode(self: *Checker, call: Ast.Expression.Call, name: []const u8
             try self.reportCarriesData(call.arguments[bound[0].?].span, found_issue, if (csv) "written as CSV" else "written as JSON", "Saving only the choice's name would lose its data. Convert it first, with a `case` that builds a plain struct or text.");
             return .string;
         }
-        if (found_issue.field_path.len > 0) {
+        if (found_issue.generic_struct) {
+            try self.report(
+                call.arguments[bound[0].?].span,
+                "Csv cannot write a generic struct like `{f}`",
+                .{found_issue.type},
+                "Declare a struct with concrete field types, and write a List of that.",
+            );
+        } else if (found_issue.field_path.len > 0) {
             if (csv) {
                 try self.report(
                     call.arguments[bound[0].?].span,
@@ -12500,6 +12509,13 @@ fn typeOfTypedDecode(self: *Checker, call: Ast.Expression.Call, name: []const u8
                     "JSON builds a struct through its generated constructor. Decode into a struct without its own constructor, then use those values to construct this one.",
                 );
             }
+        } else if (found_issue.generic_struct) {
+            try self.report(
+                target_expression.span,
+                "Csv cannot read a generic struct like `{f}`",
+                .{found_issue.type},
+                "Declare a struct with concrete field types, and read a List of that.",
+            );
         } else if (found_issue.field_path.len > 0) {
             try self.report(
                 target_expression.span,
@@ -12709,6 +12725,7 @@ fn csvDecodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?Js
     if (element.kind != .struct_value or element.optional) return .{ .type = element, .field_path = field_path };
     const user = element.user.?;
     if (user.class or user.trait or user.enumeration) return .{ .type = element, .field_path = field_path };
+    if (user.type_parameters.len > 0) return .{ .type = element, .field_path = field_path, .generic_struct = true };
     const declaration = self.struct_declarations.get(user.name).?;
     for (declaration.fields, user.fields) |written, resolved| {
         if (Resolver.isPrivate(resolved.name)) {
@@ -12745,6 +12762,7 @@ fn csvEncodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?Js
     if (element.kind != .struct_value or element.optional) return .{ .type = element, .field_path = field_path };
     const user = element.user.?;
     if (user.class or user.trait or user.enumeration) return .{ .type = element, .field_path = field_path };
+    if (user.type_parameters.len > 0) return .{ .type = element, .field_path = field_path, .generic_struct = true };
     for (user.fields) |field| {
         // A private field is the struct's own business and is never written.
         if (Resolver.isPrivate(field.name)) continue;

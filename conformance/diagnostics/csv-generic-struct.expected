@@ -1,0 +1,8 @@
+diagnostics/csv-generic-struct.em:8:18: Csv cannot write a generic struct like `Pair[Int, String]`
+  print(Csv.encode(rows))
+                   ^^^^
+Declare a struct with concrete field types, and write a List of that.
+diagnostics/csv-generic-struct.em:9:55: Csv cannot read a generic struct like `Pair[Int, String]`
+  const decoded = Csv.decode("first,second\n1,one", as: List[Pair[Int, String]])
+                                                        ^^^^^^^^^^^^^^^^^^^^^^^
+Declare a struct with concrete field types, and read a List of that.
