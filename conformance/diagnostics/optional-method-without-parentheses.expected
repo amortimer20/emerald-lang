@@ -1,0 +1,4 @@
+diagnostics/optional-method-without-parentheses.em:10:12: `doubled` is a method, so it needs parentheses
+  print(box?.doubled)
+             ^^^^^^^
+Call it with parentheses, as in `?.doubled()`.

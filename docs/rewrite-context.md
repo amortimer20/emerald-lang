@@ -1787,9 +1787,9 @@ and `NaN`, so every displayed `Float` parses back. `to_string()` gives the displ
 Unicode language. `code_points()` returns the Unicode scalar values of the String's exact
 stored spelling as `List[Int]`; a decomposed character therefore has more than one entry.
 `bytes()` returns its exact UTF-8 bytes as `List[Int]`, each from 0 through 255. These are
-advanced conversions, while `chars()` remains the grapheme-aware beginner API. `words`,
-`title_case`, case-insensitive Unicode comparison, `letter?`, and `digit?` remain deferred
-until their locale and boundary behavior can be designed correctly.
+advanced conversions, while `chars()` remains the grapheme-aware beginner API. `title_case`
+and case-insensitive Unicode comparison remain deferred until their locale behavior can be
+designed correctly.
 
 String equality uses canonical Unicode normalization, remains case-sensitive, and feeds
 the same normalized equality into dictionary keys and sets. Ordinary string ordering is
@@ -2388,7 +2388,8 @@ writes its types the same way, `Grid[String]`, wherever a type is written, and n
 call: `Grid(3, 3, ".")` is a `Grid[String]` because of its argument, and
 `const counts: Grid[Int] = Grid(2, 2, 0)` because of where it goes. When neither says what a
 parameter is, that is an error asking for the type to be written where the value is kept.
-`Grid[Int]()` is an error that says so (5.4 of the plan).
+`Grid[Int]()` is an error that says so (5.4 of the plan). A type parameter that the declaration
+never uses is a warning, since it is almost always a typo.
 
 - A generic type is invariant in its types: a `Grid[Int]` is not a `Grid[Float]`. A type in
   brackets cannot be optional, since `Grid`'s own `T?` would then nest (4.5).
@@ -3767,11 +3768,22 @@ program runs, being reached at all; a warning renders with a `warning: ` marker 
 location but is otherwise the same four-part shape, and does not stop checking or execution.
 `emerald check`/`run`/`test` still exit `1` (18.1) when only warnings were found, once
 nothing more specific (a runtime failure, a test failure) took priority, so a warning is
-never silently missed, but the checked program still runs. Warnings currently reported: a
-nonexhaustive statement `case` with a coverable subject (6.3, 12); an `is` test already known
-to be true (4.4); code after a statement that can never complete, such as after
-`return` (6.5); and a use of a `@deprecated` declaration (16.1), which, like every warning,
-makes the command exit `1`.
+never silently missed, but the checked program still runs. Warnings currently reported:
+
+- a nonexhaustive statement `case` with a coverable subject (6.3, 12);
+- an `is` test already known to be true, or known to be false (4.4);
+- code after a statement that can never complete, such as after `return` (6.5);
+- a use of a `@deprecated` declaration (16.1);
+- a `##` documentation comment that describes no declaration (3.2);
+- a program declaration whose casing breaks 3.3's conventions, with the corrected spelling;
+- a type parameter its declaration never uses (11.3);
+- `to_string`, `equals`, or `hash` declared without adopting `Textual`, `Equatable`, or
+  `Hashable`, which leaves display, `==`, or hashing unchanged (8.4, 15.1);
+- a program declaration or top-level directory that hides one of the language's own
+  built-ins (14.2);
+- a redundant `using Emerald` (14.2).
+
+Like every warning, each makes the command exit `1`.
 
 ### 17.2 Pedagogical behavior
 

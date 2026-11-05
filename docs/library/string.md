@@ -8,7 +8,7 @@ is linear time, which is the honest cost of that guarantee; `code_points()` and 
 below are the advanced escape hatch when a program specifically needs code points or raw
 UTF-8 bytes instead.
 
-`letter?`, `digit?`, `words`, `title_case`, and case-insensitive comparison remain deferred.
+`title_case` and case-insensitive comparison remain deferred.
 `+` joins two strings and `+=` appends; it is the one operator strings
 have, and it does not convert a non-`String` operand (`"Score: " + 10` is rejected in favor
 of interpolation or `to_string()`). Equality (`==`) and ordering compare Unicode-normalized
