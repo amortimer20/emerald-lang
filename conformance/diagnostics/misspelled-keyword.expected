@@ -1,0 +1,4 @@
+diagnostics/misspelled-keyword.em:2:1: `fucn` is not an Emerald word
+  fucn greet() {
+  ^^^^
+Did you mean `func`?

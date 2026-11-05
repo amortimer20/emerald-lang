@@ -1,0 +1,4 @@
+diagnostics/unknown-word-foreach.em:3:1: `foreach` is written `for` in Emerald
+  foreach name in names {
+  ^^^^^^^
+Write `for` a name for each item, then `in`, then what to visit, as in `for name in names {`.

@@ -1,0 +1,4 @@
+diagnostics/implicit-last-expression.em:3:5: a function does not give back its last value by itself
+      n * 2
+      ^^^^^
+Write `return n * 2` to give back the value.

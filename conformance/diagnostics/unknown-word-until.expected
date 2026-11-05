@@ -1,0 +1,4 @@
+diagnostics/unknown-word-until.em:3:1: there is no `until` in Emerald
+  until i == 3 {
+  ^^^^^
+Write `while not` followed by the condition, as in `while not i == 3 {`.

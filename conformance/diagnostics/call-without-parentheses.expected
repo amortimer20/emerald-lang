@@ -1,0 +1,4 @@
+diagnostics/call-without-parentheses.em:2:1: a call needs parentheses
+  print "hello"
+  ^^^^^
+Write `print("hello")`: put what you pass in parentheses right after the name.

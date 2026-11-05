@@ -1136,6 +1136,7 @@ test {
     _ = Heap;
     _ = unicode;
     _ = strings;
+    _ = @import("spelling.zig");
     _ = @import("arguments.zig");
     _ = ColorPolicy;
     _ = TimeZone;

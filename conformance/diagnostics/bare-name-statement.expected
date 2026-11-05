@@ -1,0 +1,4 @@
+diagnostics/bare-name-statement.em:4:1: `say_hello` on its own does nothing
+  say_hello
+  ^^^^^^^^^
+To call it, write `say_hello()`. To use its value, assign it to a name or use it in an expression.

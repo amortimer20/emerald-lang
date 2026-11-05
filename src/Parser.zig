@@ -21,6 +21,7 @@ const Diagnostic = @import("Diagnostic.zig");
 const Lexer = @import("Lexer.zig");
 const Source = @import("Source.zig");
 const Token = @import("Token.zig");
+const spelling = @import("spelling.zig");
 const unicode = @import("unicode.zig");
 
 const Parser = @This();
@@ -97,6 +98,11 @@ in_condition: bool = false,
 /// (10.2). A lambda clears it, since a block that captured `self` could let the
 /// value escape before every field is set, or outlive a method that changes it.
 self_allowed: SelfContext = .nowhere,
+/// Set just before parsing the body of a function that declares a result type,
+/// and taken by the block that parses it: `in_result_body` is then true for that
+/// block alone, never for a block nested inside it.
+pending_result_body: bool = false,
+in_result_body: bool = false,
 
 /// `type_member` is section 10.4's type-level function or field, which belongs
 /// to the type rather than to any value, so it has no `self` to offer.
@@ -2194,6 +2200,7 @@ fn parseFunctionDeclarationWith(self: *Parser, method: bool, body_rule: Body) Er
         );
     }
 
+    self.pending_result_body = return_annotation != null;
     const body = try self.parseBlock();
 
     return .{
@@ -3107,6 +3114,10 @@ fn parseBlock(self: *Parser) Error!Ast.Block {
     const saved_condition = self.in_condition;
     self.in_condition = false;
     defer self.in_condition = saved_condition;
+    const saved_result_body = self.in_result_body;
+    self.in_result_body = self.pending_result_body;
+    self.pending_result_body = false;
+    defer self.in_result_body = saved_result_body;
     self.skipToLeftBrace();
     const opening = self.peek();
     if (opening.kind != .left_brace) {
@@ -3378,16 +3389,235 @@ fn assignmentOperator(kind: Token.Kind) ?AssignmentForm {
     };
 }
 
+/// Something that is not a call is a pure expression, whose result nothing
+/// uses. Before saying so, notice the common ways a line starting with an
+/// unknown word is really another language's keyword, a misspelled Emerald
+/// one, a declaration, or a call without parentheses (F1).
+fn reportUnusedExpression(self: *Parser, expression: *const Ast.Expression) Error {
+    const next = self.peek();
+    const ends_line = switch (next.kind) {
+        .newline, .eof, .right_brace => true,
+        else => false,
+    };
+    const written = self.source.text[expression.span.start..expression.span.end];
+
+    // Ruby's last expression as the function's result.
+    if (ends_line and self.in_result_body and self.endsBlock()) {
+        return self.report(
+            expression.span,
+            "a function does not give back its last value by itself",
+            try std.fmt.allocPrint(self.arena, "Write `return {s}` to give back the value.", .{shortText(written) orelse "..."}),
+        );
+    }
+
+    if (expression.data == .name) {
+        if (try self.foreignKeywordDiagnostic(written)) |found| {
+            return self.report(expression.span, found.message, found.help);
+        }
+        if (ends_line) {
+            return self.report(
+                expression.span,
+                try std.fmt.allocPrint(self.arena, "`{s}` on its own does nothing", .{written}),
+                try std.fmt.allocPrint(self.arena, "To call it, write `{s}()`. To use its value, assign it to a name or use it in an expression.", .{written}),
+            );
+        }
+        if (written.len >= 3) {
+            if (spelling.closest(written, &statement_keywords, if (written.len <= 4) 1 else 2)) |keyword| {
+                return self.report(
+                    expression.span,
+                    try std.fmt.allocPrint(self.arena, "`{s}` is not an Emerald word", .{written}),
+                    try std.fmt.allocPrint(self.arena, "Did you mean `{s}`?", .{keyword}),
+                );
+            }
+        }
+        if (next.kind == .identifier) {
+            if (std.mem.eql(u8, written, "print")) return self.reportCallParentheses(expression, written, self.restOfLine(self.index));
+            const name = self.text(next);
+            const after_index = self.skipDocCommentsFrom(self.index + 1);
+            const value = if (self.tokens[after_index].kind == .equal) self.restOfLine(after_index + 1) else null;
+            const help = if (declaredTypeText(written)) |type_name|
+                try std.fmt.allocPrint(self.arena, "Write `var {s}: {s} = {s}`, or `const` in place of `var` for a value that never changes.", .{ name, type_name, value orelse "..." })
+            else
+                try std.fmt.allocPrint(self.arena, "Write `var {s} = {s}`, or `const` in place of `var` for a value that never changes.", .{ name, value orelse "..." });
+            return self.report(spanning(expression.span, next.span), "a declaration starts with `var` or `const`", help);
+        }
+        switch (next.kind) {
+            .string_literal, .raw_string_literal, .multiline_string_literal, .string_start, .int_literal, .float_literal => {
+                return self.reportCallParentheses(expression, written, self.restOfLine(self.index));
+            },
+            else => {},
+        }
+    }
+
+    // `score == 10` meant as an assignment.
+    if (expression.data == .comparison) {
+        const comparison = expression.data.comparison;
+        if (comparison.operators.len == 1 and comparison.operators[0] == .equal) {
+            const left = comparison.operands[0];
+            const right = comparison.operands[1];
+            const left_text = self.source.text[left.span.start..left.span.end];
+            const right_text = self.source.text[right.span.start..right.span.end];
+            return self.report(
+                expression.span,
+                "`==` compares two values; it does not change anything",
+                if (left.data == .name and shortText(right_text) != null)
+                    try std.fmt.allocPrint(self.arena, "To assign, write `{s} = {s}`.", .{ left_text, right_text })
+                else
+                    "To assign, write `name = value`.",
+            );
+        }
+    }
+
+    // `lives--` whose newline was swallowed by the operator's continuation.
+    if (expression.data == .binary and expression.data.binary.operator == .subtract) {
+        const binary = expression.data.binary;
+        if (binary.right.data == .unary and binary.right.data.unary.operator == .negate and
+            binary.operator_span.end == binary.right.span.start and
+            std.mem.indexOfScalar(u8, self.source.text[binary.right.span.start..binary.right.data.unary.operand.span.start], '\n') != null)
+        {
+            const operator: Token = .{ .kind = .minus, .span = binary.operator_span };
+            return self.report(
+                .{ .start = binary.operator_span.start, .end = binary.right.span.start + 1 },
+                "`--` is not a decrement operator in Emerald",
+                try self.incrementHelp(binary.left, operator, false),
+            );
+        }
+    }
+
+    return self.report(
+        expression.span,
+        "this result is never used",
+        "Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.",
+    );
+}
+
+fn reportCallParentheses(self: *Parser, expression: *const Ast.Expression, word: []const u8, rest: ?[]const u8) Error {
+    return self.report(
+        expression.span,
+        "a call needs parentheses",
+        try std.fmt.allocPrint(self.arena, "Write `{s}({s})`: put what you pass in parentheses right after the name.", .{ word, rest orelse "..." }),
+    );
+}
+
+const statement_keywords = [_][]const u8{
+    "func", "return", "while", "for",   "if",       "else",  "var",   "const", "class", "struct",
+    "enum", "trait",  "try",   "catch", "raise",    "assert", "break", "continue", "case", "using",
+    "finally",
+};
+
+/// The type a declaration written the Java way names, as Emerald writes it.
+fn declaredTypeText(word: []const u8) ?[]const u8 {
+    const spellings = [_][2][]const u8{
+        .{ "int", "Int" },     .{ "integer", "Int" },  .{ "long", "Int" },
+        .{ "float", "Float" }, .{ "double", "Float" }, .{ "string", "String" },
+        .{ "str", "String" },  .{ "bool", "Bool" },    .{ "boolean", "Bool" },
+    };
+    for (spellings) |pair| {
+        if (std.mem.eql(u8, word, pair[0])) return pair[1];
+    }
+    if (word.len > 0 and std.ascii.isUpper(word[0])) return word;
+    return null;
+}
+
+/// Text short enough, and on one line, to quote in a help sentence.
+fn shortText(snippet: []const u8) ?[]const u8 {
+    if (snippet.len == 0 or snippet.len > 40) return null;
+    if (std.mem.indexOfAny(u8, snippet, "\n#") != null) return null;
+    return snippet;
+}
+
+/// Whether only line breaks stand between here and the `}` that ends the
+/// block, which is what makes the statement just parsed the block's last.
+fn endsBlock(self: *const Parser) bool {
+    var at = self.index;
+    while (at < self.tokens.len) : (at += 1) {
+        switch (self.tokens[at].kind) {
+            .newline, .doc_comment => {},
+            .right_brace => return true,
+            else => return false,
+        }
+    }
+    return false;
+}
+
+fn skipDocCommentsFrom(self: *const Parser, from: usize) usize {
+    var at = from;
+    while (at < self.tokens.len - 1 and self.tokens[at].kind == .doc_comment) at += 1;
+    return at;
+}
+
+/// The rest of the line from token `from`, trimmed and without an opening
+/// brace, when it is short enough to quote.
+fn restOfLine(self: *const Parser, from: usize) ?[]const u8 {
+    const first = self.skipDocCommentsFrom(from);
+    if (first >= self.tokens.len) return null;
+    if (self.tokens[first].kind == .eof or self.tokens[first].kind == .newline) return null;
+    // By the source line: a `{` swallows the newline after it, so tokens run on.
+    const from_text = self.source.text[self.tokens[first].span.start..];
+    const line_end = std.mem.indexOfScalar(u8, from_text, '\n') orelse from_text.len;
+    var snippet = std.mem.trim(u8, from_text[0..line_end], " \t\r");
+    if (std.mem.endsWith(u8, snippet, "{")) snippet = std.mem.trimEnd(u8, snippet[0 .. snippet.len - 1], " \t");
+    return shortText(snippet);
+}
+
+const ForeignDiagnostic = struct { message: []const u8, help: []const u8 };
+
+fn wordIn(word: []const u8, words: []const []const u8) bool {
+    for (words) |candidate| {
+        if (std.mem.eql(u8, word, candidate)) return true;
+    }
+    return false;
+}
+
+/// Another language's keyword written where an Emerald statement starts.
+fn foreignKeywordDiagnostic(self: *Parser, word: []const u8) Error!?ForeignDiagnostic {
+    const rest = self.restOfLine(self.index);
+    const name = if (self.peek().kind == .identifier) self.text(self.peek()) else "name";
+    if (wordIn(word, &.{ "elif", "elsif", "elseif" })) return .{
+        .message = try std.fmt.allocPrint(self.arena, "`{s}` is not an Emerald word", .{word}),
+        .help = try std.fmt.allocPrint(self.arena, "Write `else if`, straight after the `}}` that closes the block above, as in `}} else if {s} {{`.", .{rest orelse "..."}),
+    };
+    if (wordIn(word, &.{ "def", "function", "fn", "fun", "define" })) return .{
+        .message = try std.fmt.allocPrint(self.arena, "functions start with `func`, not `{s}`", .{word}),
+        .help = try std.fmt.allocPrint(self.arena, "Write `func {s}`, then the parameters in parentheses and the body in braces, as in `func {s}() {{ ... }}`.", .{ name, name }),
+    };
+    if (wordIn(word, &.{ "let", "val" })) return .{
+        .message = try std.fmt.allocPrint(self.arena, "`{s}` is not an Emerald word", .{word}),
+        .help = try std.fmt.allocPrint(self.arena, "Declare a variable with `var`, or a value that never changes with `const`, as in `var {s} = ...`.", .{name}),
+    };
+    if (std.mem.eql(u8, word, "switch")) return .{
+        .message = "`switch` is written `case` in Emerald",
+        .help = try std.fmt.allocPrint(self.arena, "Write `case {s} {{`, then one `when` for each alternative, as in `when 1 {{ ... }}`.", .{rest orelse "value"}),
+    };
+    if (std.mem.eql(u8, word, "throw")) return .{
+        .message = "`throw` is written `raise` in Emerald",
+        .help = "Write `raise` and then the error, as in `raise Error(\"message\")`.",
+    };
+    if (std.mem.eql(u8, word, "unless")) return .{
+        .message = "there is no `unless` in Emerald",
+        .help = try std.fmt.allocPrint(self.arena, "Write `if not` followed by the condition, as in `if not {s} {{`.", .{rest orelse "done"}),
+    };
+    if (std.mem.eql(u8, word, "until")) return .{
+        .message = "there is no `until` in Emerald",
+        .help = try std.fmt.allocPrint(self.arena, "Write `while not` followed by the condition, as in `while not {s} {{`.", .{rest orelse "done"}),
+    };
+    if (std.mem.eql(u8, word, "foreach")) return .{
+        .message = "`foreach` is written `for` in Emerald",
+        .help = try std.fmt.allocPrint(self.arena, "Write `for` a name for each item, then `in`, then what to visit, as in `for {s} {{`.", .{rest orelse "item in items"}),
+    };
+    if (wordIn(word, &.{ "except", "rescue" })) return .{
+        .message = try std.fmt.allocPrint(self.arena, "`{s}` is written `catch` in Emerald", .{word}),
+        .help = "Write `catch error { ... }`, with a name for the error you caught.",
+    };
+    return null;
+}
+
 fn finishExpressionStatement(self: *Parser, expression: *const Ast.Expression) Error!Ast.Statement {
     // Section 5.2: a call may discard its result, but a pure expression whose
     // result is unused is a mistake, and the diagnostic should suggest the
     // update the writer probably meant.
     if (expression.data != .call and !(self.interactive_entry and self.at_top_level)) {
-        return self.report(
-            expression.span,
-            "this result is never used",
-            "Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.",
-        );
+        return self.reportUnusedExpression(expression);
     }
 
     var statement = try self.finishSimpleStatement(.{ .span = expression.span, .data = .{ .expression = expression } });

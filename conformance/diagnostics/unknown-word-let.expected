@@ -1,0 +1,4 @@
+diagnostics/unknown-word-let.em:2:1: `let` is not an Emerald word
+  let name = "Ava"
+  ^^^
+Declare a variable with `var`, or a value that never changes with `const`, as in `var name = ...`.

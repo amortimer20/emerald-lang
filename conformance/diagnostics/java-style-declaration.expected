@@ -1,0 +1,4 @@
+diagnostics/java-style-declaration.em:5:1: a declaration starts with `var` or `const`
+  Dog rex = Dog("Rex")
+  ^^^^^^^
+Write `var rex: Dog = Dog("Rex")`, or `const` in place of `var` for a value that never changes.
