@@ -6274,3 +6274,54 @@ not set syntax; the display sentence now keeps the `Name(...)` cycle marker; `wr
 text; and `evaluation-order` now pins a plain indexed assignment whose right side replaces the
 list. Left for the diagnostics batch (C5): the `?.` help, like the ordinary method help it matches,
 shows `.name()` even for a method that needs arguments.
+
+## 2026-11-05: Batch 4, parse-time and naming diagnostics
+
+The first diagnostics batch (C1-C4, D4's close spellings, F24), measured on the area 7 corpus
+(`docs/review/repro/errors/run.sh`): 103 of 314 programs' first diagnostic changed (its message or its help), and the
+automatic place check went from 284 to 288 right. Two Sonnet subagents wrote it in parallel, one on
+the lexer and parser, one on the resolver and checker; Claude combined the branches, merged their two
+edit-distance helpers into `src/spelling.zig`, and reviewed.
+
+- C1: a statement starting with an unknown word says what it is: another language's keyword
+  (`elif`, `def`, `let`, `switch`, `throw`, `unless`, `until`, `foreach`, `new`, `except`), a
+  misspelled keyword ("Did you mean `return`?"), a Java-style declaration, a call without
+  parentheses (`print "hello"`), a bare function name, `score == 10` meant as an assignment,
+  `lives--`, or a function's last expression meant as its result (`return n * 2`). `2 + 3` keeps
+  "this result is never used".
+- C2: `=<`, `=>` in a condition, `<>`, `===`, `=+`, `&`, `|`, `^`, `mod`, `"Bo" in names`,
+  `x > 0 and < 10`, `//` and `/* */` comments, curly quotes, a C-style `for`, `{"Ava": 12}`, `{}`,
+  `do ... while`, Kotlin's `it`, Python and JavaScript lambdas, a `func` written as a value, a bare
+  block (3.4), a reserved word as a name, `first-name`, `high score`, `2nd_place`, `-> Int`, and
+  `except` each get the Emerald spelling. "Lambda" no longer appears for code with no lambda.
+- C3: a `(` left open at the end of a line is reported at the `(` ("this `(` is never closed"),
+  not at the next line's first token. F14 (`super` placement) is in batch 5.
+- C4: `len`, `int`, `str`, `range`, `sum`, `max`, `sqrt`, `round`, `type`, `True`, `null`,
+  `console.log`, `printf`, `random.randint` and others say what Emerald writes, using the
+  program's own argument; `isEmpty`, `containsKey`, `toUpperCase`, `join` on a separator, `format`
+  and `charAt` are mapped; a replacement of the other shape says so (`.size()` becomes `.count`
+  without parentheses); `pad_left`, `pad_right`, `intersect`, `read_line` and `Kernel` redirect
+  (rules report, finding 18).
+- D4: unknown names, members (built-in and user, inherited and trait ones too) and types suggest
+  the one candidate that differs only in case or by one edit (two from ten letters), when it is
+  alone at its distance. Two edits for shorter names would have offered `sort` for `shout` and
+  `increment` for `decrement`.
+- F24: a built-in method read without parentheses offers a block (`{ value => value.upper() }`)
+  instead of "cannot be used as values yet"; the core guide now says capture works for methods a
+  program declares (7.5).
+
+`/code-review` at high effort found nine points. Fixed: a trailing-block call of a function named
+`do` was taken for `do ... while` (it parsed on main; now only `} while` makes it one); `form "x"`
+was called a misspelled `for`; `total score = 0` lost its first word in the help; `sqrt(16)`
+suggested a Float method on an Int literal; `console.log(a, b)` kept one argument; every `random`
+member got the range help; and `reportUndefined` told reading from assigning by comparing help
+strings. Left as follow-ups: the resolver's foreign-name helps re-read call arguments from the
+source text rather than the call node (raw strings or nested quotes can misquote them), and the
+parser's report helpers repeat their snippet-quoting code.
+
+Not done here, noted for later: lexer errors still hide parser errors, so the lexer-level messages
+(C-style `for`, curly quotes) quote fixed examples rather than the program; Ruby's `|n|` gives one
+diagnostic per `|`; the REPL's top-level echo path does not get the C1 messages; corpus 101
+(`str`) and 102 (`boolean`) as types and 251 (`p.z`) get no suggestion; annotation typos are not
+suggested; no catalog parity test covers the new member-name entries. The corpus `results.*`
+files keep the review's baseline.
