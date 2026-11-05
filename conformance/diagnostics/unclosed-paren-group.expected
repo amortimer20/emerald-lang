@@ -1,0 +1,4 @@
+diagnostics/unclosed-paren-group.em:3:14: this `(` is never closed
+  const area = ((a + b) * (a - b)
+               ^
+Add the closing `)` where the call or group ends, usually at the end of this line.

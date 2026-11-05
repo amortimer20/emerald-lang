@@ -3880,6 +3880,24 @@ fn checkNameShape(self: *Parser, name: Token, next: Token) Error!void {
     }
 }
 
+/// A `)` forgotten at the end of a line is noticed where the next line begins,
+/// which points at correct code. When the `(` and the last token before the
+/// surprise are on one line and the surprise is on a later one, the `(` is what
+/// to fix, as with a block's `{`. Returns normally for any other shape.
+fn checkUnclosedParen(self: *Parser, opening: Token, closing: Token) Error!void {
+    if (self.index == 0) return;
+    const previous = self.tokens[self.index - 1];
+    if (previous.span.end < opening.span.end or closing.span.start < previous.span.end) return;
+    const source_text = self.source.text;
+    if (std.mem.indexOfScalar(u8, source_text[opening.span.start..previous.span.end], '\n') != null) return;
+    if (std.mem.indexOfScalar(u8, source_text[previous.span.end..closing.span.start], '\n') == null) return;
+    return self.report(
+        opening.span,
+        "this `(` is never closed",
+        "Add the closing `)` where the call or group ends, usually at the end of this line.",
+    );
+}
+
 // Shapes from other languages (F8, F10, rules 15).
 
 /// `//` and `/* */`, where an expression was expected. `//` is also floor
@@ -4480,7 +4498,8 @@ fn isDecodeCallee(callee: *const Ast.Expression) bool {
 }
 
 fn finishCall(self: *Parser, callee: *const Ast.Expression) Error!*const Ast.Expression {
-    try self.nest(self.peek().span);
+    const opening = self.peek();
+    try self.nest(opening.span);
     defer self.unnest();
     const saved_header = self.in_control_header;
     self.in_control_header = false;
@@ -4532,6 +4551,7 @@ fn finishCall(self: *Parser, callee: *const Ast.Expression) Error!*const Ast.Exp
 
     const closing = self.peek();
     if (closing.kind == .fat_arrow) return self.reportForeignArrow(closing);
+    if (closing.kind != .right_paren) try self.checkUnclosedParen(opening, closing);
     if (closing.kind != .right_paren) {
         return self.reportFmt(
             closing.span,
@@ -5344,6 +5364,7 @@ fn parsePrimary(self: *Parser) Error!*const Ast.Expression {
             _ = self.match(.comma);
 
             const closing = self.peek();
+            if (closing.kind != .right_paren) try self.checkUnclosedParen(token, closing);
             if (closing.kind != .right_paren) {
                 return self.reportFmt(
                     closing.span,

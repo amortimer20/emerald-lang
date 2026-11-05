@@ -1,0 +1,4 @@
+diagnostics/unclosed-paren-call.em:2:6: this `(` is never closed
+  print("Hello, " + name
+       ^
+Add the closing `)` where the call or group ends, usually at the end of this line.
