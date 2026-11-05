@@ -2995,7 +2995,8 @@ names. It is a prelude trait in 11.5's family, adopted explicitly like every oth
 named `to_string` alone changes no display, and the checker warns when a type declares one
 without adopting the trait. A struct or object without `Textual` displays as `Name(field: value, ...)`: every
 stored field, private ones included, base-class fields first, each in declaration order, and
-each value displayed as it would be inside a collection.
+each value displayed as it would be inside a collection; an object already being displayed shows
+as `Name(...)`, which ends a cycle.
 
 An adopting value renders through its own `to_string()` wherever it appears, nested in a
 collection or another type's debug form included, because the display walk carries the
@@ -3027,7 +3028,7 @@ A line that is not valid UTF-8 also raises, so every `String` holds Unicode text
 
 `print` and `write` accept zero or more ordinary values through their display
 representation. Multiple arguments evaluate left to right and are separated by one space.
-`print` evaluates every argument, then displays them in order, so `print(c, bump(c))` shows `c`
+`print` and `write` evaluate every argument, then display them in order, so `print(c, bump(c))` shows `c`
 after the bump; an interpolation displays each part as it is evaluated.
 A string displays as its text. Inside a collection it displays quoted, with escapes where
 needed, so `["a, b"]` and `["a", "b"]` cannot be mistaken for each other. The quoted form
@@ -3644,11 +3645,12 @@ syntax. Capacity zero is a FIFO rendezvous; positive capacity buffers up to that
 messages. `send(value: T)` waits for space or a receiver; `receive(): T?` waits for a
 message. `close()` is idempotent: buffered messages remain available, closed-and-empty
 receives return `nothing`, and sends not already committed raise RuntimeError with
-`cannot send to a closed channel`. When a receive frees buffer space, the longest-waiting sender's message is
-committed into the buffer at once and that sender becomes ready. A hand-off commits a message: once a send has
+`cannot send to a closed channel`. A hand-off commits a message: once a send has
 been handed to a waiting receiver, that receiver gets the value even if it is cancelled
 before it resumes, and observes the cancellation at its next suspension point. Likewise a sender whose value a receiver took has
-sent it: that send returns normally, and the cancellation waits for the next suspension point. Negative capacity raises RuntimeError with
+sent it: that send returns normally, and the cancellation waits for the next suspension point. When a
+receive frees buffer space, the longest-waiting sender's message is committed into the buffer at
+once and that sender becomes ready. Negative capacity raises RuntimeError with
 `a channel capacity cannot be negative`. An optional item type is a checking error:
 `a channel's items can't be optional`, with help to wrap the value in a struct. Struct
 fields may be optional without confusing a message with closure. `for item in channel`

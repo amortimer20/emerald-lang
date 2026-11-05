@@ -6267,3 +6267,10 @@ Two sentences differ from the report, for the user to confirm or overturn:
   raises an overflow `RuntimeError`, is not what `String.repeat` and `List.repeat` do: their
   comments treat an unaddressable size as running out of memory, which ends the program. Making it
   catchable would mean an overflow check and a message in each size computation.
+
+`/code-review` at high effort found six points. Fixed: the Set page's example used `{...}`, which is
+not set syntax; the display sentence now keeps the `Name(...)` cycle marker; `write` is named with
+`print` in the render-timing sentence; the channel hand-off sentence moved out of the `close()`
+text; and `evaluation-order` now pins a plain indexed assignment whose right side replaces the
+list. Left for the diagnostics batch (C5): the `?.` help, like the ordinary method help it matches,
+shows `.name()` even for a method that needs arguments.

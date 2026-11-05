@@ -35,3 +35,11 @@ func replace_ys(): Int {
 }
 ys[0] += replace_ys()
 print(ys)
+
+var zs = [1, 2, 3]
+func replace_zs(): Int {
+    zs = [7]
+    return 9
+}
+zs[0] = replace_zs()
+print(zs)
