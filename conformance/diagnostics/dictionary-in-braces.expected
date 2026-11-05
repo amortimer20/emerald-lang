@@ -1,0 +1,4 @@
+diagnostics/dictionary-in-braces.em:1:14: a dictionary is written with square brackets
+  const ages = {"Ava": 12, "Bo": 13}
+               ^
+Write `["Ava": 12, "Bo": 13]`: Emerald keeps braces for blocks.

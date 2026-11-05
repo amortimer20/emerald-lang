@@ -1,0 +1,4 @@
+diagnostics/operator-equals-plus.em:2:7: `=+` is not an operator in Emerald
+  total =+ 3
+        ^^
+Write `+=` to add to a variable, as in `total += 3`.

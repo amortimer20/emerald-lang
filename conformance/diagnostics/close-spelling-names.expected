@@ -1,0 +1,28 @@
+diagnostics/close-spelling-names.em:6:7: `totl` is not defined
+  print(totl)
+        ^^^^
+Did you mean `total`?
+diagnostics/close-spelling-names.em:7:7: `username` is not defined
+  print(username)
+        ^^^^^^^^
+Did you mean `userName`?
+diagnostics/close-spelling-names.em:8:1: `pritn` is not defined
+  pritn("hello")
+  ^^^^^
+Did you mean `print`?
+diagnostics/close-spelling-names.em:9:1: `Print` is not defined
+  Print("hello")
+  ^^^^^
+Did you mean `print`?
+diagnostics/close-spelling-names.em:10:7: `calcualte_total` is not defined
+  print(calcualte_total(2, 3))
+        ^^^^^^^^^^^^^^^
+Did you mean `calculate_total`?
+diagnostics/close-spelling-names.em:11:7: `math` is not defined
+  print(math.sqrt(16.0))
+        ^^^^
+Did you mean `Math`?
+diagnostics/close-spelling-names.em:12:7: `zzzzz` is not defined
+  print(zzzzz)
+        ^^^^^
+Check the spelling, or declare it before this line.

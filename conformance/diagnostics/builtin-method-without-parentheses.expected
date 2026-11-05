@@ -1,0 +1,8 @@
+diagnostics/builtin-method-without-parentheses.em:3:12: `upper` is a method, so it needs parentheses
+  print(name.upper)
+             ^^^^^
+Call it, as in `.upper()`, or wrap it in a block, as in `{ value => value.upper() }`.
+diagnostics/builtin-method-without-parentheses.em:4:13: `sort` is a method, so it needs parentheses
+  print(names.sort)
+              ^^^^
+Call it, as in `.sort()`, or wrap it in a block, as in `{ value => value.sort() }`.

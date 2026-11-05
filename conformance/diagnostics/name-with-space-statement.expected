@@ -1,0 +1,4 @@
+diagnostics/name-with-space-statement.em:1:1: a name cannot contain spaces
+  total score = 0
+  ^^^^^^^^^^^
+Use `_` between the words: write `var total_score = 0`.

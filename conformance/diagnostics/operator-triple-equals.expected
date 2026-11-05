@@ -1,0 +1,4 @@
+diagnostics/operator-triple-equals.em:2:6: `===` is not an operator in Emerald
+  if x === 5 {
+       ^^^
+Write `==` to compare two values. Emerald has one equality operator.

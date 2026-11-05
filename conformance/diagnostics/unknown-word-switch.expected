@@ -1,0 +1,4 @@
+diagnostics/unknown-word-switch.em:3:1: `switch` is written `case` in Emerald
+  switch day {
+  ^^^^^^
+Write `case day {`, then one `when` for each alternative, as in `when 1 { ... }`.

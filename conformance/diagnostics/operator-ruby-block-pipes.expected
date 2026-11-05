@@ -1,0 +1,8 @@
+diagnostics/operator-ruby-block-pipes.em:2:13: `|` is not an operator in Emerald
+  nums.each { |n| print(n) }
+              ^
+A block names what it receives before `=>`, as in `{ n => print(n) }`. To accept either condition, write `or`.
+diagnostics/operator-ruby-block-pipes.em:2:15: `|` is not an operator in Emerald
+  nums.each { |n| print(n) }
+                ^
+A block names what it receives before `=>`, as in `{ n => print(n) }`. To accept either condition, write `or`.

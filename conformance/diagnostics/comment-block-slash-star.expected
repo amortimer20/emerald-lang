@@ -1,0 +1,4 @@
+diagnostics/comment-block-slash-star.em:1:1: Emerald comments start with `#`
+  /* print a greeting */
+  ^^
+Write `# a note` on each line, or put a longer note between `#[` and `]#`.

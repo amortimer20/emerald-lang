@@ -46,6 +46,9 @@ incomplete_at_end: bool = false,
 /// Strings whose `#{` has been read but not yet their closing `}`,
 /// innermost last. A `}` that closes one resumes scanning that string.
 interpolations: std.ArrayList(Interpolation) = .empty,
+/// The start of the line whose C-style `for` header was already explained, so its
+/// other semicolons stay quiet.
+explained_for_line: ?u32 = null,
 
 const Interpolation = struct {
     /// Where the string began, for reporting it unclosed.
@@ -297,6 +300,22 @@ fn lexToken(self: *Lexer) std.mem.Allocator.Error!Token {
         );
         return self.emit(.invalid, start, self.index);
     }
+    if (c == '&' or c == '|' or c == '^') {
+        try self.report(
+            .{ .start = start, .end = self.index },
+            switch (c) {
+                '&' => "`&` is not an operator in Emerald",
+                '|' => "`|` is not an operator in Emerald",
+                else => "`^` is not an operator in Emerald",
+            },
+            switch (c) {
+                '&' => "Write `and` to require both conditions.",
+                '|' => "A block names what it receives before `=>`, as in `{ n => print(n) }`. To accept either condition, write `or`.",
+                else => "Write `**` for a power, as in `side ** 2`.",
+            },
+        );
+        return self.emit(.invalid, start, self.index);
+    }
     const kind: Token.Kind = switch (c) {
         '+' => if (self.take('=')) .plus_equal else .plus,
         '-' => if (self.take('=')) .minus_equal else .minus,
@@ -337,8 +356,34 @@ fn lexToken(self: *Lexer) std.mem.Allocator.Error!Token {
         '@' => .at,
         '?' => if (self.take('.')) .question_dot else .question,
         '*' => if (self.take('*')) .star_star else if (self.take('=')) .star_equal else .star,
-        '=' => if (self.take('=')) .equal_equal else if (self.take('>')) .fat_arrow else .equal,
-        '<' => if (self.take('=')) .less_equal else .less,
+        '=' => blk: {
+            if (self.take('=')) {
+                if (self.peek() == '=') {
+                    self.index += 1;
+                    try self.reportForeignOperator(start, "`===` is not an operator in Emerald", "Write `==` to compare two values. Emerald has one equality operator.");
+                    break :blk .invalid;
+                }
+                break :blk .equal_equal;
+            }
+            if (self.take('>')) break :blk .fat_arrow;
+            if (self.take('<')) {
+                try self.reportForeignOperator(start, "`=<` is not an operator in Emerald", "Write `<=` for less than or equal.");
+                break :blk .invalid;
+            }
+            if (self.take('+')) {
+                try self.reportForeignOperator(start, "`=+` is not an operator in Emerald", "Write `+=` to add to a variable, as in `total += 3`.");
+                break :blk .invalid;
+            }
+            break :blk .equal;
+        },
+        '<' => blk: {
+            if (self.take('=')) break :blk .less_equal;
+            if (self.take('>')) {
+                try self.reportForeignOperator(start, "`<>` is not an operator in Emerald", "Write `!=` to compare for inequality.");
+                break :blk .invalid;
+            }
+            break :blk .less;
+        },
         '>' => if (self.take('=')) .greater_equal else .greater,
         '/' => if (self.take('/'))
             (if (self.take('=')) .slash_slash_equal else .slash_slash)
@@ -362,11 +407,13 @@ fn lexToken(self: *Lexer) std.mem.Allocator.Error!Token {
         // Section 3.1 keeps semicolons out of the language entirely, so saying so
         // is more useful than calling this an unrecognized character.
         ';' => blk: {
-            try self.report(
-                .{ .start = start, .end = self.index },
-                "Emerald does not use semicolons",
-                "Remove it. A new line ends a statement.",
-            );
+            if (!try self.reportCStyleFor(start)) {
+                try self.report(
+                    .{ .start = start, .end = self.index },
+                    "Emerald does not use semicolons",
+                    "Remove it. A new line ends a statement.",
+                );
+            }
             break :blk .invalid;
         },
         else => blk: {
@@ -374,7 +421,9 @@ fn lexToken(self: *Lexer) std.mem.Allocator.Error!Token {
             // one diagnostic rather than one per byte.
             const width = std.unicode.utf8ByteSequenceLength(c) catch 1;
             self.index = @min(start + width, @as(u32, @intCast(self.source.text.len)));
-            if (c >= 0x80) {
+            if (c >= 0x80 and try self.reportCurlyQuote(start)) {
+                // Reported: the quoted text, when it closes on this line, went with it.
+            } else if (c >= 0x80) {
                 // Section 3.3: names use Unicode's identifier characters, which
                 // leave out emoji and symbols.
                 try self.report(
@@ -394,6 +443,72 @@ fn lexToken(self: *Lexer) std.mem.Allocator.Error!Token {
     };
 
     return self.emit(kind, start, self.index);
+}
+
+/// A foreign operator already consumed, reported once with the Emerald spelling.
+/// The text is static, since a lexer diagnostic owns nothing.
+fn reportForeignOperator(self: *Lexer, start: u32, message: []const u8, help: []const u8) std.mem.Allocator.Error!void {
+    try self.report(.{ .start = start, .end = self.index }, message, help);
+}
+
+/// Section 3.1 has no semicolons, so a `for (init; test; step)` header can only
+/// be the C-style loop. Reports it once, on the `for` through the end of its
+/// header, and says whether the semicolon belonged to one; the line's other
+/// semicolons then stay quiet.
+fn reportCStyleFor(self: *Lexer, semicolon: u32) std.mem.Allocator.Error!bool {
+    const text = self.source.text;
+    var line_start: u32 = semicolon;
+    while (line_start > 0 and text[line_start - 1] != '\n') line_start -= 1;
+    var at = line_start;
+    while (at < text.len and (text[at] == ' ' or text[at] == '\t')) at += 1;
+    const for_start = at;
+    if (!std.mem.startsWith(u8, text[at..], "for")) return false;
+    at += 3;
+    while (at < text.len and (text[at] == ' ' or text[at] == '\t')) at += 1;
+    if (at >= text.len or text[at] != '(') return false;
+    if (self.explained_for_line) |explained| {
+        if (explained == line_start) return true;
+    }
+    self.explained_for_line = line_start;
+    var line_end: u32 = semicolon;
+    while (line_end < text.len and text[line_end] != '\n') line_end += 1;
+    const header = std.mem.trimEnd(u8, text[for_start..line_end], " \t\r{");
+    try self.report(
+        .{ .start = for_start, .end = for_start + @as(u32, @intCast(header.len)) },
+        "a `for` loop does not take three parts",
+        "Emerald's `for` visits a range or a collection: write `for i in 0..<5 { ... }`, which visits 0 through 4.",
+    );
+    return true;
+}
+
+/// Whether `start` begins a curly quote pasted from a word processor, reported
+/// in place of the generic character message. An opening quote takes the text
+/// through the closing one on the same line, so one mistake is one diagnostic.
+fn reportCurlyQuote(self: *Lexer, start: u32) std.mem.Allocator.Error!bool {
+    const rest = self.source.text[start..];
+    const opens = [_][]const u8{ "\u{201C}", "\u{2018}" };
+    const closes = [_][]const u8{ "\u{201D}", "\u{2019}" };
+    var end: u32 = self.index;
+    var found = false;
+    for (opens, closes) |open, close| {
+        if (!std.mem.startsWith(u8, rest, open)) continue;
+        found = true;
+        const line_end = std.mem.indexOfScalar(u8, rest, '\n') orelse rest.len;
+        if (std.mem.indexOf(u8, rest[open.len..line_end], close)) |close_at| {
+            end = start + @as(u32, @intCast(open.len + close_at + close.len));
+        }
+    }
+    for (closes) |close| {
+        if (std.mem.startsWith(u8, rest, close)) found = true;
+    }
+    if (!found) return false;
+    self.index = end;
+    try self.report(
+        .{ .start = start, .end = end },
+        "this is a curly quote",
+        "Strings use straight quotes, as in `\"Hello\"`. Retype the quote, or turn off smart quotes in the editor you copied from.",
+    );
+    return true;
 }
 
 fn take(self: *Lexer, expected: u8) bool {
@@ -499,9 +614,21 @@ fn lexNumber(self: *Lexer) std.mem.Allocator.Error!Token {
     // Anything immediately adjacent means the whole run was one attempted
     // literal; section 5.1 wants one error spanning it rather than a number
     // followed by a puzzling name.
+    var starts_name = false;
     if (!self.atEnd() and self.identifierContinues() > 0) {
+        // Plain digits then a letter, as in `2nd_place`: a name that starts with a digit.
+        starts_name = !malformed and kind == .int_literal and !isDigit(self.peek()) and self.peek() != '_';
         self.skipIdentifierCharacters();
         malformed = true;
+    }
+
+    if (malformed and starts_name) {
+        try self.report(
+            .{ .start = start, .end = self.index },
+            "a name cannot start with a digit",
+            "Start the name with a letter or an underscore, as in `place_2nd`, or put the digits last.",
+        );
+        return self.emit(.invalid, start, self.index);
     }
 
     if (malformed) {

@@ -1,0 +1,4 @@
+diagnostics/curly-quotes.em:1:7: this is a curly quote
+  print(“Hello”)
+        ^^^^^^^
+Strings use straight quotes, as in `"Hello"`. Retype the quote, or turn off smart quotes in the editor you copied from.

@@ -1,0 +1,4 @@
+diagnostics/unknown-word-throw.em:4:9: `throw` is written `raise` in Emerald
+          throw RuntimeError("negative")
+          ^^^^^
+Write `raise` and then the error, as in `raise Error("message")`.

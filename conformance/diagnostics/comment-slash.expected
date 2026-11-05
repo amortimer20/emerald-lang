@@ -1,0 +1,4 @@
+diagnostics/comment-slash.em:1:1: Emerald comments start with `#`
+  // add up the scores
+  ^^
+Write `# a note` instead of `// a note`. A comment runs to the end of the line.

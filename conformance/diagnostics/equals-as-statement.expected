@@ -1,0 +1,4 @@
+diagnostics/equals-as-statement.em:2:1: `==` compares two values; it does not change anything
+  score == 10
+  ^^^^^^^^^^^
+To assign, write `score = 10`.

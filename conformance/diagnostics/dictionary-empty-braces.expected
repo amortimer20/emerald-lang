@@ -1,0 +1,4 @@
+diagnostics/dictionary-empty-braces.em:1:14: an empty dictionary needs a type
+  var counts = {}
+               ^
+Name what it holds, as in `var counts: Dict[String, Int] = []`. An empty dictionary is written `[]`, like an empty list.

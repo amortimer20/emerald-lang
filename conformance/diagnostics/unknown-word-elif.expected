@@ -1,0 +1,4 @@
+diagnostics/unknown-word-elif.em:6:1: `elif` is not an Emerald word
+  elif x > 3 {
+  ^^^^
+Write `else if`, straight after the `}` that closes the block above, as in `} else if x > 3 {`.

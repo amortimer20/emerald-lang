@@ -26,6 +26,7 @@
 //! pass records both as `Facts`.
 
 const std = @import("std");
+const Spelling = @import("spelling.zig").Spelling;
 const Ast = @import("Ast.zig");
 const Diagnostic = @import("Diagnostic.zig");
 const Project = @import("Project.zig");
@@ -1081,7 +1082,7 @@ fn declaredAbove(self: *Resolver, found: Found, span: Source.Span) Error!bool {
             .unknown_name,
             "`{s}` is not defined",
             .{nameOf(found.key)},
-            "Check the spelling, or declare it before this line.",
+            read_help,
         );
     }
     return false;
@@ -1467,11 +1468,368 @@ fn reportCoded(
     });
 }
 
+/// The help of an unknown name read as a value; `reportUndefined` replaces it
+/// when it can say something more specific.
+const read_help = "Check the spelling, or declare it before this line.";
+
+/// The help of an unknown name being assigned.
+const assign_help = "Declare it first with `var`, or check the spelling.";
+
+/// How an unknown name was used, which decides the help `reportUndefined` gives.
+const UndefinedUse = union(enum) {
+    read,
+    assign,
+    /// A help that already says exactly what is wrong.
+    explained: []const u8,
+};
+
+/// The one name in scope a writer most likely meant by `name`, if any.
+fn closeName(self: *Resolver, name: []const u8) ?[]const u8 {
+    var spelling = Spelling.init(name);
+    var index: usize = module_scope + 1;
+    while (index < self.scopes.items.len) : (index += 1) {
+        var keys = self.scopes.items[index].keyIterator();
+        while (keys.next()) |key| spelling.offer(key.*);
+    }
+    if (self.facts.module_keys.len != 0) {
+        var keys = self.facts.module_keys[self.file].keyIterator();
+        while (keys.next()) |key| spelling.offer(key.*);
+    }
+    var prelude_names = self.scopes.items[prelude_scope].keyIterator();
+    while (prelude_names.next()) |key| spelling.offer(key.*);
+    for (Type.builtin_types.keys()) |key| spelling.offer(key);
+    spelling.offer("Math");
+    spelling.offer("Program");
+    return spelling.suggestion();
+}
+
+/// The source of a call's arguments, trimmed, when the name at `after` is
+/// called on the same line: `len(names)` gives `names`, and the dotted
+/// `console.log("hi")` gives `"hi"`. Null for anything else.
+fn callArguments(text: []const u8, after: u32) ?[]const u8 {
+    var at: usize = after;
+    while (at < text.len and (std.ascii.isAlphanumeric(text[at]) or text[at] == '_' or text[at] == '.')) at += 1;
+    if (at >= text.len or text[at] != '(') return null;
+    const open = at;
+    var depth: usize = 0;
+    var in_string = false;
+    var i = open;
+    while (i < text.len) : (i += 1) {
+        const c = text[i];
+        if (c == '\n') return null;
+        if (in_string) {
+            if (c == '\\') i += 1 else if (c == '"') in_string = false;
+            continue;
+        }
+        switch (c) {
+            '"' => in_string = true,
+            '(', '[', '{' => depth += 1,
+            ')', ']', '}' => {
+                depth -|= 1;
+                if (depth == 0) return std.mem.trim(u8, text[open + 1 .. i], " \t");
+            },
+            else => {},
+        }
+    }
+    return null;
+}
+
+/// The first `out.len` top-level arguments of `arguments`; returns how many
+/// there are in all, so a caller can tell two from three.
+fn splitArguments(arguments: []const u8, out: [][]const u8) usize {
+    if (arguments.len == 0) return 0;
+    var count: usize = 0;
+    var depth: usize = 0;
+    var in_string = false;
+    var start: usize = 0;
+    var i: usize = 0;
+    while (i <= arguments.len) : (i += 1) {
+        const at_end = i == arguments.len;
+        const c: u8 = if (at_end) ',' else arguments[i];
+        if (!at_end and in_string) {
+            if (c == '\\') i += 1 else if (c == '"') in_string = false;
+            continue;
+        }
+        switch (c) {
+            '"' => in_string = true,
+            '(', '[', '{' => depth += 1,
+            ')', ']', '}' => depth -|= 1,
+            ',' => if (depth == 0) {
+                if (count < out.len) out[count] = std.mem.trim(u8, arguments[start..i], " \t");
+                count += 1;
+                start = i + 1;
+            },
+            else => {},
+        }
+    }
+    return count;
+}
+
+/// Whether `.method` can follow the expression as written: no operator or
+/// space outside brackets and strings.
+fn postfixSafe(expression: []const u8) bool {
+    if (expression.len == 0) return false;
+    var depth: usize = 0;
+    var in_string = false;
+    var i: usize = 0;
+    while (i < expression.len) : (i += 1) {
+        const c = expression[i];
+        if (in_string) {
+            if (c == '\\') i += 1 else if (c == '"') in_string = false;
+            continue;
+        }
+        switch (c) {
+            '"' => in_string = true,
+            '(', '[', '{' => depth += 1,
+            ')', ']', '}' => depth -|= 1,
+            ' ', '\t', '+', '-', '*', '/', '%', '<', '>', '=', '!', '&', '|', ',' => if (depth == 0) return false,
+            else => {},
+        }
+    }
+    return true;
+}
+
+/// Whether `text` is a whole-number literal, as in `16`.
+fn isWholeLiteral(text: []const u8) bool {
+    if (text.len == 0) return false;
+    for (text) |c| if (!std.ascii.isDigit(c) and c != '_') return false;
+    return true;
+}
+
+/// `expression` written so a `.method` or `..<` may follow it.
+fn asReceiver(self: *Resolver, expression: []const u8) Error![]const u8 {
+    if (postfixSafe(expression)) return expression;
+    return std.fmt.allocPrint(self.arena, "({s})", .{expression});
+}
+
+const Foreign = enum {
+    len,
+    int,
+    float,
+    str,
+    parse_int,
+    parse_float,
+    range,
+    sum,
+    max,
+    min,
+    abs,
+    round,
+    floor,
+    ceil,
+    sqrt,
+    pow,
+    sorted,
+    type_of,
+    bool_value,
+    absent,
+    print_like,
+    printf,
+    kernel,
+    read_line,
+};
+
+const foreign_names = std.StaticStringMap(Foreign).initComptime(.{
+    .{ "len", .len },
+    .{ "int", .int },
+    .{ "float", .float },
+    .{ "str", .str },
+    .{ "parseInt", .parse_int },
+    .{ "parseFloat", .parse_float },
+    .{ "range", .range },
+    .{ "sum", .sum },
+    .{ "max", .max },
+    .{ "min", .min },
+    .{ "abs", .abs },
+    .{ "round", .round },
+    .{ "floor", .floor },
+    .{ "ceil", .ceil },
+    .{ "sqrt", .sqrt },
+    .{ "pow", .pow },
+    .{ "sorted", .sorted },
+    .{ "type", .type_of },
+    .{ "True", .bool_value },
+    .{ "False", .bool_value },
+    .{ "null", .absent },
+    .{ "None", .absent },
+    .{ "nil", .absent },
+    .{ "undefined", .absent },
+    .{ "console", .print_like },
+    .{ "System", .print_like },
+    .{ "puts", .print_like },
+    .{ "println", .print_like },
+    .{ "echo", .print_like },
+    .{ "printf", .printf },
+    .{ "Kernel", .kernel },
+    .{ "read_line", .read_line },
+});
+
+/// What Emerald writes for a name other languages use as a built-in, taken
+/// from the written call when there is one. Null for any other name.
+fn foreignHelp(self: *Resolver, span: Source.Span, name: []const u8) Error!?[]const u8 {
+    const which = foreign_names.get(name) orelse return null;
+    const text = self.files[self.file].source.text;
+    const written = callArguments(text, span.end);
+    var parts: [3][]const u8 = undefined;
+    const count = if (written) |arguments| splitArguments(arguments, &parts) else 0;
+    const arena = self.arena;
+    // The one argument as a receiver, or `fallback` when there is not one.
+    const only: []const u8 = if (count == 1) try self.asReceiver(parts[0]) else "";
+    // A Float-only method (`square_root`, `floor`) on a whole-number literal
+    // needs the literal written as a Float first.
+    const only_float: []const u8 = if (count == 1 and isWholeLiteral(parts[0]))
+        try std.fmt.allocPrint(arena, "{s}.0", .{parts[0]})
+    else
+        only;
+    const word = switch (which) {
+        .max => "max",
+        .min => "min",
+        .floor => "floor",
+        .ceil => "ceil",
+        else => "",
+    };
+    return switch (which) {
+        .len => try std.fmt.allocPrint(
+            arena,
+            "Emerald has no `len` function. Write `{s}.count`, which works on a String, List, Set, or Dict.",
+            .{if (count == 1) only else "names"},
+        ),
+        .int => try std.fmt.allocPrint(
+            arena,
+            "Emerald has no `int` function. Write `{s}.to_int()` to read a whole number from a String; a Float has `to_int()` too.",
+            .{if (count == 1) only else "text"},
+        ),
+        .float => try std.fmt.allocPrint(
+            arena,
+            "Emerald has no `float` function. Write `{s}.to_float()` to read a number from a String or widen an Int.",
+            .{if (count == 1) only else "text"},
+        ),
+        .str => if (count == 1 and std.mem.indexOfScalar(u8, parts[0], '"') == null)
+            try std.fmt.allocPrint(
+                arena,
+                "Emerald has no `str` function. Write `{s}.to_string()`, or put the value in interpolation, as in `\"#{{{s}}}\"`.",
+                .{ only, parts[0] },
+            )
+        else
+            try std.fmt.allocPrint(
+                arena,
+                "Emerald has no `str` function. Write `{s}.to_string()`, or put the value in interpolation, as in `\"#{{n}}\"`.",
+                .{if (count == 1) only else "n"},
+            ),
+        .parse_int => try std.fmt.allocPrint(
+            arena,
+            "Emerald has no `parseInt` function. Write `{s}.to_int()`.",
+            .{if (count >= 1) try self.asReceiver(parts[0]) else "text"},
+        ),
+        .parse_float => try std.fmt.allocPrint(
+            arena,
+            "Emerald has no `parseFloat` function. Write `{s}.to_float()`.",
+            .{if (count >= 1) try self.asReceiver(parts[0]) else "text"},
+        ),
+        .range => switch (count) {
+            1 => try std.fmt.allocPrint(
+                arena,
+                "Emerald has no `range` function. A range is written with `..<`, which stops before the end: `0..<{s}`.",
+                .{only},
+            ),
+            2 => try std.fmt.allocPrint(
+                arena,
+                "Emerald has no `range` function. A range is written with `..<`, which stops before the end: `{s}..<{s}`.",
+                .{ try self.asReceiver(parts[0]), try self.asReceiver(parts[1]) },
+            ),
+            3 => try std.fmt.allocPrint(
+                arena,
+                "Emerald has no `range` function. Write a range and give it a step: `({s}..<{s}).step({s})`.",
+                .{ try self.asReceiver(parts[0]), try self.asReceiver(parts[1]), parts[2] },
+            ),
+            else => "Emerald has no `range` function. A range is written with `..<`, which stops before the end, as in `0..<5`, or with `..`, which includes it, as in `1..5`.",
+        },
+        .sum => try std.fmt.allocPrint(
+            arena,
+            "Emerald has no `sum` function. A list adds up its own numbers: `{s}.sum()`.",
+            .{if (count == 1) only else "scores"},
+        ),
+        .max, .min => switch (count) {
+            2 => try std.fmt.allocPrint(
+                arena,
+                "Emerald has no `{s}` function. Write `Math.{s}({s}, {s})` for two values.",
+                .{ word, word, parts[0], parts[1] },
+            ),
+            1 => try std.fmt.allocPrint(
+                arena,
+                "Emerald has no `{s}` function. A list finds its own: `{s}.{s}()`, which is `nothing` for an empty list.",
+                .{ word, only, word },
+            ),
+            else => try std.fmt.allocPrint(
+                arena,
+                "Emerald has no `{s}` function. Write `Math.{s}(a, b)` for two values, or `scores.{s}()` for a list.",
+                .{ word, word, word },
+            ),
+        },
+        .abs => try std.fmt.allocPrint(
+            arena,
+            "Emerald has no `abs` function. Write `{s}.abs()`.",
+            .{if (count == 1) only else "x"},
+        ),
+        .round => if (count == 2)
+            try std.fmt.allocPrint(
+                arena,
+                "Emerald has no `round` function. Write `{s}.round_to({s})` to keep {s} decimal places.",
+                .{ try self.asReceiver(parts[0]), parts[1], parts[1] },
+            )
+        else
+            try std.fmt.allocPrint(
+                arena,
+                "Emerald has no `round` function. A Float rounds itself: `{s}.round()`.",
+                .{if (count == 1) only_float else "x"},
+            ),
+        .floor, .ceil => try std.fmt.allocPrint(
+            arena,
+            "Emerald has no `{s}` function. A Float does it itself: `{s}.{s}()`.",
+            .{ word, if (count == 1) only_float else "x", word },
+        ),
+        .sqrt => try std.fmt.allocPrint(
+            arena,
+            "Emerald has no `sqrt` function. A Float takes its own square root: `{s}.square_root()`.",
+            .{if (count == 1) only_float else "x"},
+        ),
+        .pow => if (count == 2)
+            try std.fmt.allocPrint(
+                arena,
+                "Emerald has no `pow` function. Write `{s} ** {s}`, or `Math.power({s}, {s})`.",
+                .{ parts[0], parts[1], parts[0], parts[1] },
+            )
+        else
+            "Emerald has no `pow` function. Write `base ** exponent`, or `Math.power(base, exponent)`.",
+        .sorted => try std.fmt.allocPrint(
+            arena,
+            "Emerald has no `sorted` function. A list sorts a copy of itself: `{s}.sort()`.",
+            .{if (count == 1) only else "scores"},
+        ),
+        .type_of => "Emerald has no `type` function. A value's type is known when the program is checked, so hover over the name in an editor to see it; `is` tests whether a value is a particular class.",
+        .bool_value => "Emerald writes Bool values in lowercase: `true` and `false`.",
+        .absent => "Emerald writes absence as `nothing`. A value that may be absent has an optional type, as in `String?`.",
+        .print_like => try std.fmt.allocPrint(
+            arena,
+            "Emerald prints with `print`, as in `print({s})`; `write` does the same without the line break.",
+            .{if (count >= 1) written.? else "\"hello\""},
+        ),
+        .printf => "Emerald has no format strings. Print with `print`, and put a value in the text with interpolation, as in `print(\"n = #{n}\")`.",
+        .kernel => "Emerald has no `Kernel`. Its built-ins, such as `print` and `input`, are written bare.",
+        .read_line => "Emerald reads a line of input with `input()`, as in `input(\"Name? \")`, or `input_maybe()` when the end of input is expected.",
+    };
+}
+
 /// A name that resolves to nothing. When a top-level variable of that name is
 /// declared further down, the reader has most likely run into section 7.1's
 /// "variables are visible only from their declarations", so that is what the
 /// diagnostic says.
-fn reportUndefined(self: *Resolver, span: Source.Span, name: []const u8, help: []const u8) Error!void {
+fn reportUndefined(self: *Resolver, span: Source.Span, name: []const u8, use: UndefinedUse) Error!void {
+    const help = switch (use) {
+        .read => read_help,
+        .assign => assign_help,
+        .explained => |text| text,
+    };
     // A namespace is a real thing with a real name; it is just not a value.
     if (self.namespaces.contains(self.namespaceFor(name))) {
         return self.report(
@@ -1595,7 +1953,24 @@ fn reportUndefined(self: *Resolver, span: Source.Span, name: []const u8, help: [
         );
     }
 
-    try self.reportCoded(span, .unknown_name, "`{s}` is not defined", .{name}, help);
+    // What Emerald writes where another language has a built-in, when the
+    // name is read as a value.
+    const reading = use == .read;
+    const better = if (reading) try self.foreignHelp(span, name) else null;
+    // Section 17.2: a name one edit away from one in scope. A specific help
+    // above takes precedence.
+    const close: ?[]const u8 = if (better == null and use != .explained)
+        self.closeName(name)
+    else
+        null;
+    const chosen = better orelse if (close) |suggested|
+        (if (reading)
+            try std.fmt.allocPrint(self.arena, "Did you mean `{s}`?", .{suggested})
+        else
+            try std.fmt.allocPrint(self.arena, "Did you mean `{s}`? To make a new variable, declare it first with `var`.", .{suggested}))
+    else
+        help;
+    try self.reportCoded(span, .unknown_name, "`{s}` is not defined", .{name}, chosen);
 }
 
 /// The one file declaring a private module-level spelling, if it is
@@ -2114,7 +2489,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
                 return self.reportUndefined(
                     assignment.name_span,
                     assignment.name,
-                    "Declare it first with `var`, or check the spelling.",
+                    .assign,
                 );
             };
             try self.noteModuleUse(found);
@@ -2216,7 +2591,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
                     try self.reportUndefined(
                         name.span,
                         name.text,
-                        "Declare it first with `var`, or check the spelling.",
+                        .assign,
                     );
                     continue;
                 };
@@ -2969,12 +3344,12 @@ fn walkExpression(self: *Resolver, expression: *const Ast.Expression) Error!void
                 if (self.match_names.get(name)) |matched| if (sameFunction(matched.function, self.current_function)) return self.reportUndefined(
                     expression.span,
                     name,
-                    try std.fmt.allocPrint(self.arena, "The `{s}` match names `{s}` only inside its own arm. Use it there, or declare a variable before the `case` and assign it in the arm.", .{ try displayKey(self.arena, matched.key), name }),
+                    .{ .explained = try std.fmt.allocPrint(self.arena, "The `{s}` match names `{s}` only inside its own arm. Use it there, or declare a variable before the `case` and assign it in the arm.", .{ try displayKey(self.arena, matched.key), name }) },
                 );
                 return self.reportUndefined(
                     expression.span,
                     name,
-                    "Check the spelling, or declare it before this line.",
+                    .read,
                 );
             };
             // Creating a lambda does not read its module captures. Their

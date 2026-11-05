@@ -1,0 +1,16 @@
+diagnostics/close-spelling-members.em:11:11: Pet has no field named `nmae`
+  print(pet.nmae)
+            ^^^^
+Did you mean `name`?
+diagnostics/close-spelling-members.em:12:11: Pet has no method named `spaek`
+  print(pet.spaek())
+            ^^^^^
+Did you mean `speak`?
+diagnostics/close-spelling-members.em:13:13: List[String] has no method `apend`
+  print(names.apend("Bo"))
+              ^^^^^
+Did you mean `append`?
+diagnostics/close-spelling-members.em:14:13: List[String] has no property `qqqq`
+  print(names.qqqq)
+              ^^^^
+A list has `count`, `first`, and `last`, and methods including `append`, `insert`, `remove`, `contains?`, `find`, `each`, `map`, `filter`, `sort`, `reverse`, `sum`, `min`, and `max`; the List reference lists them all.

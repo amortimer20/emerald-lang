@@ -1,0 +1,4 @@
+diagnostics/operator-and-cut-comparison.em:2:14: a comparison needs a value on its left
+  if x > 0 and < 10 {
+               ^^^^
+Repeat the value: write `x > 0 and x < 10`.

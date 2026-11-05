@@ -1,0 +1,4 @@
+diagnostics/operator-mod-word.em:2:9: `mod` is not an operator in Emerald
+  print(n mod 2)
+          ^^^
+Write `%` for the remainder: `n % 2`.

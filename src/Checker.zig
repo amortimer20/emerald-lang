@@ -40,6 +40,7 @@ const Lexer = @import("Lexer.zig");
 const Project = @import("Project.zig");
 const Regex = @import("Regex.zig");
 const Resolver = @import("Resolver.zig");
+const Spelling = @import("spelling.zig").Spelling;
 const Source = @import("Source.zig");
 const Token = @import("Token.zig");
 const Type = @import("Type.zig");
@@ -1026,8 +1027,11 @@ fn resolveBase(self: *Checker, key: []const u8, declaration: Ast.StructDeclarati
             written.span,
             "`{s}` is not a class",
             .{written.name},
-            "Check the spelling, or declare `class {s}` in this project.",
-            .{written.name},
+            "{s}",
+            .{if (self.closeType(written.name)) |close|
+                try std.fmt.allocPrint(self.arena, "Did you mean `{s}`?", .{close})
+            else
+                try std.fmt.allocPrint(self.arena, "Check the spelling, or declare `class {s}` in this project.", .{written.name})},
         );
         return;
     }
@@ -1077,8 +1081,11 @@ fn resolveTraits(self: *Checker, key: []const u8, declaration: Ast.StructDeclara
                 written.span,
                 "`{s}` is not a trait",
                 .{written.name},
-                "Check the spelling, or declare `trait {s}` in this project.",
-                .{written.name},
+                "{s}",
+                .{if (self.closeType(written.name)) |close|
+                    try std.fmt.allocPrint(self.arena, "Did you mean `{s}`?", .{close})
+                else
+                    try std.fmt.allocPrint(self.arena, "Check the spelling, or declare `trait {s}` in this project.", .{written.name})},
             );
             try self.trait_list_errored.put(self.arena, key, {});
             continue;
@@ -4177,7 +4184,7 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
                             field.span,
                             "{f} has no field named `{s}`",
                             .{ element, field.name },
-                            "Check the field name in the type's declaration.",
+                            try self.misspeltMemberHelp(element, field.name, "Check the field name in the type's declaration."),
                         );
                     }
                     element = .invalid;
@@ -6494,7 +6501,7 @@ fn resolveWrittenType(self: *Checker, annotation: Ast.TypeExpression) Error!Type
         annotation.span,
         "`{s}` is not a type",
         .{annotation.name},
-        "Check the spelling or declare the struct in this project.",
+        try self.misspeltTypeHelp(annotation.name, "Check the spelling or declare the struct in this project."),
     );
     return .invalid;
 }
@@ -6915,6 +6922,41 @@ fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression, expected:
         .dictionary_literal => self.typeOfDictionary(expression, null),
         .type_test => self.typeOfTypeTest(expression),
     };
+}
+
+/// `random.randint(1, 6)`, `print.log`: a member asked of a prelude function,
+/// which is not a value that has any. Reports it as that, rather than as the
+/// function being used as a value, and says how the function is called.
+fn reportMemberOfBuiltinFunction(self: *Checker, member: Ast.Expression.Member) Error!bool {
+    if (member.base.data != .name) return false;
+    const name = member.base.data.name;
+    const binding = self.find(name) orelse return false;
+    if (!binding.is_function) return false;
+    const key = binding.function_key orelse self.keyOf(name);
+    if (self.declarations.contains(key)) return false;
+    const builtin = Resolver.builtinFunctionName(key) orelse for (Resolver.prelude) |prelude_name| {
+        if (std.mem.eql(u8, prelude_name, name)) break prelude_name;
+    } else return false;
+    // Python's `random.randint(1, 6)` and `random.randrange(1, 7)` meant a whole
+    // number in a range, which is what `random` gives when called with one.
+    if (std.mem.eql(u8, builtin, "random") and (std.mem.eql(u8, member.name, "randint") or std.mem.eql(u8, member.name, "randrange"))) {
+        try self.reportWithHelp(
+            member.base.span,
+            "`random` is a built-in function, so it has no `{s}`",
+            .{member.name},
+            "Call it with a range, as in `random(1..6)`, which gives a whole number from 1 through 6.",
+            .{},
+        );
+    } else {
+        try self.reportWithHelp(
+            member.base.span,
+            "`{s}` is a built-in function, so it has no `{s}`",
+            .{ builtin, member.name },
+            "Call it with parentheses, as in `{s}(...)`.",
+            .{builtin},
+        );
+    }
+    return true;
 }
 
 /// Section 7.5's captured function. Section 15.2's prelude functions are the
@@ -7873,10 +7915,11 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
             member.name_span,
             "{f} has no field named `{s}`",
             .{ building, member.name },
-            "Check the field name in the type's declaration.",
+            try self.misspeltMemberHelp(building, member.name, "Check the field name in the type's declaration."),
         );
         return .invalid;
     }
+    if (try self.reportMemberOfBuiltinFunction(member)) return .invalid;
     const base = try self.typeOf(member.base);
     if (base.kind == .invalid) return .invalid;
     if (!try self.requirePresent(base, member.base, member.name)) return .invalid;
@@ -7999,8 +8042,8 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
                 member.name_span,
                 "`{s}` is a method, so it needs parentheses",
                 .{member.name},
-                "Call it, as in `.{s}()`. Methods cannot be used as values yet.",
-                .{member.name},
+                "Call it, as in `.{s}()`, or wrap it in a block, as in `{{ value => value.{s}() }}`.",
+                .{ member.name, member.name },
             );
             return .invalid;
         }
@@ -8014,8 +8057,8 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
             member.name_span,
             "`{s}` is a method, so it needs parentheses",
             .{member.name},
-            "Call it, as in `.{s}()`. Methods cannot be used as values yet.",
-            .{member.name},
+            "Call it, as in `.{s}()`, or wrap it in a block, as in `{{ value => value.{s}() }}`.",
+            .{ member.name, member.name },
         );
         return .invalid;
     }
@@ -8226,6 +8269,10 @@ fn typeOfMethodCall(
         }
     }
 
+    if (try self.reportMemberOfBuiltinFunction(member)) {
+        try self.typeArguments(call.arguments);
+        return .invalid;
+    }
     const base = try self.typeOf(member.base);
     if (base.kind == .invalid) {
         try self.typeArguments(call.arguments);
@@ -10057,6 +10104,15 @@ fn requireChangeable(self: *Checker, member: Ast.Expression.Member) Error!void {
 /// A member that does not exist, with the Emerald name for what the writer
 /// probably meant when they reached for another language's.
 fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member, comptime what: []const u8) Error!void {
+    if (familiarSpecialHelp(base, member.name)) |help| {
+        return self.reportCoded(
+            member.name_span,
+            .unknown_member,
+            "{f} has no " ++ what ++ " `{s}`",
+            .{ base, member.name },
+            help,
+        );
+    }
     const candidate: ?[]const u8 = switch (base.kind) {
         .list => familiarListName(member.name),
         .string => familiarStringName(member.name),
@@ -10070,21 +10126,36 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
     else
         null;
     if (suggestion) |name| {
-        try self.reportWithHelpCoded(
+        const owner = instanceCatalogOwner(base);
+        const target = if (owner) |type_name| Builtins.find(try self.catalog(), type_name, name) else null;
+        // The replacement may be the other shape: `size()` becomes the property
+        // `count`, whose parentheses must go, and `isEmpty` as a property read
+        // becomes the call `empty?()`. Say so, so that following the help
+        // literally is not a second error.
+        const help = if (target) |found| switch (found.kind) {
+            .property => if (std.mem.eql(u8, what, "method"))
+                try std.fmt.allocPrint(self.arena, "Emerald calls this `{s}`. It is a property, so write `.{s}` without parentheses.", .{ name, name })
+            else
+                try std.fmt.allocPrint(self.arena, "Emerald calls this `{s}`.", .{name}),
+            .method => if (std.mem.eql(u8, what, "method"))
+                try std.fmt.allocPrint(self.arena, "Emerald calls this `{s}`.", .{name})
+            else
+                try std.fmt.allocPrint(self.arena, "Emerald calls this `{s}`. It is a method, so write `.{s}()` with parentheses.", .{ name, name }),
+            else => try std.fmt.allocPrint(self.arena, "Emerald calls this `{s}`.", .{name}),
+        } else try std.fmt.allocPrint(self.arena, "Emerald calls this `{s}`.", .{name});
+        try self.reportCoded(
             member.name_span,
             .unknown_member,
             "{f} has no " ++ what ++ " `{s}`",
             .{ base, member.name },
-            "Emerald calls this `{s}`.",
-            .{name},
+            help,
         );
         // Renaming alone must preserve whether this is a property or a call.
         // Indexing hints and changes such as length() -> count need structural
         // edits; this slice offers only exact name replacements.
-        const owner = instanceCatalogOwner(base) orelse return;
-        const target = Builtins.find(try self.catalog(), owner, name) orelse return;
-        if ((std.mem.eql(u8, what, "method") and target.kind == .method) or
-            (std.mem.eql(u8, what, "property") and target.kind == .property))
+        const found = target orelse return;
+        if ((std.mem.eql(u8, what, "method") and found.kind == .method) or
+            (std.mem.eql(u8, what, "property") and found.kind == .property))
         {
             self.diagnostics.items[self.diagnostics.items.len - 1].replacement = .{
                 .span = member.name_span,
@@ -10098,8 +10169,89 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
         .unknown_member,
         "{f} has no " ++ what ++ " `{s}`",
         .{ base, member.name },
-        unknownMemberHelp(base) orelse "Check the spelling, or what kind of value this is.",
+        try self.misspeltMemberHelp(base, member.name, unknownMemberHelp(base) orelse "Check the spelling, or what kind of value this is."),
     );
+}
+
+/// Section 17.2: the one member of `base` whose spelling is a small edit from
+/// `name`, if any. Built-in types search their catalog; a user type searches
+/// its fields, its methods and properties (inherited and trait ones too).
+fn closeMember(self: *Checker, base: Type, name: []const u8) Error!?[]const u8 {
+    var spelling = Spelling.init(name);
+    if (base.kind == .struct_value) {
+        const user = base.user.?;
+        for (user.fields) |field| {
+            if (!Resolver.isPrivate(field.name)) spelling.offer(field.name);
+        }
+        var at: ?*const Type.User = user;
+        while (at) |current| : (at = current.base) self.offerMethodsOf(&spelling, current.name);
+        for (try self.traitClosure(user)) |trait| self.offerMethodsOf(&spelling, trait.name);
+        return spelling.suggestion();
+    }
+    const owner = switch (base.kind) {
+        .bytes => "Bytes",
+        .range => "Range",
+        else => instanceCatalogOwner(base) orelse return null,
+    };
+    const data = try self.catalog();
+    for (data.members) |member| {
+        if (member.kind != .method and member.kind != .property) continue;
+        if (member.owner) |member_owner| {
+            if (!std.mem.eql(u8, member_owner, owner) and !std.mem.eql(u8, member_owner, "*")) continue;
+        }
+        spelling.offer(member.name);
+    }
+    return spelling.suggestion();
+}
+
+fn offerMethodsOf(self: *Checker, spelling: *Spelling, type_key: []const u8) void {
+    var keys = self.receivers.keyIterator();
+    while (keys.next()) |key| {
+        if (!std.mem.startsWith(u8, key.*, type_key)) continue;
+        const rest = key.*[type_key.len..];
+        if (!std.mem.startsWith(u8, rest, Resolver.method_separator)) continue;
+        const member = rest[Resolver.method_separator.len..];
+        if (member.len == 0 or Resolver.isPrivate(member) or std.mem.endsWith(u8, member, Resolver.setter_suffix)) continue;
+        spelling.offer(member);
+    }
+}
+
+/// `general`, or "Did you mean ...?" when a member of `base` is a small edit
+/// from `name`.
+fn misspeltMemberHelp(self: *Checker, base: Type, name: []const u8, general: []const u8) Error![]const u8 {
+    const close = try self.closeMember(base, name) orelse return general;
+    return std.fmt.allocPrint(self.arena, "Did you mean `{s}`?", .{close});
+}
+
+/// The one type name in view that is a small edit from `name`: built-in types,
+/// the generic collections, and the types this file can write bare.
+fn closeType(self: *Checker, name: []const u8) ?[]const u8 {
+    var spelling = Spelling.init(name);
+    for (Type.builtin_types.keys()) |key| spelling.offer(key);
+    for ([_][]const u8{ "List", "Dict", "Set", "Task", "Channel" }) |key| spelling.offer(key);
+    if (self.facts.module_keys.len != 0) {
+        var keys = self.facts.module_keys[self.file].iterator();
+        while (keys.next()) |entry| {
+            if (self.structs.contains(entry.value_ptr.*)) spelling.offer(entry.key_ptr.*);
+        }
+    }
+    return spelling.suggestion();
+}
+
+/// `general`, or "Did you mean ...?" when a type name is a small edit away.
+fn misspeltTypeHelp(self: *Checker, name: []const u8, general: []const u8) Error![]const u8 {
+    const close = self.closeType(name) orelse return general;
+    return std.fmt.allocPrint(self.arena, "Did you mean `{s}`?", .{close});
+}
+
+/// Spellings from other languages whose Emerald equivalent is not a renamed
+/// member, so the help says what to write instead.
+fn familiarSpecialHelp(base: Type, name: []const u8) ?[]const u8 {
+    if (base.kind != .string) return null;
+    if (std.mem.eql(u8, name, "join")) return "`join` belongs to the list, not the separator: write `words.join(\", \")`, with the separator as the argument.";
+    if (std.mem.eql(u8, name, "format")) return "A String has no `format`. Put values in the text with interpolation, as in `\"Hello #{name}\"`.";
+    if (std.mem.eql(u8, name, "charAt") or std.mem.eql(u8, name, "char_at")) return "A String is indexed with brackets: `word[0]` is its first character.";
+    return null;
 }
 
 fn unknownMemberHelp(base: Type) ?[]const u8 {
@@ -10231,6 +10383,7 @@ fn familiarMapName(name: []const u8, set: bool) ?[]const u8 {
             .{ "has", "contains?" },
             .{ "includes", "contains?" },
             .{ "member?", "contains?" },
+            .{ "intersect", "intersection" },
             .{ "insert", "add" },
             .{ "append", "add" },
             .{ "push", "add" },
@@ -10247,6 +10400,8 @@ fn familiarMapName(name: []const u8, set: bool) ?[]const u8 {
         .{ "contains?", "contains_key?" },
         .{ "has_key", "contains_key?" },
         .{ "has_key?", "contains_key?" },
+        .{ "containsKey", "contains_key?" },
+        .{ "contains_key", "contains_key?" },
         .{ "includes?", "contains_key?" },
         .{ "key?", "contains_key?" },
         .{ "items", "entries" },
@@ -10268,6 +10423,15 @@ fn familiarStringName(name: []const u8) ?[]const u8 {
         .{ "downcase", "lower" },
         .{ "lowercase", "lower" },
         .{ "to_lower", "lower" },
+        .{ "toUpperCase", "upper" },
+        .{ "toLowerCase", "lower" },
+        .{ "isEmpty", "empty?" },
+        .{ "startsWith", "starts_with?" },
+        .{ "endsWith", "ends_with?" },
+        .{ "pad_left", "pad_start" },
+        .{ "pad_right", "pad_end" },
+        .{ "ljust", "pad_end" },
+        .{ "rjust", "pad_start" },
         .{ "strip", "trim" },
         .{ "isalpha", "letter?" },
         .{ "is_letter", "letter?" },
@@ -10318,6 +10482,8 @@ fn familiarListName(name: []const u8) ?[]const u8 {
         .{ "has", "contains?" },
         .{ "empty", "empty?" },
         .{ "is_empty", "empty?" },
+        .{ "isEmpty", "empty?" },
+        .{ "forEach", "each" },
         .{ "delete", "remove" },
         .{ "delete_at", "remove_at" },
         .{ "for_each", "each" },
@@ -12401,8 +12567,9 @@ fn libraryMemberHelp(self: *Checker, base: Type, name: []const u8) Error!?[]cons
 /// The correction for a member a class does not have: when a class extending
 /// it does, how `is` reaches it (4.4), and for a name that cannot be narrowed,
 /// why not.
-fn subclassMemberHelp(self: *Checker, base: Type, member: Ast.Expression.Member, general: []const u8) Error![]const u8 {
+fn subclassMemberHelp(self: *Checker, base: Type, member: Ast.Expression.Member, general_help: []const u8) Error![]const u8 {
     if (try self.libraryMemberHelp(base, member.name)) |help| return help;
+    const general = try self.misspeltMemberHelp(base, member.name, general_help);
     if (!isClass(base)) return general;
     // The first declared, so the correction does not depend on hash order.
     var found: ?*const Type.User = null;

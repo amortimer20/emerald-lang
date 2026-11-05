@@ -1,0 +1,4 @@
+diagnostics/unknown-word-def.em:2:1: functions start with `func`, not `def`
+  def greet(name: String) {
+  ^^^
+Write `func greet`, then the parameters in parentheses and the body in braces, as in `func greet() { ... }`.

@@ -1,0 +1,4 @@
+diagnostics/unknown-word-unless.em:3:1: there is no `unless` in Emerald
+  unless done {
+  ^^^^^^
+Write `if not` followed by the condition, as in `if not done {`.

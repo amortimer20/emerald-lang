@@ -1,0 +1,4 @@
+diagnostics/reserved-word-as-name.em:1:5: `class` is one of Emerald's reserved words, so it cannot be a name
+  var class = "7B"
+      ^^^^^
+Try `class_name`, or another word that is not reserved.

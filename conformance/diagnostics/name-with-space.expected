@@ -1,0 +1,4 @@
+diagnostics/name-with-space.em:1:5: a name cannot contain spaces
+  var high score = 10
+      ^^^^^^^^^^
+Use `_` between the words: write `high_score`.

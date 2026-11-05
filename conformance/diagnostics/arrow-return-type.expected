@@ -1,0 +1,4 @@
+diagnostics/arrow-return-type.em:1:21: a return type follows a colon, not an arrow
+  func square(n: Int) -> Int {
+                      ^^
+Write `func square(n: Int): Int`.

@@ -1,0 +1,4 @@
+diagnostics/else-after-statement.em:6:1: `else` must come straight after an `if` block
+  else {
+  ^^^^
+Put `else` on the same line as the `}` that closes the `if`, with nothing between them, as in `} else { ... }`.

@@ -21,6 +21,7 @@ const Diagnostic = @import("Diagnostic.zig");
 const Lexer = @import("Lexer.zig");
 const Source = @import("Source.zig");
 const Token = @import("Token.zig");
+const Spelling = @import("spelling.zig").Spelling;
 const unicode = @import("unicode.zig");
 
 const Parser = @This();
@@ -97,6 +98,14 @@ in_condition: bool = false,
 /// (10.2). A lambda clears it, since a block that captured `self` could let the
 /// value escape before every field is set, or outlive a method that changes it.
 self_allowed: SelfContext = .nowhere,
+/// Set just before parsing the body of a function that declares a result type,
+/// and taken by the block that parses it: `in_result_body` is then true for that
+/// block alone, never for a block nested inside it.
+pending_result_body: bool = false,
+in_result_body: bool = false,
+/// Where the statement being parsed began, so a `{` that opens it can be told
+/// from one inside it: a block is not a statement on its own (3.4).
+statement_start: usize = std.math.maxInt(usize),
 
 /// `type_member` is section 10.4's type-level function or field, which belongs
 /// to the type rather than to any value, so it has no `self` to offer.
@@ -591,6 +600,7 @@ fn spanning(from: Source.Span, to: Source.Span) Source.Span {
 // Statements.
 
 fn parseStatement(self: *Parser) Error!Ast.Statement {
+    self.statement_start = self.skipDocCommentsFrom(self.index);
     return switch (self.peek().kind) {
         .keyword_var => self.parseDeclaration(true),
         .keyword_const => self.parseDeclaration(false),
@@ -666,6 +676,11 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
             try self.expectStatementEnd();
             break :blk .{ .span = span, .data = .{ .case_statement = parsed } };
         },
+        .keyword_else => self.report(
+            self.peek().span,
+            "`else` must come straight after an `if` block",
+            "Put `else` on the same line as the `}` that closes the `if`, with nothing between them, as in `} else { ... }`.",
+        ),
         .keyword_while => self.parseWhile(),
         .keyword_for => self.parseFor(),
         .keyword_break => self.parseLoopExit(.break_statement),
@@ -676,6 +691,10 @@ fn parseStatement(self: *Parser) Error!Ast.Statement {
             "this `}` does not close anything",
             "Remove it, or look above for a block that is missing its opening `{`.",
         ),
+        .identifier => if (std.mem.eql(u8, self.text(self.peek()), "do") and self.peekAfterNext().kind == .left_brace and self.doWhileAhead())
+            self.reportDoWhile()
+        else
+            self.parseSimpleStatement(),
         else => self.parseSimpleStatement(),
     };
 }
@@ -2161,7 +2180,18 @@ fn parseFunctionDeclarationWith(self: *Parser, method: bool, body_rule: Body) Er
     );
 
     var return_annotation: ?Ast.TypeExpression = null;
-    if (self.match(.colon) != null) return_annotation = try self.parseTypeExpression();
+    if (self.check(.minus) and self.peekAfterNext().kind == .greater and self.peek().span.end == self.peekAfterNext().span.start) {
+        const arrow_start = self.advance().span.start;
+        _ = self.advance();
+        const written = try self.parseTypeExpression();
+        const header = self.source.text[name.span.end..arrow_start];
+        try self.note(
+            .{ .start = arrow_start, .end = arrow_start + 2 },
+            "a return type follows a colon, not an arrow",
+            try std.fmt.allocPrint(self.arena, "Write `func {s}{s}: {s}`.", .{ self.text(name), std.mem.trimEnd(u8, header, " "), self.source.text[written.span.start..written.span.end] }),
+        );
+        return_annotation = written;
+    } else if (self.match(.colon) != null) return_annotation = try self.parseTypeExpression();
 
     if (abstract and !self.atLeftBrace()) {
         const end = if (return_annotation) |annotation| annotation.span else name.span;
@@ -2194,6 +2224,7 @@ fn parseFunctionDeclarationWith(self: *Parser, method: bool, body_rule: Body) Er
         );
     }
 
+    self.pending_result_body = return_annotation != null;
     const body = try self.parseBlock();
 
     return .{
@@ -2288,6 +2319,7 @@ fn parseParameter(self: *Parser) Error!Ast.Parameter {
         );
     }
     if (name.kind != .identifier) {
+        if (isKeywordToken(name)) return self.reportReservedName(name);
         return self.reportFmt(
             name.span,
             "expected a parameter name, found {s}",
@@ -2416,6 +2448,22 @@ fn parseTry(self: *Parser) Error!Ast.Statement {
         cleanup = try self.parseBlock();
         end = cleanup.?.span;
     }
+    if (catches.items.len == 0 and cleanup == null) {
+        const next = self.peekPastNewlines();
+        if (next.kind == .identifier and (std.mem.eql(u8, self.text(next), "except") or std.mem.eql(u8, self.text(next), "rescue"))) {
+            // Read the handler too, so it is not reported again as a statement.
+            self.skipSeparators();
+            _ = self.advance();
+            while (!self.check(.left_brace) and !self.check(.newline) and !self.check(.eof)) _ = self.advance();
+            if (self.match(.left_brace) != null) self.skipPastBraces();
+            return self.reportFmt(
+                next.span,
+                "`{s}` is written `catch` in Emerald",
+                .{self.text(next)},
+                "Write `catch error { ... }`, or `catch error: RuntimeError { ... }` to handle one kind of error.",
+            );
+        }
+    }
     if (catches.items.len == 0 and cleanup == null) return self.report(body.span, "`try` needs a `catch` or `finally`", "Add a handler with `catch error { ... }`, cleanup with `finally { ... }`, or remove `try`.");
     return .{
         .span = spanning(keyword.span, end),
@@ -2438,6 +2486,7 @@ fn parseDeclaration(self: *Parser, mutable: bool) Error!Ast.Statement {
 
     const name = self.peek();
     if (name.kind != .identifier) {
+        if (isKeywordToken(name)) return self.reportReservedName(name);
         return self.reportFmt(
             name.span,
             "expected a name after `{s}`, found {s}",
@@ -2469,6 +2518,7 @@ fn parseDeclaration(self: *Parser, mutable: bool) Error!Ast.Statement {
 
     const equals = self.peek();
     if (equals.kind != .equal) {
+        try self.checkNameShape(name, equals);
         return self.reportFmt(
             equals.span,
             "expected `=` after `{s}`, found {s}",
@@ -3107,6 +3157,10 @@ fn parseBlock(self: *Parser) Error!Ast.Block {
     const saved_condition = self.in_condition;
     self.in_condition = false;
     defer self.in_condition = saved_condition;
+    const saved_result_body = self.in_result_body;
+    self.in_result_body = self.pending_result_body;
+    self.pending_result_body = false;
+    defer self.in_result_body = saved_result_body;
     self.skipToLeftBrace();
     const opening = self.peek();
     if (opening.kind != .left_brace) {
@@ -3378,16 +3432,261 @@ fn assignmentOperator(kind: Token.Kind) ?AssignmentForm {
     };
 }
 
+/// Something that is not a call is a pure expression, whose result nothing
+/// uses. Before saying so, notice the common ways a line starting with an
+/// unknown word is really another language's keyword, a misspelled Emerald
+/// one, a declaration, or a call without parentheses (F1).
+fn reportUnusedExpression(self: *Parser, expression: *const Ast.Expression) Error {
+    const next = self.peek();
+    const ends_line = switch (next.kind) {
+        .newline, .eof, .right_brace => true,
+        else => false,
+    };
+    const written = self.source.text[expression.span.start..expression.span.end];
+
+    // Ruby's last expression as the function's result.
+    if (ends_line and self.in_result_body and self.endsBlock()) {
+        return self.report(
+            expression.span,
+            "a function does not give back its last value by itself",
+            try std.fmt.allocPrint(self.arena, "Write `return {s}` to give back the value.", .{shortText(written) orelse "..."}),
+        );
+    }
+
+    if (expression.data == .name) {
+        if (try self.foreignKeywordDiagnostic(written)) |found| {
+            return self.report(expression.span, found.message, found.help);
+        }
+        if (ends_line) {
+            return self.report(
+                expression.span,
+                try std.fmt.allocPrint(self.arena, "`{s}` on its own does nothing", .{written}),
+                try std.fmt.allocPrint(self.arena, "To call it, write `{s}()`. To use its value, assign it to a name or use it in an expression.", .{written}),
+            );
+        }
+        if (written.len >= 3) {
+            if (closeKeyword(written)) |keyword| if (keywordFits(keyword, next.kind)) return self.report(
+                expression.span,
+                try std.fmt.allocPrint(self.arena, "`{s}` is not an Emerald word", .{written}),
+                try std.fmt.allocPrint(self.arena, "Did you mean `{s}`?", .{keyword}),
+            );
+        }
+        if (next.kind == .identifier) {
+            if (std.mem.eql(u8, written, "print")) return self.reportCallParentheses(expression, written, self.restOfLine(self.index));
+            const name = self.text(next);
+            const after_index = self.skipDocCommentsFrom(self.index + 1);
+            const value = if (self.tokens[after_index].kind == .equal) self.restOfLine(after_index + 1) else null;
+            if (declaredTypeText(written) == null) {
+                return self.report(
+                    spanning(expression.span, next.span),
+                    "a name cannot contain spaces",
+                    try std.fmt.allocPrint(self.arena, "Use `_` between the words: write `var {s}_{s} = {s}`.", .{ written, name, value orelse "..." }),
+                );
+            }
+            const help = if (declaredTypeText(written)) |type_name|
+                try std.fmt.allocPrint(self.arena, "Write `var {s}: {s} = {s}`, or `const` in place of `var` for a value that never changes.", .{ name, type_name, value orelse "..." })
+            else
+                try std.fmt.allocPrint(self.arena, "Write `var {s} = {s}`, or `const` in place of `var` for a value that never changes.", .{ name, value orelse "..." });
+            return self.report(spanning(expression.span, next.span), "a declaration starts with `var` or `const`", help);
+        }
+        switch (next.kind) {
+            .string_literal, .raw_string_literal, .multiline_string_literal, .string_start, .int_literal, .float_literal => {
+                return self.reportCallParentheses(expression, written, self.restOfLine(self.index));
+            },
+            else => {},
+        }
+    }
+
+    // `score == 10` meant as an assignment.
+    if (expression.data == .comparison) {
+        const comparison = expression.data.comparison;
+        if (comparison.operators.len == 1 and comparison.operators[0] == .equal) {
+            const left = comparison.operands[0];
+            const right = comparison.operands[1];
+            const left_text = self.source.text[left.span.start..left.span.end];
+            const right_text = self.source.text[right.span.start..right.span.end];
+            return self.report(
+                expression.span,
+                "`==` compares two values; it does not change anything",
+                if (left.data == .name and shortText(right_text) != null)
+                    try std.fmt.allocPrint(self.arena, "To assign, write `{s} = {s}`.", .{ left_text, right_text })
+                else
+                    "To assign, write `name = value`.",
+            );
+        }
+    }
+
+    // `lives--` whose newline was swallowed by the operator's continuation.
+    if (expression.data == .binary and expression.data.binary.operator == .subtract) {
+        const binary = expression.data.binary;
+        if (binary.right.data == .unary and binary.right.data.unary.operator == .negate and
+            binary.operator_span.end == binary.right.span.start and
+            std.mem.indexOfScalar(u8, self.source.text[binary.right.span.start..binary.right.data.unary.operand.span.start], '\n') != null)
+        {
+            const operator: Token = .{ .kind = .minus, .span = binary.operator_span };
+            return self.report(
+                .{ .start = binary.operator_span.start, .end = binary.right.span.start + 1 },
+                "`--` is not a decrement operator in Emerald",
+                try self.incrementHelp(binary.left, operator, false),
+            );
+        }
+    }
+
+    return self.report(
+        expression.span,
+        "this result is never used",
+        "Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.",
+    );
+}
+
+fn reportCallParentheses(self: *Parser, expression: *const Ast.Expression, word: []const u8, rest: ?[]const u8) Error {
+    return self.report(
+        expression.span,
+        "a call needs parentheses",
+        try std.fmt.allocPrint(self.arena, "Write `{s}({s})`: put what you pass in parentheses right after the name.", .{ word, rest orelse "..." }),
+    );
+}
+
+/// Whether `keyword` can be followed by a token of `kind`: `retrun x` is a
+/// misspelled `return`, but `form "x"` is a call of `form`, since `for` is never
+/// followed by a literal.
+fn keywordFits(keyword: []const u8, kind: Token.Kind) bool {
+    return switch (kind) {
+        .string_literal, .raw_string_literal, .multiline_string_literal, .string_start, .int_literal, .float_literal => wordIn(keyword, &.{ "return", "raise", "assert", "if", "while", "case" }),
+        else => true,
+    };
+}
+
+/// The one statement keyword `written` most likely misspells, if any.
+fn closeKeyword(written: []const u8) ?[]const u8 {
+    var close = Spelling.init(written);
+    for (statement_keywords) |keyword| close.offer(keyword);
+    return close.suggestion();
+}
+
+const statement_keywords = [_][]const u8{
+    "func",    "return", "while", "for",   "if",    "else",   "var",   "const",    "class", "struct",
+    "enum",    "trait",  "try",   "catch", "raise", "assert", "break", "continue", "case",  "using",
+    "finally",
+};
+
+/// The type a declaration written the Java way names, as Emerald writes it.
+fn declaredTypeText(word: []const u8) ?[]const u8 {
+    const spellings = [_][2][]const u8{
+        .{ "int", "Int" },     .{ "integer", "Int" },  .{ "long", "Int" },
+        .{ "float", "Float" }, .{ "double", "Float" }, .{ "string", "String" },
+        .{ "str", "String" },  .{ "bool", "Bool" },    .{ "boolean", "Bool" },
+    };
+    for (spellings) |pair| {
+        if (std.mem.eql(u8, word, pair[0])) return pair[1];
+    }
+    if (word.len > 0 and std.ascii.isUpper(word[0])) return word;
+    return null;
+}
+
+/// Text short enough, and on one line, to quote in a help sentence.
+fn shortText(snippet: []const u8) ?[]const u8 {
+    if (snippet.len == 0 or snippet.len > 40) return null;
+    if (std.mem.indexOfAny(u8, snippet, "\n#") != null) return null;
+    return snippet;
+}
+
+/// Whether only line breaks stand between here and the `}` that ends the
+/// block, which is what makes the statement just parsed the block's last.
+fn endsBlock(self: *const Parser) bool {
+    var at = self.index;
+    while (at < self.tokens.len) : (at += 1) {
+        switch (self.tokens[at].kind) {
+            .newline, .doc_comment => {},
+            .right_brace => return true,
+            else => return false,
+        }
+    }
+    return false;
+}
+
+fn skipDocCommentsFrom(self: *const Parser, from: usize) usize {
+    var at = from;
+    while (at < self.tokens.len - 1 and self.tokens[at].kind == .doc_comment) at += 1;
+    return at;
+}
+
+/// The rest of the line from token `from`, trimmed and without an opening
+/// brace, when it is short enough to quote.
+fn restOfLine(self: *const Parser, from: usize) ?[]const u8 {
+    const first = self.skipDocCommentsFrom(from);
+    if (first >= self.tokens.len) return null;
+    if (self.tokens[first].kind == .eof or self.tokens[first].kind == .newline) return null;
+    // By the source line: a `{` swallows the newline after it, so tokens run on.
+    const from_text = self.source.text[self.tokens[first].span.start..];
+    const line_end = std.mem.indexOfScalar(u8, from_text, '\n') orelse from_text.len;
+    var snippet = std.mem.trim(u8, from_text[0..line_end], " \t\r");
+    if (std.mem.endsWith(u8, snippet, "{")) snippet = std.mem.trimEnd(u8, snippet[0 .. snippet.len - 1], " \t");
+    return shortText(snippet);
+}
+
+const ForeignDiagnostic = struct { message: []const u8, help: []const u8 };
+
+fn wordIn(word: []const u8, words: []const []const u8) bool {
+    for (words) |candidate| {
+        if (std.mem.eql(u8, word, candidate)) return true;
+    }
+    return false;
+}
+
+/// Another language's keyword written where an Emerald statement starts.
+fn foreignKeywordDiagnostic(self: *Parser, word: []const u8) Error!?ForeignDiagnostic {
+    const rest = self.restOfLine(self.index);
+    const name = if (self.peek().kind == .identifier) self.text(self.peek()) else "name";
+    if (wordIn(word, &.{ "elif", "elsif", "elseif" })) return .{
+        .message = try std.fmt.allocPrint(self.arena, "`{s}` is not an Emerald word", .{word}),
+        .help = try std.fmt.allocPrint(self.arena, "Write `else if`, straight after the `}}` that closes the block above, as in `}} else if {s} {{`.", .{rest orelse "..."}),
+    };
+    if (wordIn(word, &.{ "def", "function", "fn", "fun", "define" })) return .{
+        .message = try std.fmt.allocPrint(self.arena, "functions start with `func`, not `{s}`", .{word}),
+        .help = try std.fmt.allocPrint(self.arena, "Write `func {s}`, then the parameters in parentheses and the body in braces, as in `func {s}() {{ ... }}`.", .{ name, name }),
+    };
+    if (wordIn(word, &.{ "let", "val" })) return .{
+        .message = try std.fmt.allocPrint(self.arena, "`{s}` is not an Emerald word", .{word}),
+        .help = try std.fmt.allocPrint(self.arena, "Declare a variable with `var`, or a value that never changes with `const`, as in `var {s} = ...`.", .{name}),
+    };
+    if (std.mem.eql(u8, word, "switch")) return .{
+        .message = "`switch` is written `case` in Emerald",
+        .help = try std.fmt.allocPrint(self.arena, "Write `case {s} {{`, then one `when` for each alternative, as in `when 1 {{ ... }}`.", .{rest orelse "value"}),
+    };
+    if (std.mem.eql(u8, word, "throw")) return .{
+        .message = "`throw` is written `raise` in Emerald",
+        .help = "Write `raise` and then the error, as in `raise Error(\"message\")`.",
+    };
+    if (std.mem.eql(u8, word, "unless")) return .{
+        .message = "there is no `unless` in Emerald",
+        .help = try std.fmt.allocPrint(self.arena, "Write `if not` followed by the condition, as in `if not {s} {{`.", .{rest orelse "done"}),
+    };
+    if (std.mem.eql(u8, word, "until")) return .{
+        .message = "there is no `until` in Emerald",
+        .help = try std.fmt.allocPrint(self.arena, "Write `while not` followed by the condition, as in `while not {s} {{`.", .{rest orelse "done"}),
+    };
+    if (std.mem.eql(u8, word, "foreach")) return .{
+        .message = "`foreach` is written `for` in Emerald",
+        .help = try std.fmt.allocPrint(self.arena, "Write `for` a name for each item, then `in`, then what to visit, as in `for {s} {{`.", .{rest orelse "item in items"}),
+    };
+    if (std.mem.eql(u8, word, "new")) return .{
+        .message = "Emerald has no `new`",
+        .help = try std.fmt.allocPrint(self.arena, "Write `{s}`: call the type directly, with no `new` in front.", .{rest orelse "Point(1, 2)"}),
+    };
+    if (wordIn(word, &.{ "except", "rescue" })) return .{
+        .message = try std.fmt.allocPrint(self.arena, "`{s}` is written `catch` in Emerald", .{word}),
+        .help = "Write `catch error { ... }`, with a name for the error you caught.",
+    };
+    return null;
+}
+
 fn finishExpressionStatement(self: *Parser, expression: *const Ast.Expression) Error!Ast.Statement {
     // Section 5.2: a call may discard its result, but a pure expression whose
     // result is unused is a mistake, and the diagnostic should suggest the
     // update the writer probably meant.
     if (expression.data != .call and !(self.interactive_entry and self.at_top_level)) {
-        return self.report(
-            expression.span,
-            "this result is never used",
-            "Assign it to a name, or call a function that does something with it. `score + 1` on its own is usually meant to be `score += 1`.",
-        );
+        return self.reportUnusedExpression(expression);
     }
 
     var statement = try self.finishSimpleStatement(.{ .span = expression.span, .data = .{ .expression = expression } });
@@ -3402,12 +3701,24 @@ fn expectStatementEnd(self: *Parser) Error!void {
     switch (terminator.kind) {
         .newline => _ = self.advance(),
         .eof, .right_brace => {},
-        else => return self.reportFmt(
-            terminator.span,
-            "expected the end of the line, found {s}",
-            .{terminator.kind.describe()},
-            "Statements end at a new line. Check for a missing operator or closing bracket.",
-        ),
+        else => {
+            if (terminator.kind == .fat_arrow) return self.reportForeignArrow(terminator);
+            if (terminator.kind == .identifier and self.index > 0) {
+                const previous = self.tokens[self.index - 1];
+                if (previous.kind == .identifier and std.mem.eql(u8, self.text(previous), "lambda")) return self.reportPythonLambda(previous);
+                if (previous.kind == .identifier and std.mem.eql(u8, self.text(previous), "new")) return self.report(
+                    previous.span,
+                    "Emerald has no `new`",
+                    try std.fmt.allocPrint(self.arena, "Write `{s}`: call the type directly, with no `new` in front.", .{self.restOfLine(self.index) orelse "Point(1, 2)"}),
+                );
+            }
+            return self.reportFmt(
+                terminator.span,
+                "expected the end of the line, found {s}",
+                .{terminator.kind.describe()},
+                "Statements end at a new line. Check for a missing operator or closing bracket.",
+            );
+        },
     }
 }
 
@@ -3423,6 +3734,16 @@ fn parseExpression(self: *Parser) Error!*const Ast.Expression {
             written.span,
             "a condition compares values with `==`, not `=`",
             "Write `==` to compare values. Put an assignment on its own line.",
+        );
+        _ = try self.parseDisjunction();
+    }
+    // The same for `=>`, which a condition cannot use: `if score => 50`.
+    while (self.in_condition and self.check(.fat_arrow)) {
+        const written = self.advance();
+        try self.note(
+            written.span,
+            "`=>` is not a comparison",
+            "Write `>=` for greater than or equal. `=>` belongs to a block, as in `{ n => n * 2 }`.",
         );
         _ = try self.parseDisjunction();
     }
@@ -3527,10 +3848,408 @@ fn parseDisjunction(self: *Parser) Error!*const Ast.Expression {
     return left;
 }
 
+// Names (F12, F21).
+
+fn isKeywordToken(token: Token) bool {
+    return std.mem.startsWith(u8, @tagName(token.kind), "keyword_");
+}
+
+/// A reserved word where a name was expected: `var class = "7B"`.
+fn reportReservedName(self: *Parser, token: Token) Error {
+    const word = self.text(token);
+    const suggestion = if (wordIn(word, &.{ "class", "struct", "enum", "trait", "func" }))
+        try std.fmt.allocPrint(self.arena, "{s}_name", .{word})
+    else
+        try std.fmt.allocPrint(self.arena, "my_{s}", .{word});
+    return self.report(
+        token.span,
+        try std.fmt.allocPrint(self.arena, "`{s}` is one of Emerald's reserved words, so it cannot be a name", .{word}),
+        try std.fmt.allocPrint(self.arena, "Try `{s}`, or another word that is not reserved.", .{suggestion}),
+    );
+}
+
+/// A declaration's name followed by something that shows the name was written
+/// in two pieces: `first-name`, or `high score`. Returns normally when it is
+/// neither; the caller then reports the missing `=`.
+fn checkNameShape(self: *Parser, name: Token, next: Token) Error!void {
+    const tail = self.peekAfterNext();
+    if (next.kind == .minus and name.span.end == next.span.start and tail.kind == .identifier and next.span.end == tail.span.start) {
+        return self.report(
+            spanning(name.span, tail.span),
+            "a name cannot contain `-`",
+            try std.fmt.allocPrint(self.arena, "Use `_` between the words: write `{s}_{s}`.", .{ self.text(name), self.text(tail) }),
+        );
+    }
+    if (next.kind == .identifier) {
+        const ends = switch (tail.kind) {
+            .equal, .newline, .eof, .colon => true,
+            else => false,
+        };
+        if (!ends) return;
+        const second = self.text(next);
+        if (std.ascii.isUpper(second[0])) {
+            return self.report(
+                spanning(name.span, next.span),
+                "a type follows a colon",
+                try std.fmt.allocPrint(self.arena, "Write `var {s}: {s}`.", .{ self.text(name), second }),
+            );
+        }
+        return self.report(
+            spanning(name.span, next.span),
+            "a name cannot contain spaces",
+            try std.fmt.allocPrint(self.arena, "Use `_` between the words: write `{s}_{s}`.", .{ self.text(name), second }),
+        );
+    }
+}
+
+/// A `)` forgotten at the end of a line is noticed where the next line begins,
+/// which points at correct code. When the `(` and the last token before the
+/// surprise are on one line and the surprise is on a later one, the `(` is what
+/// to fix, as with a block's `{`. Returns normally for any other shape.
+fn checkUnclosedParen(self: *Parser, opening: Token, closing: Token) Error!void {
+    if (self.index == 0) return;
+    const previous = self.tokens[self.index - 1];
+    if (previous.span.end < opening.span.end or closing.span.start < previous.span.end) return;
+    const source_text = self.source.text;
+    if (std.mem.indexOfScalar(u8, source_text[opening.span.start..previous.span.end], '\n') != null) return;
+    if (std.mem.indexOfScalar(u8, source_text[previous.span.end..closing.span.start], '\n') == null) return;
+    return self.report(
+        opening.span,
+        "this `(` is never closed",
+        "Add the closing `)` where the call or group ends, usually at the end of this line.",
+    );
+}
+
+// Shapes from other languages (F8, F10, rules 15).
+
+/// `//` and `/* */`, where an expression was expected. `//` is also floor
+/// division, but only between two operands, never at the start of one.
+fn reportSlashComment(self: *Parser, first: Token, last: Token) Error {
+    const block = first.kind == .slash;
+    if (block) {
+        // Step over the comment's snippet, so a long one is one diagnostic.
+        var at = self.index;
+        while (at + 1 < self.tokens.len and self.tokens[at].kind != .eof) : (at += 1) {
+            const closes = self.tokens[at].kind == .star or self.tokens[at].kind == .star_star;
+            if (closes and self.tokens[at + 1].kind == .slash and self.tokens[at].span.end == self.tokens[at + 1].span.start and at > self.index + 1) {
+                self.index = at + 2;
+                break;
+            }
+        }
+    }
+    return self.report(
+        spanning(first.span, last.span),
+        "Emerald comments start with `#`",
+        if (block)
+            "Write `# a note` on each line, or put a longer note between `#[` and `]#`."
+        else
+            "Write `# a note` instead of `// a note`. A comment runs to the end of the line.",
+    );
+}
+
+/// `lambda x: x * 2`, with the lambda word consumed and the first name next.
+fn reportPythonLambda(self: *Parser, keyword: Token) Error {
+    const rest = self.restOfLine(self.index);
+    if (rest) |snippet| {
+        if (std.mem.indexOfScalar(u8, snippet, ':')) |colon| {
+            const names = std.mem.trim(u8, snippet[0..colon], " \t");
+            const body = std.mem.trim(u8, snippet[colon + 1 ..], " \t");
+            if (names.len > 0 and body.len > 0) {
+                return self.report(
+                    keyword.span,
+                    "a lambda is written in braces in Emerald",
+                    try std.fmt.allocPrint(self.arena, "Write `{{ {s} => {s} }}`: the names it receives, then `=>`, then its result.", .{ names, body }),
+                );
+            }
+        }
+    }
+    return self.report(
+        keyword.span,
+        "a lambda is written in braces in Emerald",
+        "Write `{ x => x * 2 }`: the names it receives, then `=>`, then its result.",
+    );
+}
+
+/// `(x) => x * 2` or `x => x * 2`: the arrow is next, after the names.
+fn reportForeignArrow(self: *Parser, arrow: Token) Error {
+    const arrow_index = self.skipDocCommentsFrom(self.index);
+    var names: ?[]const u8 = null;
+    var start = arrow.span.start;
+    if (arrow_index > 0) {
+        const previous = self.tokens[arrow_index - 1];
+        if (previous.kind == .identifier) {
+            names = self.text(previous);
+            start = previous.span.start;
+        } else if (previous.kind == .right_paren) {
+            var depth: usize = 0;
+            var at = arrow_index - 1;
+            while (true) : (at -= 1) {
+                switch (self.tokens[at].kind) {
+                    .right_paren => depth += 1,
+                    .left_paren => {
+                        depth -= 1;
+                        if (depth == 0) break;
+                    },
+                    else => {},
+                }
+                if (at == 0) break;
+            }
+            if (depth == 0) {
+                const inner = std.mem.trim(u8, self.source.text[self.tokens[at].span.end..previous.span.start], " \t");
+                if (inner.len > 0) names = inner;
+                start = self.tokens[at].span.start;
+            }
+        }
+    }
+    var body: ?[]const u8 = self.restOfLine(arrow_index + 1);
+    if (body) |snippet| {
+        // The call's own closing parentheses are not part of the lambda's body.
+        var end = snippet.len;
+        var depth: isize = 0;
+        for (snippet) |byte| {
+            if (byte == '(') depth += 1;
+            if (byte == ')') depth -= 1;
+        }
+        while (depth < 0 and end > 0 and (snippet[end - 1] == ')' or snippet[end - 1] == ' ')) : (end -= 1) {
+            if (snippet[end - 1] == ')') depth += 1;
+        }
+        const trimmed = std.mem.trimEnd(u8, snippet[0..end], " ,");
+        body = if (trimmed.len == 0) null else trimmed;
+    }
+    return self.report(
+        .{ .start = start, .end = arrow.span.end },
+        "a lambda is written in braces in Emerald",
+        if (names != null and body != null)
+            try std.fmt.allocPrint(self.arena, "Write `{{ {s} => {s} }}`: the names it receives, then `=>`, then its result.", .{ names.?, body.? })
+        else
+            "Write `{ x => x * 2 }`: the names it receives, then `=>`, then its result.",
+    );
+}
+
+/// Whether an `=>` follows before the line ends, which is what makes a `{` a
+/// block with parameters. The scan has no length limit, because a header with
+/// several typed parameters is long.
+fn blockHasArrow(self: *const Parser) bool {
+    var at = self.index;
+    while (at < self.tokens.len) : (at += 1) {
+        switch (self.tokens[at].kind) {
+            .fat_arrow => return true,
+            .newline, .eof => return false,
+            else => {},
+        }
+    }
+    return false;
+}
+
+/// The snippet between the `{` just consumed and its matching `}`, when it is
+/// short and on one line.
+fn innerBlockText(self: *const Parser, opening: Token) ?[]const u8 {
+    var depth: usize = 1;
+    var at = self.index;
+    while (at < self.tokens.len) : (at += 1) {
+        switch (self.tokens[at].kind) {
+            .left_brace => depth += 1,
+            .right_brace => {
+                depth -= 1;
+                if (depth == 0) {
+                    return shortText(std.mem.trim(u8, self.source.text[opening.span.end..self.tokens[at].span.start], " \t\r"));
+                }
+            },
+            .eof => return null,
+            else => {},
+        }
+    }
+    return null;
+}
+
+/// Braces in expression position hold a block with parameters and nothing
+/// else, so any other shape is a habit from another language: a dictionary in
+/// braces, Kotlin's implicit `it`, or a bare block. Reports that shape, and
+/// returns normally for a real block.
+fn checkBlockShape(self: *Parser, opening: Token) Error!void {
+    if (self.blockHasArrow()) return;
+    const bare = self.index >= 1 and self.index - 1 == self.statement_start;
+    const first = self.peek();
+    const inner = self.innerBlockText(opening);
+
+    if (bare) {
+        self.skipPastBraces();
+        return self.report(
+            opening.span,
+            "a block is not a statement on its own",
+            "Braces open a block only after a declaration or control flow such as `if`, `while`, or `for`. For a separate scope, move the statements into a named function.",
+        );
+    }
+    if (first.kind == .right_brace) {
+        self.skipPastBraces();
+        return self.report(
+            opening.span,
+            "an empty dictionary needs a type",
+            "Name what it holds, as in `var counts: Dict[String, Int] = []`. An empty dictionary is written `[]`, like an empty list.",
+        );
+    }
+    const keyed = switch (first.kind) {
+        .string_literal, .raw_string_literal, .int_literal, .float_literal => self.peekAfterNext().kind == .colon,
+        else => false,
+    };
+    if (keyed) {
+        self.skipPastBraces();
+        return self.report(
+            opening.span,
+            "a dictionary is written with square brackets",
+            if (inner) |snippet|
+                try std.fmt.allocPrint(self.arena, "Write `[{s}]`: Emerald keeps braces for blocks.", .{snippet})
+            else
+                "Write `[\"Ava\": 12, \"Bo\": 13]`: Emerald keeps braces for blocks.",
+        );
+    }
+    // Other shapes keep the lambda parser's own message, which names the exact
+    // token that is wrong.
+    const after = self.peekAfterNext();
+    const call_like = first.kind == .identifier and (after.kind == .left_paren or after.kind == .dot);
+    const mentions_it = if (inner) |snippet| (replaceWord(self.arena, snippet, "it", "n") catch null) != null else false;
+    if (!call_like and !mentions_it) return;
+    self.skipPastBraces();
+    var help: []const u8 = "Write `{ n => print(n) }`: a name for what the block receives, then `=>`, then what to do with it.";
+    if (inner) |snippet| {
+        if (replaceWord(self.arena, snippet, "it", "n") catch null) |replaced| {
+            help = try std.fmt.allocPrint(self.arena, "Write `{{ n => {s} }}`: a name for what the block receives, then `=>`, then what to do with it.", .{replaced});
+        } else {
+            help = try std.fmt.allocPrint(self.arena, "Write `{{ => {s} }}`: a block that receives nothing still starts with `=>`.", .{snippet});
+        }
+    }
+    return self.report(opening.span, "a block names what it receives, then `=>`", help);
+}
+
+/// `snippet` with whole-word `word` replaced, or null when it does not occur.
+fn replaceWord(arena: std.mem.Allocator, snippet: []const u8, word: []const u8, replacement: []const u8) !?[]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var found = false;
+    var at: usize = 0;
+    while (at < snippet.len) {
+        const whole = std.mem.startsWith(u8, snippet[at..], word) and
+            (at == 0 or !isNameByte(snippet[at - 1])) and
+            (at + word.len >= snippet.len or !isNameByte(snippet[at + word.len]));
+        if (whole) {
+            try out.appendSlice(arena, replacement);
+            at += word.len;
+            found = true;
+        } else {
+            try out.append(arena, snippet[at]);
+            at += 1;
+        }
+    }
+    return if (found) try out.toOwnedSlice(arena) else null;
+}
+
+fn isNameByte(byte: u8) bool {
+    return std.ascii.isAlphanumeric(byte) or byte == '_';
+}
+
+/// Whether the `do {` here closes with `} while`: only then is it the loop from
+/// another language, rather than a call of a function named `do` with a block.
+fn doWhileAhead(self: *const Parser) bool {
+    var depth: usize = 0;
+    var at = self.index + 1;
+    while (at < self.tokens.len) : (at += 1) {
+        switch (self.tokens[at].kind) {
+            .left_brace => depth += 1,
+            .right_brace => {
+                depth -= 1;
+                if (depth == 0) {
+                    var next = at + 1;
+                    while (next < self.tokens.len and self.tokens[next].kind == .newline) next += 1;
+                    return next < self.tokens.len and self.tokens[next].kind == .keyword_while;
+                }
+            },
+            .eof => return false,
+            else => {},
+        }
+    }
+    return false;
+}
+
+/// Java and C's `do { ... } while (condition)`, read in full so its body and
+/// condition are not reported again.
+fn reportDoWhile(self: *Parser) Error {
+    const keyword = self.advance();
+    _ = self.advance(); // the `{`
+    self.skipPastBraces();
+    var condition: ?[]const u8 = null;
+    if (self.check(.keyword_while)) {
+        _ = self.advance();
+        condition = self.restOfLine(self.index);
+        while (switch (self.peek().kind) {
+            .newline, .eof, .right_brace => false,
+            else => true,
+        }) _ = self.advance();
+    }
+    return self.report(
+        keyword.span,
+        "Emerald has no `do ... while` loop",
+        if (condition) |snippet|
+            try std.fmt.allocPrint(self.arena, "Write `while` with the condition first, as in `while {s} {{ ... }}`. To run the body once before the first test, use `while true {{ ... }}` and `break` out of it.", .{snippet})
+        else
+            "Write `while` with the condition first. To run the body once before the first test, use `while true { ... }` and `break` out of it.",
+    );
+}
+
+/// `x > 0 and < 10`: the second comparison has no left side. Parsed in full, so
+/// the correction can repeat what it compares.
+fn reportCutComparison(self: *Parser, left: *const Ast.Expression) Error {
+    const operator = self.advance();
+    const right = try self.parseRange();
+    const subject = if (left.data == .comparison) left.data.comparison.operands[0] else left;
+    const subject_text = self.source.text[subject.span.start..subject.span.end];
+    const left_text = self.source.text[left.span.start..left.span.end];
+    const right_text = self.source.text[right.span.start..right.span.end];
+    return self.report(
+        spanning(operator.span, right.span),
+        "a comparison needs a value on its left",
+        if (shortText(subject_text) != null and shortText(left_text) != null and shortText(right_text) != null)
+            try std.fmt.allocPrint(self.arena, "Repeat the value: write `{s} and {s} {s} {s}`.", .{ left_text, subject_text, self.text(operator), right_text })
+        else
+            "Repeat the value in each comparison, as in `x > 0 and x < 10`.",
+    );
+}
+
+/// Python's `"Bo" in names`.
+fn reportMembershipTest(self: *Parser, item: *const Ast.Expression) Error {
+    const keyword = self.advance();
+    const collection = try self.parseRange();
+    const item_text = self.source.text[item.span.start..item.span.end];
+    const collection_text = self.source.text[collection.span.start..collection.span.end];
+    return self.report(
+        spanning(item.span, collection.span),
+        try std.fmt.allocPrint(self.arena, "`{s}` does not test membership in Emerald", .{self.text(keyword)}),
+        if (shortText(item_text) != null and shortText(collection_text) != null and collection.data == .name)
+            try std.fmt.allocPrint(self.arena, "Ask the collection instead: write `{s}.contains?({s})`.", .{ collection_text, item_text })
+        else
+            "Ask the collection instead, as in `names.contains?(\"Bo\")`.",
+    );
+}
+
+/// Pascal's `n mod 2`.
+fn reportModWord(self: *Parser, left: *const Ast.Expression) Error {
+    const word = self.advance();
+    const right = try self.parseUnary();
+    const left_text = self.source.text[left.span.start..left.span.end];
+    const right_text = self.source.text[right.span.start..right.span.end];
+    return self.report(
+        word.span,
+        "`mod` is not an operator in Emerald",
+        if (shortText(left_text) != null and shortText(right_text) != null)
+            try std.fmt.allocPrint(self.arena, "Write `%` for the remainder: `{s} % {s}`.", .{ left_text, right_text })
+        else
+            "Write `%` for the remainder, as in `n % 2`.",
+    );
+}
+
 fn parseConjunction(self: *Parser) Error!*const Ast.Expression {
     var left = try self.parseNegation();
     while (self.check(.keyword_and)) {
         _ = self.advance();
+        if (comparisonOperator(self.peek().kind) != null) return self.reportCutComparison(left);
         const right = try self.parseNegation();
         left = try self.node(spanning(left.span, right.span), .{ .logical = .{
             .operator = .conjunction,
@@ -3559,6 +4278,7 @@ fn parseNegation(self: *Parser) Error!*const Ast.Expression {
 fn parseComparison(self: *Parser) Error!*const Ast.Expression {
     const first = try self.parseRange();
     if (self.check(.keyword_is)) return self.finishTypeTest(first);
+    if (self.check(.keyword_in)) return self.reportMembershipTest(first);
     if (comparisonOperator(self.peek().kind) == null) return first;
 
     var operands: std.ArrayList(*const Ast.Expression) = .empty;
@@ -3689,6 +4409,7 @@ fn parseAdditive(self: *Parser) Error!*const Ast.Expression {
 fn parseMultiplicative(self: *Parser) Error!*const Ast.Expression {
     var left = try self.parseUnary();
     while (true) {
+        if (self.check(.identifier) and std.mem.eql(u8, self.text(self.peek()), "mod")) return self.reportModWord(left);
         const operator: Ast.BinaryOperator = switch (self.peek().kind) {
             .star => .multiply,
             .slash => .divide,
@@ -3822,7 +4543,8 @@ fn isDecodeCallee(callee: *const Ast.Expression) bool {
 }
 
 fn finishCall(self: *Parser, callee: *const Ast.Expression) Error!*const Ast.Expression {
-    try self.nest(self.peek().span);
+    const opening = self.peek();
+    try self.nest(opening.span);
     defer self.unnest();
     const saved_header = self.in_control_header;
     self.in_control_header = false;
@@ -3873,6 +4595,8 @@ fn finishCall(self: *Parser, callee: *const Ast.Expression) Error!*const Ast.Exp
     }
 
     const closing = self.peek();
+    if (closing.kind == .fat_arrow) return self.reportForeignArrow(closing);
+    if (closing.kind != .right_paren) try self.checkUnclosedParen(opening, closing);
     if (closing.kind != .right_paren) {
         return self.reportFmt(
             closing.span,
@@ -4284,6 +5008,11 @@ fn parseLambda(self: *Parser) Error!*const Ast.Expression {
     if (self.self_allowed == .member) self.self_allowed = .member_lambda;
     defer self.self_allowed = saved_self;
 
+    try self.checkBlockShape(opening);
+    const saved_result_body = self.in_result_body;
+    self.in_result_body = false;
+    defer self.in_result_body = saved_result_body;
+
     const header = try self.parseLambdaParameters(opening);
     const parameters = header.parameters;
 
@@ -4521,7 +5250,17 @@ fn parseListLiteral(self: *Parser) Error!*const Ast.Expression {
 
 fn parsePrimary(self: *Parser) Error!*const Ast.Expression {
     const token = self.peek();
+    if (token.kind == .slash_slash) return self.reportSlashComment(token, token);
+    if (token.kind == .slash) {
+        const after = self.peekAfterNext();
+        if ((after.kind == .star or after.kind == .star_star) and token.span.end == after.span.start) return self.reportSlashComment(token, after);
+    }
     switch (token.kind) {
+        .keyword_func => return self.report(
+            token.span,
+            "a function written as a value is a lambda in Emerald",
+            "Write a lambda in braces, as in `{ n => n * 2 }`. `func` declares a function that has a name.",
+        ),
         .keyword_if => return self.parseIfExpression(),
         .left_bracket => return self.parseListLiteral(),
         .left_brace => return self.parseLambda(),
@@ -4670,6 +5409,7 @@ fn parsePrimary(self: *Parser) Error!*const Ast.Expression {
             _ = self.match(.comma);
 
             const closing = self.peek();
+            if (closing.kind != .right_paren) try self.checkUnclosedParen(token, closing);
             if (closing.kind != .right_paren) {
                 return self.reportFmt(
                     closing.span,

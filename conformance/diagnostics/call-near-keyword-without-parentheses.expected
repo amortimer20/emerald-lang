@@ -1,0 +1,4 @@
+diagnostics/call-near-keyword-without-parentheses.em:5:1: a call needs parentheses
+  form "x"
+  ^^^^
+Write `form("x")`: put what you pass in parentheses right after the name.

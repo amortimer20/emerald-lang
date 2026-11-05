@@ -1,0 +1,8 @@
+diagnostics/random-member.em:1:14: `random` is a built-in function, so it has no `randint`
+  const roll = random.randint(1, 6)
+               ^^^^^^
+Call it with a range, as in `random(1..6)`, which gives a whole number from 1 through 6.
+diagnostics/random-member.em:3:7: `random` is a built-in function, so it has no `choice`
+  print(random.choice([1, 2]))
+        ^^^^^^
+Call it with parentheses, as in `random(...)`.

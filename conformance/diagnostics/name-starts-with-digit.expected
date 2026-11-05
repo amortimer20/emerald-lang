@@ -1,0 +1,8 @@
+diagnostics/name-starts-with-digit.em:1:7: a name cannot start with a digit
+  const 2nd_place = "Bo"
+        ^^^^^^^^^
+Start the name with a letter or an underscore, as in `place_2nd`, or put the digits last.
+diagnostics/name-starts-with-digit.em:2:7: a name cannot start with a digit
+  print(2nd_place)
+        ^^^^^^^^^
+Start the name with a letter or an underscore, as in `place_2nd`, or put the digits last.
