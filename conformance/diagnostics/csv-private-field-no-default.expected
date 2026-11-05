@@ -1,0 +1,4 @@
+diagnostics/csv-private-field-no-default.em:6:44: private field `_source` has no default, so Csv cannot build Score
+  const scores = Csv.decode("name\nAda", as: List[Score])
+                                             ^^^^^^^^^^^
+A private field is never read from Csv, so it starts from its default. Give `_source` one where it is declared, as in `const _source: String = <value>`.

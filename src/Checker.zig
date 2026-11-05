@@ -12348,6 +12348,10 @@ const JsonEncodeIssue = struct {
     field_path: []const u8 = "",
     /// Section 11.3: Csv does not take a generic struct; `type` is that struct.
     generic_struct: bool = false,
+    /// Sections 15.9 and 15.11: a private field with no default cannot be read,
+    /// so the refusal is the missing default, not the field's type. `owner` is
+    /// the struct being built and `type` the field's type.
+    missing_private_default: ?Type = null,
 };
 
 /// Section 12: a plain enum is saved as its choice's name; one whose choices
@@ -12542,6 +12546,15 @@ fn typeOfTypedDecode(self: *Checker, call: Ast.Expression.Call, name: []const u8
                     "JSON builds a struct through its generated constructor. Decode into a struct without its own constructor, then use those values to construct this one.",
                 );
             }
+        } else if (found_issue.missing_private_default) |owner| {
+            const field = found_issue.field_path[if (std.mem.lastIndexOfScalar(u8, found_issue.field_path, '.')) |dot| dot + 1 else 0..];
+            try self.reportWithHelp(
+                target_expression.span,
+                "private field `{s}` has no default, so {s} cannot build {f}",
+                .{ field, api, owner },
+                "A private field is never read from {s}, so it starts from its default. Give `{s}` one where it is declared, as in `const {s}: {f} = <value>`.",
+                .{ api, field, field, found_issue.type },
+            );
         } else if (found_issue.generic_struct) {
             try self.report(
                 target_expression.span,
@@ -12639,7 +12652,7 @@ fn jsonDecodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?J
                 // A private field is never read from JSON, so it needs a
                 // default to start from (15.9).
                 if (Resolver.isPrivate(resolved.name)) {
-                    if (field.default == null) return .{ .type = resolved.type, .field_path = next };
+                    if (field.default == null) return .{ .type = resolved.type, .field_path = next, .missing_private_default = value };
                     continue;
                 }
                 if (try self.jsonDecodeIssue(resolved.type, next)) |issue| return issue;
@@ -12762,7 +12775,7 @@ fn csvDecodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?Js
     const declaration = self.struct_declarations.get(user.name).?;
     for (declaration.fields, user.fields) |written, resolved| {
         if (Resolver.isPrivate(resolved.name)) {
-            if (written.default == null) return .{ .type = resolved.type, .field_path = resolved.name };
+            if (written.default == null) return .{ .type = resolved.type, .field_path = resolved.name, .missing_private_default = element };
             continue;
         }
         if (try self.csvCellFieldIssue(resolved.type, resolved.name)) |issue| return issue;
