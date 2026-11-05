@@ -11353,6 +11353,15 @@ fn typeOfOperatorCall(
                 "This program declares its own `{s}`, which takes the prelude's place wherever the name is written, but operators run only through the prelude's. Adopt the built-in as `with " ++ Resolver.prelude_namespace ++ ".{s}`, or rename this program's `{s}`.",
                 .{ contract.trait, contract.trait, contract.trait },
             );
+        } else if (std.mem.startsWith(u8, user.name, Resolver.prelude_namespace)) {
+            // Built-in types cannot be edited, so adopting a trait is not a fix.
+            try self.reportWithHelp(
+                span,
+                "`{s}` cannot compare {f} values, because {f} is a built-in type that has no order",
+                .{ lexeme, left, left },
+                "A built-in type cannot be changed to adopt `{s}`. Compare with `==`, or choose the values you mean with a `case`.",
+                .{contract.trait},
+            );
         } else if (!self.trait_list_errored.contains(user.name)) {
             try self.reportWithHelp(
                 span,

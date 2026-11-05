@@ -1,0 +1,4 @@
+diagnostics/weekday-has-no-order.em:2:7: `<` cannot compare Weekday values, because Weekday is a built-in type that has no order
+  print(Weekday.monday < Weekday.friday)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+A built-in type cannot be changed to adopt `Ordered`. Compare with `==`, or choose the values you mean with a `case`.
