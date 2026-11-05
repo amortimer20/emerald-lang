@@ -6242,3 +6242,28 @@ Noted, not fixed:
   sharing one console can restore it under each other; `WriteConsoleW` would avoid that.
 - B13's end-to-end path (a missing system file) cannot run on Windows, which ignores `TZ`; unit
   tests cover its parts, and Linux CI runs them.
+
+## 2026-11-05: Batch 3, the spec's corrections and contract
+
+E: 9.2 and the String page no longer call `words`, `letter?` and `digit?` deferred; 17.1 lists all
+eleven warnings with their sections (11.3 now states the unused type parameter one); the `?.`
+method help says to add parentheses instead of promising a later slice. D2: 13.1 makes the text of
+Emerald-raised error messages part of the language, specified by the `run/` and
+`runtime-errors/` cases, with a compiler sharing the interpreter's message code (section 22 row).
+D8: the portability report's S5-S17 sentences, each rerun on main and found to describe the
+interpreter, went into 5.2, 8.4, 8.6, 9.2, 13.1, 15.1, 15.2, 15.3, 15.13 and 16.3, and six new
+`run/` cases (`evaluation-order`, `print-render-timing`, `channel-buffer-handoff`,
+`string-order-nfc`, `file-writer-visibility`, `dictionary-repeated-tuple-key`) pin those that had
+none. S6 (callback counts) is stated as unspecified, so it has no case; S12 (test order) and S14
+(out of memory) are not run by the conformance runner.
+
+Two sentences differ from the report, for the user to confirm or overturn:
+
+- S17: the report proposed that tuples of literals are statically known keys too. 6.3 defines
+  known duplicates as literals and enum values, and the checker follows it, so the spec now says a
+  repeated tuple key behaves as colliding calculated keys do (the later value wins). Rejecting it
+  instead would be a small checker change in both `case` and dictionary literals.
+- S14: the report's second clause, that an operation whose result size does not fit in `Int`
+  raises an overflow `RuntimeError`, is not what `String.repeat` and `List.repeat` do: their
+  comments treat an unaddressable size as running out of memory, which ends the program. Making it
+  catchable would mean an overflow check and a message in each size computation.
