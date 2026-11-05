@@ -10,15 +10,14 @@ belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 **Where things stand (2026-11-05):** `v0.8.0-rc1` is published as a
 prerelease (tag on `73b9b19`, all three assets, install scripts checked). The codebase review
 (roadmap item 10) has reported and been triaged in [`review/triage.md`](review/triage.md), with
-every decision accepted. Fix batches 1 and 2 are merged (PRs #57–#65; the journal has each). Batch
-3, the spec's corrections and contract (E, D2, D8), is open on `claude/spec-contract`: the three
-slips fixed, runtime error message text made part of the language (13.1), and fifteen observable
-behaviors written into the spec with six new `run/` cases. Two D8 sentences differ from the
-report's wording and await the user's word (the journal, 2026-11-05): S17 keeps 6.3's definition of
-known duplicates, so a repeated tuple key is not an error, and S14 leaves out "an oversized result
-raises an Int overflow". The website needs, when 0.8.0 ships: B16's separator paragraph on the
-File page, the set-algebra order on the Set page, and the message-text and out-of-memory notes on
-the Errors page. **Next, once batch 3 is merged and the user says go:** diagnostics in two
+every decision accepted. Fix batches 1, 2 and 3 are merged (PRs #57–#66; the journal has each).
+Batch 3 (#66, `e4c51a7`, CI green on all 14 checks) fixed the spec's three slips (E), made runtime
+error message text part of the language (D2, 13.1), and wrote fifteen observable behaviors into
+the spec with six new `run/` cases (D8). The user kept both D8 sentences that differ from the
+report (2026-11-05): S17 keeps 6.3's definition of known duplicates, so a repeated tuple key is
+not an error, and S14 leaves out "an oversized result raises an Int overflow". The website needs,
+when 0.8.0 ships: B16's separator paragraph on the File page, the set-algebra order on the Set
+page, and the message-text and out-of-memory notes on the Errors page. **Next, when the user says go:** diagnostics in two
 batches (C, D4, D5, plus the `return`-in-a-block warning in the journal, 2026-10-30), then a rerun
 of the mutation sweep and allocation-failure harness. The user asked for Sonnet subagents for
 routine fixes to spare usage (Opus for subtle ones), one PR at a time. Still open: two
