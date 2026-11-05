@@ -1,0 +1,24 @@
+diagnostics/python-habits-operators.em:2:19: a condition must be a Bool, but this is Int
+  if choice == 1 or 2 {
+                    ^
+`2` is a value, not a comparison. Write the comparison again for each value: `choice == 1 or choice == 2`.
+diagnostics/python-habits-operators.em:5:7: multiplication needs numbers, but this is String and Int
+  print("-" * 20)
+        ^^^^^^^^
+To repeat text, write `"-".repeat(20)`.
+diagnostics/python-habits-operators.em:7:13: subtraction needs numbers, but this is String and String
+  var clean = word - "!"
+              ^^^^^^^^^^
+To take text off the end, write `word.remove_suffix("!")`. `remove_prefix` takes it off the start.
+diagnostics/python-habits-operators.em:9:7: remainder needs numbers, but this is String and String
+  print("Hello %s" % name)
+        ^^^^^^^^^^^^^^^^^
+Emerald has no `%` formatting. Put the value in the text with interpolation: `"Hello #{name}"`.
+diagnostics/python-habits-operators.em:13:13: addition needs numbers, but this is Nothing and Int
+  var total = add(2, 3) + 1
+              ^^^^^^^^^^^^^
+`add` gives back nothing, because it declares no result. Give it a result type and `return` the value instead of printing it.
+diagnostics/python-habits-operators.em:15:10: addition needs numbers, but this is List[Int] and Int
+  scores = scores + 3
+           ^^^^^^^^^^
+To add an item to a list, write `scores.append(3)` on its own line; it changes the list. To make a new list instead, write `scores.chain([3])`.

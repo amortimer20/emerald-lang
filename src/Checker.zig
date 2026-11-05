@@ -6354,13 +6354,45 @@ fn checkLambdaCaptures(self: *Checker, call_span: Source.Span, lambda: *const As
 // Supporting checks.
 
 fn requireCondition(self: *Checker, expression: *const Ast.Expression) Error!void {
+    return self.requireConditionBeside(expression, null);
+}
+
+/// What `and`/`or` joins a condition to, when it is one of two operands.
+const Beside = struct {
+    other: *const Ast.Expression,
+    keyword: []const u8,
+    /// The checked operand is the right one.
+    right: bool,
+};
+
+fn requireConditionBeside(self: *Checker, expression: *const Ast.Expression, beside: ?Beside) Error!void {
     const actual = try self.typeOf(expression);
     if (actual.kind == .invalid or actual.kind == .bool) return;
     try self.report(
         expression.span,
         "a condition must be a Bool, but this is {f}",
         .{actual},
-        "Compare it to something, as in `count > 0`. Emerald has no truthy or falsey values.",
+        (try self.shortcutOrHelp(expression, beside)) orelse
+            "Compare it to something, as in `count > 0`. Emerald has no truthy or falsey values.",
+    );
+}
+
+/// `choice == 1 or 2`: the second operand is a bare value, so each comparison
+/// has to be written out.
+fn shortcutOrHelp(self: *Checker, expression: *const Ast.Expression, beside: ?Beside) Error!?[]const u8 {
+    const joined = beside orelse return null;
+    if (!joined.right or joined.other.data != .comparison) return null;
+    const comparison = joined.other.data.comparison;
+    if (comparison.operators.len != 1) return null;
+    const subject = self.spanText(comparison.operands[0].span);
+    const first = self.spanText(comparison.operands[1].span);
+    const value = self.spanText(expression.span);
+    if (!quotable(subject) or !quotable(first) or !quotable(value)) return null;
+    const operator = comparison.operators[0].lexeme();
+    return try std.fmt.allocPrint(
+        self.arena,
+        "`{s}` is a value, not a comparison. Write the comparison again for each value: `{s} {s} {s} {s} {s} {s} {s}`.",
+        .{ value, subject, operator, first, joined.keyword, subject, operator, value },
     );
 }
 
@@ -11642,12 +11674,13 @@ fn equatable(left: Type, right: Type) bool {
 }
 
 fn typeOfLogical(self: *Checker, logical: Ast.Expression.Logical) Error!Type {
-    try self.requireCondition(logical.left);
+    const keyword = if (logical.operator == .conjunction) "and" else "or";
+    try self.requireConditionBeside(logical.left, .{ .other = logical.right, .keyword = keyword, .right = false });
     // Section 4.5: the right side runs only when the left one held, for
     // `and`, or failed, for `or`, so it is checked knowing which.
     const before = try self.snapshot();
     self.narrow(logical.left, logical.operator == .conjunction);
-    try self.requireCondition(logical.right);
+    try self.requireConditionBeside(logical.right, .{ .other = logical.left, .keyword = keyword, .right = true });
     self.restoreTypes(before);
     return .bool;
 }
