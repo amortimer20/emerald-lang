@@ -1026,8 +1026,11 @@ fn resolveBase(self: *Checker, key: []const u8, declaration: Ast.StructDeclarati
             written.span,
             "`{s}` is not a class",
             .{written.name},
-            "Check the spelling, or declare `class {s}` in this project.",
-            .{written.name},
+            "{s}",
+            .{if (self.closeType(written.name)) |close|
+                try std.fmt.allocPrint(self.arena, "Did you mean `{s}`?", .{close})
+            else
+                try std.fmt.allocPrint(self.arena, "Check the spelling, or declare `class {s}` in this project.", .{written.name})},
         );
         return;
     }
@@ -1077,8 +1080,11 @@ fn resolveTraits(self: *Checker, key: []const u8, declaration: Ast.StructDeclara
                 written.span,
                 "`{s}` is not a trait",
                 .{written.name},
-                "Check the spelling, or declare `trait {s}` in this project.",
-                .{written.name},
+                "{s}",
+                .{if (self.closeType(written.name)) |close|
+                    try std.fmt.allocPrint(self.arena, "Did you mean `{s}`?", .{close})
+                else
+                    try std.fmt.allocPrint(self.arena, "Check the spelling, or declare `trait {s}` in this project.", .{written.name})},
             );
             try self.trait_list_errored.put(self.arena, key, {});
             continue;
@@ -4177,7 +4183,7 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
                             field.span,
                             "{f} has no field named `{s}`",
                             .{ element, field.name },
-                            "Check the field name in the type's declaration.",
+                            try self.misspeltMemberHelp(element, field.name, "Check the field name in the type's declaration."),
                         );
                     }
                     element = .invalid;
@@ -6494,7 +6500,7 @@ fn resolveWrittenType(self: *Checker, annotation: Ast.TypeExpression) Error!Type
         annotation.span,
         "`{s}` is not a type",
         .{annotation.name},
-        "Check the spelling or declare the struct in this project.",
+        try self.misspeltTypeHelp(annotation.name, "Check the spelling or declare the struct in this project."),
     );
     return .invalid;
 }
@@ -7906,7 +7912,7 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
             member.name_span,
             "{f} has no field named `{s}`",
             .{ building, member.name },
-            "Check the field name in the type's declaration.",
+            try self.misspeltMemberHelp(building, member.name, "Check the field name in the type's declaration."),
         );
         return .invalid;
     }
@@ -10160,8 +10166,79 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
         .unknown_member,
         "{f} has no " ++ what ++ " `{s}`",
         .{ base, member.name },
-        unknownMemberHelp(base) orelse "Check the spelling, or what kind of value this is.",
+        try self.misspeltMemberHelp(base, member.name, unknownMemberHelp(base) orelse "Check the spelling, or what kind of value this is."),
     );
+}
+
+/// Section 17.2: the one member of `base` whose spelling is a small edit from
+/// `name`, if any. Built-in types search their catalog; a user type searches
+/// its fields, its methods and properties (inherited and trait ones too).
+fn closeMember(self: *Checker, base: Type, name: []const u8) Error!?[]const u8 {
+    var spelling = Resolver.Spelling.init(name);
+    if (base.kind == .struct_value) {
+        const user = base.user.?;
+        for (user.fields) |field| {
+            if (!Resolver.isPrivate(field.name)) spelling.offer(field.name);
+        }
+        var at: ?*const Type.User = user;
+        while (at) |current| : (at = current.base) self.offerMethodsOf(&spelling, current.name);
+        for (try self.traitClosure(user)) |trait| self.offerMethodsOf(&spelling, trait.name);
+        return spelling.suggestion();
+    }
+    const owner = switch (base.kind) {
+        .bytes => "Bytes",
+        .range => "Range",
+        else => instanceCatalogOwner(base) orelse return null,
+    };
+    const data = try self.catalog();
+    for (data.members) |member| {
+        if (member.kind != .method and member.kind != .property) continue;
+        if (member.owner) |member_owner| {
+            if (!std.mem.eql(u8, member_owner, owner) and !std.mem.eql(u8, member_owner, "*")) continue;
+        }
+        spelling.offer(member.name);
+    }
+    return spelling.suggestion();
+}
+
+fn offerMethodsOf(self: *Checker, spelling: *Resolver.Spelling, type_key: []const u8) void {
+    var keys = self.receivers.keyIterator();
+    while (keys.next()) |key| {
+        if (!std.mem.startsWith(u8, key.*, type_key)) continue;
+        const rest = key.*[type_key.len..];
+        if (!std.mem.startsWith(u8, rest, Resolver.method_separator)) continue;
+        const member = rest[Resolver.method_separator.len..];
+        if (member.len == 0 or Resolver.isPrivate(member) or std.mem.endsWith(u8, member, Resolver.setter_suffix)) continue;
+        spelling.offer(member);
+    }
+}
+
+/// `general`, or "Did you mean ...?" when a member of `base` is a small edit
+/// from `name`.
+fn misspeltMemberHelp(self: *Checker, base: Type, name: []const u8, general: []const u8) Error![]const u8 {
+    const close = try self.closeMember(base, name) orelse return general;
+    return std.fmt.allocPrint(self.arena, "Did you mean `{s}`?", .{close});
+}
+
+/// The one type name in view that is a small edit from `name`: built-in types,
+/// the generic collections, and the types this file can write bare.
+fn closeType(self: *Checker, name: []const u8) ?[]const u8 {
+    var spelling = Resolver.Spelling.init(name);
+    for (Type.builtin_types.keys()) |key| spelling.offer(key);
+    for ([_][]const u8{ "List", "Dict", "Set", "Task", "Channel" }) |key| spelling.offer(key);
+    if (self.facts.module_keys.len != 0) {
+        var keys = self.facts.module_keys[self.file].iterator();
+        while (keys.next()) |entry| {
+            if (self.structs.contains(entry.value_ptr.*)) spelling.offer(entry.key_ptr.*);
+        }
+    }
+    return spelling.suggestion();
+}
+
+/// `general`, or "Did you mean ...?" when a type name is a small edit away.
+fn misspeltTypeHelp(self: *Checker, name: []const u8, general: []const u8) Error![]const u8 {
+    const close = self.closeType(name) orelse return general;
+    return std.fmt.allocPrint(self.arena, "Did you mean `{s}`?", .{close});
 }
 
 /// Spellings from other languages whose Emerald equivalent is not a renamed
@@ -12487,8 +12564,9 @@ fn libraryMemberHelp(self: *Checker, base: Type, name: []const u8) Error!?[]cons
 /// The correction for a member a class does not have: when a class extending
 /// it does, how `is` reaches it (4.4), and for a name that cannot be narrowed,
 /// why not.
-fn subclassMemberHelp(self: *Checker, base: Type, member: Ast.Expression.Member, general: []const u8) Error![]const u8 {
+fn subclassMemberHelp(self: *Checker, base: Type, member: Ast.Expression.Member, general_help: []const u8) Error![]const u8 {
     if (try self.libraryMemberHelp(base, member.name)) |help| return help;
+    const general = try self.misspeltMemberHelp(base, member.name, general_help);
     if (!isClass(base)) return general;
     // The first declared, so the correction does not depend on hash order.
     var found: ?*const Type.User = null;

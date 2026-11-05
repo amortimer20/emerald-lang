@@ -1,0 +1,12 @@
+diagnostics/close-spelling-types.em:1:12: `int` is not a type
+  var count: int = 5
+             ^^^
+Did you mean `Int`?
+diagnostics/close-spelling-types.em:2:18: `string` is not a type
+  func greet(name: string) {
+                   ^^^^^^
+Did you mean `String`?
+diagnostics/close-spelling-types.em:5:12: `boolean` is not a type
+  var ready: boolean = true
+             ^^^^^^^
+Check the spelling or declare the struct in this project.

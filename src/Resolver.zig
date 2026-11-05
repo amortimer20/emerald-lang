@@ -1471,6 +1471,151 @@ fn reportCoded(
 /// when it can say something more specific.
 const read_help = "Check the spelling, or declare it before this line.";
 
+/// The help of an unknown name being assigned.
+const assign_help = "Declare it first with `var`, or check the spelling.";
+
+/// Section 17.2's close spellings: collects candidates and answers with the one
+/// name a writer most likely meant, or null when none is close or several are.
+/// A candidate qualifies when it differs only in case, or, for a name of three
+/// letters or more, is one edit away (two for a name of ten letters or more).
+/// Among those, only the closest counts, and it must be alone at that distance.
+/// Only the error paths build one.
+pub const Spelling = struct {
+    name: []const u8,
+    case_match: ?[]const u8 = null,
+    case_count: usize = 0,
+    near: ?[]const u8 = null,
+    near_distance: usize = std.math.maxInt(usize),
+    near_count: usize = 0,
+
+    pub fn init(name: []const u8) Spelling {
+        return .{ .name = name };
+    }
+
+    pub fn offer(self: *Spelling, candidate: []const u8) void {
+        if (candidate.len == 0 or std.mem.eql(u8, candidate, self.name)) return;
+        if (std.mem.indexOf(u8, candidate, method_separator) != null) return;
+        if (std.ascii.eqlIgnoreCase(candidate, self.name)) {
+            if (self.case_match) |earlier| if (std.mem.eql(u8, earlier, candidate)) return;
+            self.case_match = candidate;
+            self.case_count += 1;
+            return;
+        }
+        if (self.name.len < 3) return;
+        // Two edits are tolerated only in long names: between short ones they
+        // are usually different words (`shout` and `sort`, `decrement` and
+        // `increment`), and a wrong suggestion is worse than none.
+        const limit: usize = if (self.name.len < 10) 1 else 2;
+        const distance = editDistance(self.name, candidate, limit);
+        if (distance > limit or distance > self.near_distance) return;
+        if (distance < self.near_distance) {
+            self.near = candidate;
+            self.near_distance = distance;
+            self.near_count = 1;
+            return;
+        }
+        if (self.near) |earlier| if (std.mem.eql(u8, earlier, candidate)) return;
+        self.near_count += 1;
+    }
+
+    pub fn suggestion(self: Spelling) ?[]const u8 {
+        if (self.case_count == 1) return self.case_match;
+        if (self.case_count == 0 and self.near_count == 1) return self.near;
+        return null;
+    }
+};
+
+/// The optimal-string-alignment distance between two names: insertions,
+/// deletions, substitutions, and a swap of neighbours each cost one. Anything
+/// beyond `limit` may be reported as `limit + 1`, so a long or far-off name is
+/// rejected without the full table.
+pub fn editDistance(a: []const u8, b: []const u8, limit: usize) usize {
+    const max_len = 64;
+    if (a.len > max_len or b.len > max_len) return limit + 1;
+    const gap = if (a.len > b.len) a.len - b.len else b.len - a.len;
+    if (gap > limit) return limit + 1;
+
+    var before: [max_len + 1]usize = undefined;
+    var previous: [max_len + 1]usize = undefined;
+    var current: [max_len + 1]usize = undefined;
+    for (0..b.len + 1) |j| previous[j] = j;
+    for (a, 0..) |left, i| {
+        current[0] = i + 1;
+        for (b, 0..) |right, j| {
+            const cost: usize = if (left == right) 0 else 1;
+            var best = @min(@min(previous[j + 1] + 1, current[j] + 1), previous[j] + cost);
+            if (i > 0 and j > 0 and left == b[j - 1] and a[i - 1] == right) {
+                best = @min(best, before[j - 1] + 1);
+            }
+            current[j + 1] = best;
+        }
+        before = previous;
+        previous = current;
+    }
+    return previous[b.len];
+}
+
+test "close spellings need one clear candidate" {
+    var typo = Spelling.init("totl");
+    typo.offer("total");
+    typo.offer("count");
+    try std.testing.expectEqualStrings("total", typo.suggestion().?);
+
+    var swapped = Spelling.init("pritn");
+    swapped.offer("print");
+    swapped.offer("print");
+    try std.testing.expectEqualStrings("print", swapped.suggestion().?);
+
+    var cased = Spelling.init("username");
+    cased.offer("userName");
+    try std.testing.expectEqualStrings("userName", cased.suggestion().?);
+
+    // The closer of two candidates wins; two equally close ones do not.
+    var closer = Spelling.init("pritn");
+    closer.offer("write");
+    closer.offer("print");
+    try std.testing.expectEqualStrings("print", closer.suggestion().?);
+
+    var ambiguous = Spelling.init("tota");
+    ambiguous.offer("toty");
+    ambiguous.offer("totb");
+    try std.testing.expect(ambiguous.suggestion() == null);
+
+    // A short name tolerates one edit only, and a name under three letters none.
+    var short = Spelling.init("nme");
+    short.offer("name");
+    try std.testing.expectEqualStrings("name", short.suggestion().?);
+    var two = Spelling.init("ab");
+    two.offer("ac");
+    try std.testing.expect(two.suggestion() == null);
+    var far = Spelling.init("tot");
+    far.offer("title");
+    try std.testing.expect(far.suggestion() == null);
+    var longer = Spelling.init("calculte_totl");
+    longer.offer("calculate_total");
+    try std.testing.expectEqualStrings("calculate_total", longer.suggestion().?);
+}
+
+/// The one name in scope a writer most likely meant by `name`, if any.
+fn closeName(self: *Resolver, name: []const u8) ?[]const u8 {
+    var spelling = Spelling.init(name);
+    var index: usize = module_scope + 1;
+    while (index < self.scopes.items.len) : (index += 1) {
+        var keys = self.scopes.items[index].keyIterator();
+        while (keys.next()) |key| spelling.offer(key.*);
+    }
+    if (self.facts.module_keys.len != 0) {
+        var keys = self.facts.module_keys[self.file].keyIterator();
+        while (keys.next()) |key| spelling.offer(key.*);
+    }
+    var prelude_names = self.scopes.items[prelude_scope].keyIterator();
+    while (prelude_names.next()) |key| spelling.offer(key.*);
+    for (Type.builtin_types.keys()) |key| spelling.offer(key);
+    spelling.offer("Math");
+    spelling.offer("Program");
+    return spelling.suggestion();
+}
+
 /// The source of a call's arguments, trimmed, when the name at `after` is
 /// called on the same line: `len(names)` gives `names`, and the dotted
 /// `console.log("hi")` gives `"hi"`. Null for anything else.
@@ -1905,8 +2050,22 @@ fn reportUndefined(self: *Resolver, span: Source.Span, name: []const u8, help: [
 
     // What Emerald writes where another language has a built-in, when the
     // name is read as a value.
-    const better = if (std.mem.eql(u8, help, read_help)) try self.foreignHelp(span, name) else null;
-    try self.reportCoded(span, .unknown_name, "`{s}` is not defined", .{name}, better orelse help);
+    const reading = std.mem.eql(u8, help, read_help);
+    const better = if (reading) try self.foreignHelp(span, name) else null;
+    // Section 17.2: a name one edit away from one in scope. A specific help
+    // above takes precedence.
+    const close: ?[]const u8 = if (better == null and (reading or std.mem.eql(u8, help, assign_help)))
+        self.closeName(name)
+    else
+        null;
+    const chosen = better orelse if (close) |suggested|
+        (if (reading)
+            try std.fmt.allocPrint(self.arena, "Did you mean `{s}`?", .{suggested})
+        else
+            try std.fmt.allocPrint(self.arena, "Did you mean `{s}`? To make a new variable, declare it first with `var`.", .{suggested}))
+    else
+        help;
+    try self.reportCoded(span, .unknown_name, "`{s}` is not defined", .{name}, chosen);
 }
 
 /// The one file declaring a private module-level spelling, if it is
@@ -2425,7 +2584,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
                 return self.reportUndefined(
                     assignment.name_span,
                     assignment.name,
-                    "Declare it first with `var`, or check the spelling.",
+                    assign_help,
                 );
             };
             try self.noteModuleUse(found);
@@ -2527,7 +2686,7 @@ fn walkStatement(self: *Resolver, statement: Ast.Statement) Error!void {
                     try self.reportUndefined(
                         name.span,
                         name.text,
-                        "Declare it first with `var`, or check the spelling.",
+                        assign_help,
                     );
                     continue;
                 };
