@@ -636,6 +636,12 @@ print("There are #{count} gems.\n")
 print("\#{count}") # literal #{count}
 ```
 
+Interpolation written as other languages write it, `"${count}"` or `"{count}"`, stays in
+the string as written, so a double-quoted string holding either around exactly a variable,
+constant, or parameter in scope (or a dotted path starting with one) is a warning (17.1)
+that offers `#{count}`. Braces around anything else (`"{}"`, JSON text, a name not in
+scope) and raw strings are never reported.
+
 Single-quoted strings are raw: they do not interpolate and do not process backslash
 escapes.
 
@@ -3828,6 +3834,7 @@ never silently missed, but the checked program still runs. Warnings currently re
   (6.5), or, at the loop itself, a `while true` with no `break` that has code after it;
 - a built-in method that does not change its receiver, called as a whole statement so its
   result is discarded (5.2);
+- `${name}` or `{name}` in a double-quoted string, where `name` is in scope (5.1);
 - a use of a `@deprecated` declaration (16.1);
 - a `##` documentation comment that describes no declaration (3.2);
 - a program declaration whose casing breaks 3.3's conventions, with the corrected spelling;

@@ -357,6 +357,9 @@ catch_depth: usize = 0,
 /// How many `try` bodies with a `catch` enclose the statement being checked.
 /// A result discarded there may be a call made only to see whether it raises.
 try_depth: usize = 0,
+/// String literals already warned about for `${name}` or `{name}`, so a
+/// literal checked twice warns once.
+interpolation_warned: std.AutoHashMapUnmanaged(*const Ast.Expression, void) = .empty,
 /// The loop depth on entry to an active `finally`, for exits that would leave it.
 finally_loop_depth: ?usize = null,
 /// How many scopes enclose the innermost block being checked, so a name found
@@ -7022,10 +7025,14 @@ fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression, expected:
             return .invalid;
         },
         .list_literal => self.typeOfList(expression, null),
-        .string_literal => .string,
+        .string_literal => blk: {
+            try self.warnForeignInterpolation(expression);
+            break :blk .string;
+        },
         // Section 5.1: any value can be interpolated, displayed as `print`
         // would display it.
         .interpolation => |parts| blk: {
+            try self.warnForeignInterpolation(expression);
             for (parts) |part| switch (part) {
                 .text => {},
                 .expression => |part_expression| _ = try self.typeOf(part_expression),
@@ -14127,6 +14134,59 @@ fn bindingInScope(self: *Checker, name: []const u8) ?*Binding {
         if (key) |qualified| if (self.scopes.items[index].getPtr(qualified)) |binding| return binding;
     }
     return null;
+}
+
+/// D5: `"Hello ${name}"` or `"Hello {name}"`, interpolation as other
+/// languages write it, which Emerald keeps as written. Only braces around
+/// exactly a name in scope (or a dotted path starting with one) count, so JSON
+/// text and format examples are left alone; a raw string is never checked.
+fn warnForeignInterpolation(self: *Checker, expression: *const Ast.Expression) Error!void {
+    if (!self.checkingProgramFile()) return;
+    if (self.file >= self.files.len) return;
+    const text = self.files[self.file].source.text[expression.span.start..expression.span.end];
+    if (text.len == 0 or text[0] != '"') return;
+    if ((try self.interpolation_warned.getOrPut(self.arena, expression)).found_existing) return;
+    var index: usize = 0;
+    while (index < text.len) : (index += 1) {
+        const c = text[index];
+        if (c == '\\') {
+            index += 1;
+            continue;
+        }
+        if (c == '#' and index + 1 < text.len and text[index + 1] == '{') {
+            // Real interpolation: skip its expression.
+            var depth: usize = 0;
+            index += 1;
+            while (index < text.len) : (index += 1) {
+                if (text[index] == '{') depth += 1;
+                if (text[index] == '}') {
+                    depth -= 1;
+                    if (depth == 0) break;
+                }
+            }
+            continue;
+        }
+        // `\#{name}` is the escape for writing `#{name}` itself.
+        if (c != '{' or (index > 0 and text[index - 1] == '#')) continue;
+        const dollar = index > 0 and text[index - 1] == '$';
+        var end = index + 1;
+        while (end < text.len and (std.ascii.isAlphanumeric(text[end]) or text[end] == '_' or text[end] == '.')) end += 1;
+        if (end >= text.len or text[end] != '}' or end == index + 1) continue;
+        const path = text[index + 1 .. end];
+        const first = path[0 .. std.mem.indexOfScalar(u8, path, '.') orelse path.len];
+        if (first.len == 0 or !(std.ascii.isAlphabetic(first[0]) or first[0] == '_')) continue;
+        if (path[path.len - 1] == '.') continue;
+        const binding = self.bindingInScope(first) orelse continue;
+        if (binding.is_function or binding.is_type) continue;
+        const start: u32 = @intCast(expression.span.start + index - @intFromBool(dollar));
+        const written = text[index - @intFromBool(dollar) .. end + 1];
+        return self.reportWarning(
+            .{ .start = start, .end = @intCast(expression.span.start + end + 1) },
+            "`{s}` stays in the String as written",
+            .{written},
+            try std.fmt.allocPrint(self.arena, "Emerald interpolates with `#{{...}}`: write `#{{{s}}}`.", .{path}),
+        );
+    }
 }
 
 /// A List method with a `!` form that changes the list in place (8.5).
