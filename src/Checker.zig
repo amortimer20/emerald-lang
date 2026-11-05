@@ -3229,17 +3229,7 @@ fn checkStatements(self: *Checker, statements: []const Ast.Statement) Error!void
         try self.checkStatement(statement);
         if (unreachable_from == null and !self.stmtCompletes(statement)) unreachable_from = index + 1;
     }
-    if (unreachable_from) |from| {
-        const first = for (statements[from..]) |statement| {
-            if (statement.data != .function_declaration) break statement;
-        } else null;
-        if (first) |statement| try self.reportWarning(
-            statement.span,
-            "this code can never run",
-            .{},
-            "Every path above it already returns, raises, breaks, or continues. Remove it, or move it earlier.",
-        );
-    }
+    if (unreachable_from) |from| try self.reportUnreachable(statements, from);
 }
 
 /// Section 7.1's nested functions, callable anywhere in the block that
@@ -13952,6 +13942,82 @@ fn typeOfInput(self: *Checker, call: Ast.Expression.Call, name: []const u8) Erro
 /// second time.
 fn typeArguments(self: *Checker, arguments: []const *const Ast.Expression) Error!void {
     for (arguments) |argument| _ = try self.typeOfExpected(argument, .invalid);
+}
+
+/// Section 14.1's warning for unreachable code, once, at the first statement
+/// from `from` on that runs where it is written (a nested function is hoisted,
+/// so it is not unreachable). When the statement just above is a `while true`
+/// with no `break`, the loop itself is the mistake, so the warning points at it
+/// and says why, rather than at the code after it.
+fn reportUnreachable(self: *Checker, statements: []const Ast.Statement, from: usize) Error!void {
+    const first = for (statements[from..]) |statement| {
+        if (statement.data != .function_declaration) break statement;
+    } else return;
+    const cause = statements[from - 1];
+    if (cause.data == .while_loop and isLiteralTrue(cause.data.while_loop.condition)) {
+        const loop = cause.data.while_loop;
+        const header: Source.Span = .{ .start = cause.span.start, .end = loop.condition.span.end };
+        if (self.blockLeavesLoop(loop.body.statements)) return self.reportWarning(
+            header,
+            "this loop has no `break`, so the code after it never runs",
+            .{},
+            "The loop ends only by returning or raising. Add a `break` where the loop should stop, or remove the code after it.",
+        );
+        return self.reportWarning(
+            header,
+            "this loop has no `break`, so it never ends and the code after it never runs",
+            .{},
+            "Add a `break` where the loop should stop, or replace `true` with a condition that becomes false.",
+        );
+    }
+    try self.reportWarning(
+        first.span,
+        "this code can never run",
+        .{},
+        "Every path above it already returns, raises, breaks, continues, or loops forever. Remove it, or move it earlier.",
+    );
+}
+
+/// Whether a loop body can leave the function it is in, by `return` or
+/// `raise`, at any depth. A nested function or lambda is a statement or an
+/// expression here, so its own `return` is never counted.
+fn blockLeavesLoop(self: *const Checker, statements: []const Ast.Statement) bool {
+    for (statements) |statement| {
+        if (self.stmtLeavesLoop(statement)) return true;
+    }
+    return false;
+}
+
+fn stmtLeavesLoop(self: *const Checker, statement: Ast.Statement) bool {
+    return switch (statement.data) {
+        .return_statement, .raise_statement => true,
+        .conditional => |conditional| blk: {
+            if (self.blockLeavesLoop(conditional.then_block.statements)) break :blk true;
+            const otherwise = conditional.otherwise orelse break :blk false;
+            break :blk switch (otherwise) {
+                .block => |block| self.blockLeavesLoop(block.statements),
+                .chained => |chained| self.stmtLeavesLoop(chained.*),
+            };
+        },
+        .while_loop => |loop| self.blockLeavesLoop(loop.body.statements),
+        .for_loop => |loop| self.blockLeavesLoop(loop.body.statements),
+        .try_statement => |protected| blk: {
+            if (self.blockLeavesLoop(protected.body.statements)) break :blk true;
+            for (protected.catches) |caught| if (self.blockLeavesLoop(caught.body.statements)) break :blk true;
+            if (protected.finally_block) |cleanup| break :blk self.blockLeavesLoop(cleanup.statements);
+            break :blk false;
+        },
+        .case_statement => |case| blk: {
+            for (case.arms) |arm| {
+                if (self.blockLeavesLoop(arm.body.block.statements)) break :blk true;
+            }
+            const otherwise = case.otherwise orelse break :blk false;
+            break :blk self.blockLeavesLoop(otherwise.block.statements);
+        },
+        .expression, .declaration, .assignment, .function_declaration, .struct_declaration => false,
+        .break_statement, .continue_statement, .assert_statement => false,
+        .destructuring, .destructuring_assignment => false,
+    };
 }
 
 // Control-flow shape, computed from the AST alone.
