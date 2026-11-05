@@ -14062,7 +14062,7 @@ fn checkingProgramFile(self: *const Checker) bool {
 
 /// A short piece of the file being checked, or null when it is too long, or
 /// spans lines, to quote in a correction.
-fn quotable(self: *const Checker, span: Source.Span) ?[]const u8 {
+fn quotableSpan(self: *const Checker, span: Source.Span) ?[]const u8 {
     if (self.file >= self.files.len) return null;
     const text = self.files[self.file].source.text[span.start..span.end];
     if (text.len > 48 or std.mem.indexOfScalar(u8, text, '\n') != null) return null;
@@ -14098,7 +14098,7 @@ fn warnDiscardedResult(self: *Checker, expression: *const Ast.Expression, result
         try std.fmt.allocPrint(self.arena, "a new {s}", .{shown})
     else
         try std.fmt.allocPrint(self.arena, "{s} {s}", .{ if (std.mem.indexOfScalar(u8, "AEIOU", shown[0]) != null) "an" else "a", shown });
-    const call_text = self.quotable(expression.span);
+    const call_text = self.quotableSpan(expression.span);
     const receiver_name: ?[]const u8 = if (member.base.data == .name) member.base.data.name else null;
     const in_place = receiver.kind == .list and isInPlaceCounterpart(member.name);
 
@@ -14211,7 +14211,7 @@ fn warnPrintedNothing(self: *Checker, name: []const u8, arguments: []const *cons
             else => "this call",
         };
         const quoted = if (callee.data == .name or callee.data == .member) try std.fmt.allocPrint(self.arena, "`{s}`", .{called}) else called;
-        const help = if (self.quotable(argument.span)) |text|
+        const help = if (self.quotableSpan(argument.span)) |text|
             try std.fmt.allocPrint(self.arena, "Call `{s}` on its own line instead.", .{text})
         else
             "Call it on its own line instead.";
