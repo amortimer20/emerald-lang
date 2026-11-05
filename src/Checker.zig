@@ -40,6 +40,7 @@ const Lexer = @import("Lexer.zig");
 const Project = @import("Project.zig");
 const Regex = @import("Regex.zig");
 const Resolver = @import("Resolver.zig");
+const Spelling = @import("spelling.zig").Spelling;
 const Source = @import("Source.zig");
 const Token = @import("Token.zig");
 const Type = @import("Type.zig");
@@ -10174,7 +10175,7 @@ fn reportUnknownMember(self: *Checker, base: Type, member: Ast.Expression.Member
 /// `name`, if any. Built-in types search their catalog; a user type searches
 /// its fields, its methods and properties (inherited and trait ones too).
 fn closeMember(self: *Checker, base: Type, name: []const u8) Error!?[]const u8 {
-    var spelling = Resolver.Spelling.init(name);
+    var spelling = Spelling.init(name);
     if (base.kind == .struct_value) {
         const user = base.user.?;
         for (user.fields) |field| {
@@ -10201,7 +10202,7 @@ fn closeMember(self: *Checker, base: Type, name: []const u8) Error!?[]const u8 {
     return spelling.suggestion();
 }
 
-fn offerMethodsOf(self: *Checker, spelling: *Resolver.Spelling, type_key: []const u8) void {
+fn offerMethodsOf(self: *Checker, spelling: *Spelling, type_key: []const u8) void {
     var keys = self.receivers.keyIterator();
     while (keys.next()) |key| {
         if (!std.mem.startsWith(u8, key.*, type_key)) continue;
@@ -10223,7 +10224,7 @@ fn misspeltMemberHelp(self: *Checker, base: Type, name: []const u8, general: []c
 /// The one type name in view that is a small edit from `name`: built-in types,
 /// the generic collections, and the types this file can write bare.
 fn closeType(self: *Checker, name: []const u8) ?[]const u8 {
-    var spelling = Resolver.Spelling.init(name);
+    var spelling = Spelling.init(name);
     for (Type.builtin_types.keys()) |key| spelling.offer(key);
     for ([_][]const u8{ "List", "Dict", "Set", "Task", "Channel" }) |key| spelling.offer(key);
     if (self.facts.module_keys.len != 0) {

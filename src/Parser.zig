@@ -21,7 +21,7 @@ const Diagnostic = @import("Diagnostic.zig");
 const Lexer = @import("Lexer.zig");
 const Source = @import("Source.zig");
 const Token = @import("Token.zig");
-const spelling = @import("spelling.zig");
+const Spelling = @import("spelling.zig").Spelling;
 const unicode = @import("unicode.zig");
 
 const Parser = @This();
@@ -3465,7 +3465,7 @@ fn reportUnusedExpression(self: *Parser, expression: *const Ast.Expression) Erro
             );
         }
         if (written.len >= 3) {
-            if (spelling.closest(written, &statement_keywords, if (written.len <= 4) 1 else 2)) |keyword| {
+            if (closeKeyword(written)) |keyword| {
                 return self.report(
                     expression.span,
                     try std.fmt.allocPrint(self.arena, "`{s}` is not an Emerald word", .{written}),
@@ -3540,6 +3540,13 @@ fn reportCallParentheses(self: *Parser, expression: *const Ast.Expression, word:
         "a call needs parentheses",
         try std.fmt.allocPrint(self.arena, "Write `{s}({s})`: put what you pass in parentheses right after the name.", .{ word, rest orelse "..." }),
     );
+}
+
+/// The one statement keyword `written` most likely misspells, if any.
+fn closeKeyword(written: []const u8) ?[]const u8 {
+    var close = Spelling.init(written);
+    for (statement_keywords) |keyword| close.offer(keyword);
+    return close.suggestion();
 }
 
 const statement_keywords = [_][]const u8{
