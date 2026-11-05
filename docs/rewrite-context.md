@@ -688,7 +688,13 @@ a right side that replaces the list writes into the new one.
 
 A function call may discard its result when invoked for side effects. A standalone pure
 expression with an unused result is an error; diagnostics should suggest the likely update,
-such as replacing `score + 1` with `score += 1`.
+such as replacing `score + 1` with `score += 1`. A call of a built-in method that does not
+change its receiver (`name.trim()`, `scores.sort()`, `scores.filter { ... }`) has no effect
+but its result, so written as a whole statement it is a warning (17.1) that says the
+receiver is unchanged and offers the assignment, or the `!` form where one exists (8.5). A
+method that changes its receiver (`append`, `remove_last`, `sort!`) and a program's own
+methods are never reported, nor is a call inside a `try` that has a `catch`, which may be
+made only to see whether it raises.
 
 ### 5.3 Arithmetic
 
@@ -3820,6 +3826,8 @@ never silently missed, but the checked program still runs. Warnings currently re
 - an `is` test already known to be true, or known to be false (4.4);
 - code after a statement that can never complete, such as after `return` or `exit()`
   (6.5), or, at the loop itself, a `while true` with no `break` that has code after it;
+- a built-in method that does not change its receiver, called as a whole statement so its
+  result is discarded (5.2);
 - a use of a `@deprecated` declaration (16.1);
 - a `##` documentation comment that describes no declaration (3.2);
 - a program declaration whose casing breaks 3.3's conventions, with the corrected spelling;

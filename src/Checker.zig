@@ -354,6 +354,9 @@ in_function: bool = false,
 in_block: bool = false,
 /// Bare `raise` is valid only while a catch body is being checked.
 catch_depth: usize = 0,
+/// How many `try` bodies with a `catch` enclose the statement being checked.
+/// A result discarded there may be a call made only to see whether it raises.
+try_depth: usize = 0,
 /// The loop depth on entry to an active `finally`, for exits that would leave it.
 finally_loop_depth: ?usize = null,
 /// How many scopes enclose the innermost block being checked, so a name found
@@ -3289,7 +3292,12 @@ fn checkBlock(self: *Checker, block: Ast.Block) Error!void {
 
 fn checkStatement(self: *Checker, statement: Ast.Statement) Error!void {
     switch (statement.data) {
-        .expression => |expression| _ = try self.typeOf(expression),
+        .expression => |expression| {
+            const reported = self.diagnostics.items.len;
+            const result = try self.typeOf(expression);
+            // A REPL entry's value is echoed, so it is not discarded.
+            if (!statement.interactive_expression) try self.warnDiscardedResult(expression, result, reported);
+        },
         .declaration => |declaration| try self.checkDeclaration(declaration),
         .assignment => |assignment| try self.checkAssignment(assignment),
         .conditional => |conditional| try self.checkConditional(conditional),
@@ -3340,7 +3348,9 @@ fn checkAssert(self: *Checker, assertion: Ast.Assert) Error!void {
 
 fn checkTry(self: *Checker, protected: Ast.Try) Error!void {
     const before = try self.snapshot();
+    if (protected.catches.len > 0) self.try_depth += 1;
     try self.checkBlock(protected.body);
+    if (protected.catches.len > 0) self.try_depth -= 1;
     var joined: ?Snapshot = if (self.blockCompletes(protected.body.statements)) try self.snapshot() else null;
     for (protected.catches, 0..) |caught, index| {
         self.restore(before);
@@ -5264,6 +5274,7 @@ fn checkBodyWithSelfIn(
     const outer_loops = self.loops;
     const outer_constructing = self.constructing;
     const outer_catch_depth = self.catch_depth;
+    const outer_try_depth = self.try_depth;
     const outer_finally_loop_depth = self.finally_loop_depth;
     defer {
         self.scopes = outer_scopes;
@@ -5272,12 +5283,14 @@ fn checkBodyWithSelfIn(
         self.loops = outer_loops;
         self.constructing = outer_constructing;
         self.catch_depth = outer_catch_depth;
+        self.try_depth = outer_try_depth;
         self.finally_loop_depth = outer_finally_loop_depth;
     }
 
     self.scopes = .empty;
     self.loops = .empty;
     self.catch_depth = 0;
+    self.try_depth = 0;
     self.finally_loop_depth = null;
     try self.scopes.appendSlice(self.arena, enclosing);
     try self.scopes.append(self.arena, parameters);
@@ -14025,6 +14038,103 @@ fn stmtLeavesLoop(self: *const Checker, statement: Ast.Statement) bool {
         .break_statement, .continue_statement, .assert_statement => false,
         .destructuring, .destructuring_assignment => false,
     };
+}
+
+// Warnings for silent mistakes (D5), each written to stay quiet on intended code.
+
+/// Whether the file being checked is one of the program's own, rather than the
+/// prelude, which the warnings for silent mistakes leave alone.
+fn checkingProgramFile(self: *const Checker) bool {
+    if (self.file >= self.files.len) return true;
+    return !std.mem.eql(u8, self.files[self.file].namespace, Resolver.prelude_namespace);
+}
+
+/// A short piece of the file being checked, or null when it is too long, or
+/// spans lines, to quote in a correction.
+fn quotable(self: *const Checker, span: Source.Span) ?[]const u8 {
+    if (self.file >= self.files.len) return null;
+    const text = self.files[self.file].source.text[span.start..span.end];
+    if (text.len > 48 or std.mem.indexOfScalar(u8, text, '\n') != null) return null;
+    return text;
+}
+
+/// `name.trim()` or `scores.sort()` written as a whole statement. A built-in
+/// method that does not change its receiver only gives back its result, so
+/// discarding that result discards everything the call did. A method that
+/// changes its receiver (`append`, `remove_last`, `sort!`) is left alone,
+/// whatever it gives back, as is everything a program declares.
+fn warnDiscardedResult(self: *Checker, expression: *const Ast.Expression, result: Type, reported: usize) Error!void {
+    if (!self.checkingProgramFile()) return;
+    if (self.reportedErrorSince(reported) or self.try_depth > 0) return;
+    if (result.kind == .nothing or result.kind == .invalid) return;
+    if (expression.data != .call) return;
+    const call = expression.data.call;
+    if (call.callee.data != .member) return;
+    const member = call.callee.data.member;
+    if (member.optional or member.position != null) return;
+    if (std.mem.endsWith(u8, member.name, "!")) return;
+    const receiver = (self.expression_types.get(member.base) orelse return).type;
+    if (receiver.optional) return;
+    switch (receiver.kind) {
+        .string, .bytes, .range, .int, .float, .bool => {},
+        .list => if (Type.list_methods.get(member.name)) |method| if (method.mutates) return,
+        .dictionary, .set => if (Type.map_mutators.has(member.name)) return,
+        else => return,
+    }
+
+    const shown = try std.fmt.allocPrint(self.arena, "{f}", .{result});
+    const gives = if (result.kind == receiver.kind and !result.optional)
+        try std.fmt.allocPrint(self.arena, "a new {s}", .{shown})
+    else
+        try std.fmt.allocPrint(self.arena, "{s} {s}", .{ if (std.mem.indexOfScalar(u8, "AEIOU", shown[0]) != null) "an" else "a", shown });
+    const call_text = self.quotable(expression.span);
+    const receiver_name: ?[]const u8 = if (member.base.data == .name) member.base.data.name else null;
+    const in_place = receiver.kind == .list and isInPlaceCounterpart(member.name);
+
+    const help: []const u8 = help: {
+        const quoted = call_text orelse break :help "Store what it gives back in a name, or pass it on to whatever needs it.";
+        if (receiver_name) |name| if (result.kind == receiver.kind and !result.optional) {
+            const reassign = if (self.bindingInScope(name)) |binding| binding.mutability == .variable else false;
+            if (reassign and in_place) break :help try std.fmt.allocPrint(self.arena, "Assign what it gives back, `{s} = {s}`, or call `{s}.{s}!()` to change `{s}` in place.", .{ name, quoted, name, member.name, name });
+            if (reassign) break :help try std.fmt.allocPrint(self.arena, "Assign what it gives back: `{s} = {s}`.", .{ name, quoted });
+        };
+        break :help try std.fmt.allocPrint(self.arena, "Store what it gives back in a name, as in `const result = {s}`.", .{quoted});
+    };
+    const parentheses = if (call.trailing) "" else "()";
+    if (receiver_name) |name| {
+        try self.reportWarning(member.name_span, "`{s}{s}` gives back {s} and leaves `{s}` unchanged", .{ member.name, parentheses, gives, name }, help);
+    } else {
+        try self.reportWarning(member.name_span, "`{s}{s}` gives back {s}, which is never used", .{ member.name, parentheses, gives }, help);
+    }
+}
+
+/// Whether an error was reported after the first `reported` diagnostics: a
+/// warning about something already wrong would only repeat it.
+fn reportedErrorSince(self: *const Checker, reported: usize) bool {
+    for (self.diagnostics.items[reported..]) |diagnostic| {
+        if (diagnostic.severity == .err) return true;
+    }
+    return false;
+}
+
+/// The binding `name` has here, looked up without any of `find`'s reporting.
+fn bindingInScope(self: *Checker, name: []const u8) ?*Binding {
+    const key = self.facts.keyFor(self.file, name);
+    var index = self.scopes.items.len;
+    while (index > 0) {
+        index -= 1;
+        if (self.scopes.items[index].getPtr(name)) |binding| return binding;
+        if (key) |qualified| if (self.scopes.items[index].getPtr(qualified)) |binding| return binding;
+    }
+    return null;
+}
+
+/// A List method with a `!` form that changes the list in place (8.5).
+fn isInPlaceCounterpart(name: []const u8) bool {
+    for ([_][]const u8{ "sort", "reverse", "shuffle", "unique" }) |candidate| {
+        if (std.mem.eql(u8, name, candidate)) return true;
+    }
+    return false;
 }
 
 // Control-flow shape, computed from the AST alone.
