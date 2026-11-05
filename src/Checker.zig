@@ -8039,8 +8039,8 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
                 member.name_span,
                 "`{s}` is a method, so it needs parentheses",
                 .{member.name},
-                "Call it, as in `.{s}()`. Methods cannot be used as values yet.",
-                .{member.name},
+                "Call it, as in `.{s}()`, or wrap it in a block, as in `{{ value => value.{s}() }}`.",
+                .{ member.name, member.name },
             );
             return .invalid;
         }
@@ -8054,8 +8054,8 @@ fn typeOfMember(self: *Checker, expression: *const Ast.Expression, member: Ast.E
             member.name_span,
             "`{s}` is a method, so it needs parentheses",
             .{member.name},
-            "Call it, as in `.{s}()`. Methods cannot be used as values yet.",
-            .{member.name},
+            "Call it, as in `.{s}()`, or wrap it in a block, as in `{{ value => value.{s}() }}`.",
+            .{ member.name, member.name },
         );
         return .invalid;
     }

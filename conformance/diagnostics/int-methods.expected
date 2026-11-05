@@ -21,7 +21,7 @@ An Int has methods including `times`, `even?`, `abs`, `clamp`, `to_string`, `for
 diagnostics/int-methods.em:6:9: `even?` is a method, so it needs parentheses
   print(1.even?)
           ^^^^^
-Call it, as in `.even?()`. Methods cannot be used as values yet.
+Call it, as in `.even?()`, or wrap it in a block, as in `{ value => value.even?() }`.
 diagnostics/int-methods.em:7:3: Int has no method `is_even`
   1.is_even()
     ^^^^^^^

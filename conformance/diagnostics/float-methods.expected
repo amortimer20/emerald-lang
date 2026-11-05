@@ -21,7 +21,7 @@ A Float has methods including `round`, `floor`, `ceil`, `format`, `to_string`, `
 diagnostics/float-methods.em:6:11: `finite?` is a method, so it needs parentheses
   print(1.0.finite?)
             ^^^^^^^
-Call it, as in `.finite?()`. Methods cannot be used as values yet.
+Call it, as in `.finite?()`, or wrap it in a block, as in `{ value => value.finite?() }`.
 diagnostics/float-methods.em:7:5: Float has no method `is_nan`
   1.0.is_nan()
       ^^^^^^

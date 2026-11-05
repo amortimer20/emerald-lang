@@ -150,7 +150,7 @@ numbers.each { number => print(number) }
 A lambda closes over the surrounding variables by reference, so a block can
 read and change them, and a loop variable is fresh every iteration so blocks
 made inside a loop each keep their own value. A named function is a callable
-value too, and omitting a method's call parentheses captures it the same way.
+value too, and omitting the call parentheses of a method you declared captures it the same way (a built-in method such as `upper` needs a block around its call, as in `{ text => text.upper() }`).
 See [`examples/blocks.em`](../../examples/blocks.em),
 [`conformance/run/lambdas.em`](../../conformance/run/lambdas.em), and
 [`conformance/run/closures.em`](../../conformance/run/closures.em).
