@@ -678,7 +678,11 @@ of assigning accidentally.
 Chained assignment is rejected, and declarations introduce one binding at a time except
 for tuple destructuring. Compound assignment evaluates its receiver and index, checks and
 reads the current value, then evaluates the right side; every subexpression runs at most
-once. Function arguments and other ordered expression lists evaluate left to right.
+once. Function arguments and other ordered expression lists evaluate left to right. Binary operands also evaluate left to right, whatever the operator's associativity, so
+`a ** b` evaluates `a` first, and a dictionary literal evaluates each key, then its value,
+entry by entry. A plain indexed assignment `a[i] = v` evaluates its receiver and index, then
+the right side, then checks the index; the write goes to the binding's value at that moment, so
+a right side that replaces the list writes into the new one.
 
 A function call may discard its result when invoked for side effects. A standalone pure
 expression with an unused result is an error; diagnostics should suggest the likely update,
@@ -1422,14 +1426,18 @@ collection snapshot captured when the loop begins, so later mutation never chang
 visited sequence.
 
 Repeated elements in a set literal collapse to one. A statically known duplicate dictionary
-literal key is an error; when calculated keys collide at runtime, the later value wins
-without changing its insertion position.
+literal key is an error. Statically known keys are the ones 6.3 calls known duplicates, literals
+and enum values; a repeated tuple of literals is not one, and behaves as calculated keys do:
+when calculated keys collide at runtime, the later value wins without changing its insertion
+position.
 
 Hash values and the hashing algorithm are runtime details, not stable Emerald output.
 Equal eligible keys must hash compatibly within a process, but implementations may seed or
 replace their algorithms between runs and releases. Observable dictionary and set order
 comes from the specified insertion order rather than hash-table layout. Serialization,
-tests, and user-facing identity must never depend on a hash value.
+tests, and user-facing identity must never depend on a hash value. How many times, and in what
+order, a collection calls a type's `equals`, `hash`, or `compare` is unspecified; a program
+whose output depends on it is not portable.
 
 ### 8.5 Essential methods
 
@@ -1488,7 +1496,8 @@ than the receiver; `associate` is the way to let a later value replace an earlie
 Sequence-to-dictionary construction includes `associate` and `associate_by`.
 Set operations use the explicit names `union`, `intersection`, `difference`,
 `symmetric_difference`, `subset?`, `superset?`, and `disjoint?`; comparison operators do
-not stand for subset relationships.
+not stand for subset relationships. A set operation's result keeps the receiver's order for the receiver's elements,
+followed by `other`'s remaining elements in `other`'s order.
 
 Every ordinary collection block receives one logical item. A dictionary's item is a
 two-element `(key, value)` tuple, which may be destructured directly:
@@ -1787,13 +1796,13 @@ and `NaN`, so every displayed `Float` parses back. `to_string()` gives the displ
 Unicode language. `code_points()` returns the Unicode scalar values of the String's exact
 stored spelling as `List[Int]`; a decomposed character therefore has more than one entry.
 `bytes()` returns its exact UTF-8 bytes as `List[Int]`, each from 0 through 255. These are
-advanced conversions, while `chars()` remains the grapheme-aware beginner API. `words`,
-`title_case`, case-insensitive Unicode comparison, `letter?`, and `digit?` remain deferred
-until their locale and boundary behavior can be designed correctly.
+advanced conversions, while `chars()` remains the grapheme-aware beginner API. `title_case`
+and case-insensitive Unicode comparison remain deferred until their locale behavior can be
+designed correctly.
 
 String equality uses canonical Unicode normalization, remains case-sensitive, and feeds
 the same normalized equality into dictionary keys and sets. Ordinary string ordering is
-deterministic and locale-independent, comparing normalized code points. Locale-aware
+deterministic and locale-independent, comparing the NFC code points of both strings. Locale-aware
 collation belongs in a later library facility.
 
 **Normalization happens at comparison, not at construction.** A `String` retains exactly the
@@ -2388,7 +2397,8 @@ writes its types the same way, `Grid[String]`, wherever a type is written, and n
 call: `Grid(3, 3, ".")` is a `Grid[String]` because of its argument, and
 `const counts: Grid[Int] = Grid(2, 2, 0)` because of where it goes. When neither says what a
 parameter is, that is an error asking for the type to be written where the value is kept.
-`Grid[Int]()` is an error that says so (5.4 of the plan).
+`Grid[Int]()` is an error that says so (5.4 of the plan). A type parameter that the declaration
+never uses is a warning, since it is almost always a typo.
 
 - A generic type is invariant in its types: a `Grid[Int]` is not a `Grid[Float]`. A type in
   brackets cannot be optional, since `Grid`'s own `T?` would then nest (4.5).
@@ -2637,6 +2647,15 @@ ordinary constructors and begins each subclass constructor with `super(...)` as 
 Interpreter-detected failures use
 `RuntimeError`, while a failed assertion uses `AssertionError`; both are ordinary subclasses
 that a typed or untyped catch may handle.
+
+The text of every message Emerald raises itself (an index outside a list, a division by zero,
+an overflow, a failed conversion, a library error such as `FileError`) is part of the
+language, since a program reads it through `message`. The conformance suite's `run/` and
+`runtime-errors/` cases are its specification, and every backend gives exactly that text; a
+compiler shares the interpreter's message-building code rather than writing its own copy.
+
+Exhausting memory ends the program with a message and a nonzero status; it is not catchable
+and does not run `finally`.
 
 There is no `raises` annotation on function signatures. Error effects are dynamic in that
 narrow sense; error values and catch bindings remain statically typed.
@@ -2974,7 +2993,10 @@ in printing and interpolation, with structs, classes, and enums that omit it ret
 useful field-based debug representation; enums that omit it default to their qualified
 names. It is a prelude trait in 11.5's family, adopted explicitly like every other: a method
 named `to_string` alone changes no display, and the checker warns when a type declares one
-without adopting the trait.
+without adopting the trait. A struct or object without `Textual` displays as `Name(field: value, ...)`: every
+stored field, private ones included, base-class fields first, each in declaration order, and
+each value displayed as it would be inside a collection; an object already being displayed shows
+as `Name(...)`, which ends a cycle.
 
 An adopting value renders through its own `to_string()` wherever it appears, nested in a
 collection or another type's debug form included, because the display walk carries the
@@ -3006,6 +3028,8 @@ A line that is not valid UTF-8 also raises, so every `String` holds Unicode text
 
 `print` and `write` accept zero or more ordinary values through their display
 representation. Multiple arguments evaluate left to right and are separated by one space.
+`print` and `write` evaluate every argument, then display them in order, so `print(c, bump(c))` shows `c`
+after the bump; an interpolation displays each part as it is evaluated.
 A string displays as its text. Inside a collection it displays quoted, with escapes where
 needed, so `["a, b"]` and `["a", "b"]` cannot be mistaken for each other. The quoted form
 reads back as the same text: `"`, `\`, and `#{` are escaped, `\n`, `\t`, `\r`, and `\0` use their
@@ -3078,6 +3102,7 @@ Whole-file helpers close their handles automatically. `File.open` returns a read
 `FileHandle`; its `read()` returns the remaining text, `read_line()` returns the next line as
 `String?`, and `close()` is idempotent. `File.create` returns a write-only `FileWriter`,
 truncating or creating its path; `write(text)` streams UTF-8 text and `close()` is idempotent.
+Text written to a `FileWriter` is visible to any read of the file as soon as `write` returns.
 `read_line()` follows `read_lines` exactly: a trailing newline produces no extra line, while a
 final unterminated line is still returned. `with_open` and `with_writer` close their resource
 after normal completion, return, or error. `read`, `read_lines`, `write`, `write_lines`,
@@ -3623,7 +3648,9 @@ receives return `nothing`, and sends not already committed raise RuntimeError wi
 `cannot send to a closed channel`. A hand-off commits a message: once a send has
 been handed to a waiting receiver, that receiver gets the value even if it is cancelled
 before it resumes, and observes the cancellation at its next suspension point. Likewise a sender whose value a receiver took has
-sent it: that send returns normally, and the cancellation waits for the next suspension point. Negative capacity raises RuntimeError with
+sent it: that send returns normally, and the cancellation waits for the next suspension point. When a
+receive frees buffer space, the longest-waiting sender's message is committed into the buffer at
+once and that sender becomes ready. Negative capacity raises RuntimeError with
 `a channel capacity cannot be negative`. An optional item type is a checking error:
 `a channel's items can't be optional`, with help to wrap the value in a struct. Struct
 fields may be optional without confusing a message with closure. `for item in channel`
@@ -3659,7 +3686,7 @@ hook is added for custom embedding readers.
 
 A wait that cannot progress raises `DeadlockError`, a RuntimeError subclass, rather than
 hanging. Diagnostics name task results or channel directions and their original source
-locations. A pending timer, input, or host operation can make progress, so does not count
+locations; channels are numbered from 1 in the order they were created. A pending timer, input, or host operation can make progress, so does not count
 as a deadlock. Runtime scheduling is isolated behind `Scheduler.zig`; a future fiber backend
 must preserve these semantics and may only raise the live-task cap. General user-defined
 iteration, detached tasks, channel `select`, and multicore execution remain deferred.
@@ -3729,7 +3756,9 @@ not an additional discovery requirement.
 
 Test loading checks project declarations without running the application's top-level entry
 statements. Tests run independently enough that one failure can be reported without hiding
-the remainder. Ordering should be deterministic, and test output should identify the file,
+the remainder. Tests run in declaration order, file by file in sorted path order, and share one
+program state: a module binding is initialized once and keeps the changes one test makes. Test
+output should identify the file,
 test name, failure expression, and stack trace.
 
 Entry-file types and functions remain visible to tests under the ordinary namespace rules.
@@ -3767,11 +3796,22 @@ program runs, being reached at all; a warning renders with a `warning: ` marker 
 location but is otherwise the same four-part shape, and does not stop checking or execution.
 `emerald check`/`run`/`test` still exit `1` (18.1) when only warnings were found, once
 nothing more specific (a runtime failure, a test failure) took priority, so a warning is
-never silently missed, but the checked program still runs. Warnings currently reported: a
-nonexhaustive statement `case` with a coverable subject (6.3, 12); an `is` test already known
-to be true (4.4); code after a statement that can never complete, such as after
-`return` (6.5); and a use of a `@deprecated` declaration (16.1), which, like every warning,
-makes the command exit `1`.
+never silently missed, but the checked program still runs. Warnings currently reported:
+
+- a nonexhaustive statement `case` with a coverable subject (6.3, 12);
+- an `is` test already known to be true, or known to be false (4.4);
+- code after a statement that can never complete, such as after `return` (6.5);
+- a use of a `@deprecated` declaration (16.1);
+- a `##` documentation comment that describes no declaration (3.2);
+- a program declaration whose casing breaks 3.3's conventions, with the corrected spelling;
+- a type parameter its declaration never uses (11.3);
+- `to_string`, `equals`, or `hash` declared without adopting `Textual`, `Equatable`, or
+  `Hashable`, which leaves display, `==`, or hashing unchanged (8.4, 15.1);
+- a program declaration or top-level directory that hides one of the language's own
+  built-ins (14.2);
+- a redundant `using Emerald` (14.2).
+
+Like every warning, each makes the command exit `1`.
 
 ### 17.2 Pedagogical behavior
 
@@ -4486,6 +4526,7 @@ recorded in their normative sections:
 | Narrowing across a loop (4.5, 6.4) | A name a loop body assigns loses its narrowing before the condition and body are checked; the body may prove it again | A loop body is checked once from the state before the loop, which is exact for definite assignment because assignment only accumulates. A proof of presence can be lost, so a body that sets a name back to `nothing` would otherwise leave the next iteration, the condition, and the code after the loop trusting a proof that no longer holds. |
 | Naming a lost class narrowing (4.4, 4.5) | The member-not-found help names the `is` test that once held and says an assignment since then is why it no longer does, rather than suggesting the reader write the very test they are already inside | `if a is Dog { a = Animal(); print(a.tricks) }` told the reader to wrap the read in `if a is Dog { ... }`, which reads as nonsense already being inside one. Tracked only for a plain-name class test, since that is the shape a member lookup like this comes from. Found in the diagnostics review. |
 | Constructing a message-only error subclass (13.1) | It gets `Error(message)` when it declares no constructor and its complete stored state is only the inherited message; a hierarchy with more fields uses ordinary subclass constructors | Section 13's canonical `class InvalidScore extends Error { }` is immediately raised as `InvalidScore("...")`. Requiring boilerplate that only forwards the message would contradict that teaching example and make the most common custom error need ceremony, while bypassing fields or constructor arguments from an intermediate error class would create an invalid object. |
+| Runtime error message text (13.1) | Part of the language, specified by the conformance cases; a compiler shares the interpreter's message code (the user, 2026-10-29, review item D2) | A program reads the text through `message`, and 49 `run/` cases print it, so leaving it unspecified would make those cases unportable while a compiler could only pass by copying every string. Declaring it unportable instead would have meant rewriting those cases and teaching students that an error's words may change. One shared source keeps a beginner's error identical however the program runs. |
 | An assertion's optional message (16.2) | Written after a comma: `assert condition, "explanation"` | The comma reads as one assertion with supporting context, requires no new keyword or parentheses, and leaves the condition as the first thing a beginner sees. The message is evaluated only when the assertion fails. |
 | Brace style, revisited (3.4, 18.3) | Both Stroustrup and Allman are legal source; a project picks one canonical style in `emerald.toml`'s `brace_style`, and the formatter always normalizes to it | The original rule made Stroustrup the only legal spelling anywhere, reasoning from the formatter's "one canonical output" promise as if that meant one output for the whole language rather than one per project. But brace placement is whitespace, which 3.1 already calls non-semantic, and casing (3.3) already shows the language tolerating a non-conventional choice as a style matter rather than banning it outright. The two styles aren't symmetric with casing, though: the formatter can rewrite whitespace unconditionally, but it can't safely rename an identifier, which is why casing stays a warning rather than a rewrite. 18.3's promise survives intact — every file in a project still normalizes to exactly one style — it is just no longer the same style for every project. |
 | A missing or unreadable file's exit status (18.1) | `66` (`sysexits.h`'s `EX_NOINPUT`), not `64` | `check`/`run`/`test`/`format` all shared `64` with a malformed invocation before this, but the two are different problems for a caller to act on: `64` means the command itself was typed wrong (bad flags, wrong argument count), while a well-formed command naming a path that turns out missing or unreadable is an environment problem, exactly what `EX_NOINPUT` exists to distinguish. `70` (`EX_SOFTWARE`, `internal_failure`) already established that this project borrows meanings from `sysexits.h` rather than inventing its own, so `66` continues that rather than picking an arbitrary unused number. |

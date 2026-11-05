@@ -8156,7 +8156,7 @@ fn typeOfOptionalObjectMember(self: *Checker, member: Ast.Expression.Member) Err
     for (present.user.?.fields) |field| if (std.mem.eql(u8, field.name, member.name)) return (try self.substituteOn(field.type, present)).optionalOf();
     if (try self.propertyOf(present, member.name)) |property| return (try self.substituteOn(try self.typeOfPropertyRead(member, property), present)).optionalOf();
     if (try self.memberKey(present, member.name) != null) {
-        try self.reportWithHelp(member.name_span, "`{s}` is a method, so it needs parentheses", .{member.name}, "Method calls through `?.` arrive in the next optional-chaining slice.", .{});
+        try self.reportWithHelp(member.name_span, "`{s}` is a method, so it needs parentheses", .{member.name}, "Call it with parentheses, as in `?.{s}()`.", .{member.name});
         return .invalid;
     }
     try self.reportUnknownMember(present, member, "field or property");

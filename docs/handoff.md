@@ -7,20 +7,18 @@ belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 
 ## Current status
 
-**Where things stand (2026-11-01):** `v0.8.0-rc1` is published as a
+**Where things stand (2026-11-05):** `v0.8.0-rc1` is published as a
 prerelease (tag on `73b9b19`, all three assets, install scripts checked). The codebase review
 (roadmap item 10) has reported and been triaged in [`review/triage.md`](review/triage.md), with
-every decision accepted. Fix batch 1 is merged (PRs #57–#61: crashes, `exit()` in tasks, the
-language server, allocation failures). Fix batch 2 is merged: #62 (B4, B5, B7,
-B8, D1; `src/FloatMath.zig`), #63 (B6, B9, B11, D6), #64 (B10, B12, D3), and #65, platform
-and tooling (`e977a81`, CI green on all 14 checks), built and checked on Windows: B13 (the local
-zone falls back to the built-in database; its name is normalized), B14 (the formatter drops a
-BOM and comments' CRs; the language server matches it and sends no edit for canonical text), B16
-(the user chose one style, 2026-11-01: paths Emerald produces use `/` on every platform, and
-Windows reads `\` as a separator too; 15.3), B17 (a Windows console shows UTF-8 output; its code
-page is restored on exit), and a doubled separator in `Project.holdsEntryFile` that printed a
-Debug stack trace from the language-server tests on Windows. The website's File page needs B16's
-separator paragraph when 0.8.0 ships. **Next, when the user says go:** the spec corrections and contract (E, D2, D8), then diagnostics in two
+every decision accepted. Fix batches 1 and 2 are merged (PRs #57–#65; the journal has each). Batch
+3, the spec's corrections and contract (E, D2, D8), is open on `claude/spec-contract`: the three
+slips fixed, runtime error message text made part of the language (13.1), and fifteen observable
+behaviors written into the spec with six new `run/` cases. Two D8 sentences differ from the
+report's wording and await the user's word (the journal, 2026-11-05): S17 keeps 6.3's definition of
+known duplicates, so a repeated tuple key is not an error, and S14 leaves out "an oversized result
+raises an Int overflow". The website needs, when 0.8.0 ships: B16's separator paragraph on the
+File page, the set-algebra order on the Set page, and the message-text and out-of-memory notes on
+the Errors page. **Next, once batch 3 is merged and the user says go:** diagnostics in two
 batches (C, D4, D5, plus the `return`-in-a-block warning in the journal, 2026-10-30), then a rerun
 of the mutation sweep and allocation-failure harness. The user asked for Sonnet subagents for
 routine fixes to spare usage (Opus for subtle ones), one PR at a time. Still open: two

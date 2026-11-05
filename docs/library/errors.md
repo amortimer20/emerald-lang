@@ -37,6 +37,13 @@ by Base64 and hexadecimal decoding, and by `Bytes.to_string()` for invalid UTF-8
 **`InputError`** also extends `RuntimeError`; `input` raises it when input ends or contains
 invalid UTF-8, while `input_maybe` still returns `nothing` at end of input.
 
+The words of an error Emerald raises itself, such as `index 5 is outside this list, which
+has 3 elements`, are part of the language: a program may print or compare `error.message`,
+and every way of running Emerald gives the same text (13.1).
+
+Running out of memory is not an error a program can catch: the program ends with a message
+and a nonzero status, and `finally` does not run.
+
 **`RecursionError`** extends `RuntimeError`. Calls raise it when they exceed the
 interpreter's recursion boundary, in the main program or a task. Emerald supports
 at least 1,000 active calls; the diagnostic summarizes repeated frames. Typed catches
