@@ -3067,6 +3067,11 @@ escapes, and any other control character is written `\u{...}`.
 `print` appends a newline; `write` does not. Separator customization is deferred, and
 interpolation remains the primary way to construct deliberate prose.
 
+A call whose type is `Nothing` written directly as an argument of `print`, `write`, or
+`print_error` (`print(greet("Ava"))`, where `greet` gives back no value) displays `nothing`,
+so it is a warning (17.1) that suggests calling it on its own line. A call whose type is an
+optional that may hold `nothing` is not reported.
+
 `print_error` is `print` for standard error: the same arguments, display, and line break.
 Standard output is flushed first, so on a terminal its lines keep the order they were written
 in. There is no `write_error`. Console styling on standard error follows 15.6's policy by
@@ -3835,6 +3840,7 @@ never silently missed, but the checked program still runs. Warnings currently re
 - a built-in method that does not change its receiver, called as a whole statement so its
   result is discarded (5.2);
 - `${name}` or `{name}` in a double-quoted string, where `name` is in scope (5.1);
+- printing a call that gives back no value, which prints `nothing` (15.2);
 - a use of a `@deprecated` declaration (16.1);
 - a `##` documentation comment that describes no declaration (3.2);
 - a program declaration whose casing breaks 3.3's conventions, with the corrected spelling;

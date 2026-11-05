@@ -12257,7 +12257,9 @@ fn typeOfCall(
             try self.exit_calls.put(self.arena, expression, {});
             return .nothing;
         }
+        const reported = self.diagnostics.items.len;
         try self.typeArguments(call.arguments);
+        try self.warnPrintedNothing(name, call.arguments, reported);
         return .nothing;
     }
 
@@ -14186,6 +14188,32 @@ fn warnForeignInterpolation(self: *Checker, expression: *const Ast.Expression) E
             .{written},
             try std.fmt.allocPrint(self.arena, "Emerald interpolates with `#{{...}}`: write `#{{{s}}}`.", .{path}),
         );
+    }
+}
+
+/// `print(greet("Ava"))` where `greet` gives back nothing: it prints
+/// `nothing`, which is never what was meant. Only a call written directly as
+/// the argument of `print`, `print_error`, or `write` counts.
+fn warnPrintedNothing(self: *Checker, name: []const u8, arguments: []const *const Ast.Expression, reported: usize) Error!void {
+    if (!self.checkingProgramFile() or self.reportedErrorSince(reported)) return;
+    const printing = std.mem.eql(u8, name, "print") or std.mem.eql(u8, name, "print_error") or std.mem.eql(u8, name, "write");
+    if (!printing) return;
+    for (arguments) |argument| {
+        if (argument.data != .call) continue;
+        const argument_type = (self.expression_types.get(argument) orelse continue).type;
+        if (argument_type.kind != .nothing or argument_type.optional) continue;
+        const callee = argument.data.call.callee;
+        const called: []const u8 = switch (callee.data) {
+            .name => |callee_name| callee_name,
+            .member => |member| member.name,
+            else => "this call",
+        };
+        const quoted = if (callee.data == .name or callee.data == .member) try std.fmt.allocPrint(self.arena, "`{s}`", .{called}) else called;
+        const help = if (self.quotable(argument.span)) |text|
+            try std.fmt.allocPrint(self.arena, "Call `{s}` on its own line instead.", .{text})
+        else
+            "Call it on its own line instead.";
+        try self.reportWarning(argument.span, "this prints `nothing`, because {s} gives back no value", .{quoted}, help);
     }
 }
 

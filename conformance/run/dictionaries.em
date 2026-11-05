@@ -29,7 +29,9 @@ ages.each_with_index { (name, age), index =>
 print(ages.any? { (name, age) => name == "Mia" }, ages.count_where { (_, age) => age >= 20 })
 print(ages.find { (name, age) => age >= 1 })
 print(ages.find_index { (name, age) => age >= 1 })
-print(ages.reverse_each { (name, age) => print(name, age) })
+# `reverse_each` gives back nothing, which is shown here on purpose.
+const reversed = ages.reverse_each { (name, age) => print(name, age) }
+print(reversed)
 func label_if_young(name: String, age: Int): String? {
     if age < 20 {
         return "#{name}=#{age}"
