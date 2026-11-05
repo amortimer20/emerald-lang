@@ -1,0 +1,4 @@
+diagnostics/operator-single-ampersand.em:3:6: `&` is not an operator in Emerald
+  if a & b {
+       ^
+Write `and` to require both conditions.

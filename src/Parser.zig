@@ -3656,6 +3656,16 @@ fn parseExpression(self: *Parser) Error!*const Ast.Expression {
         );
         _ = try self.parseDisjunction();
     }
+    // The same for `=>`, which a condition cannot use: `if score => 50`.
+    while (self.in_condition and self.check(.fat_arrow)) {
+        const written = self.advance();
+        try self.note(
+            written.span,
+            "`=>` is not a comparison",
+            "Write `>=` for greater than or equal. `=>` belongs to a block, as in `{ n => n * 2 }`.",
+        );
+        _ = try self.parseDisjunction();
+    }
     // In `x??0` the lexer includes the first `?` in the identifier. Recognize
     // both token shapes here, leaving optional type suffixes/predicate names
     // unchanged and giving `??` a different correction from `? :`.
@@ -3757,10 +3767,62 @@ fn parseDisjunction(self: *Parser) Error!*const Ast.Expression {
     return left;
 }
 
+/// `x > 0 and < 10`: the second comparison has no left side. Parsed in full, so
+/// the correction can repeat what it compares.
+fn reportCutComparison(self: *Parser, left: *const Ast.Expression) Error {
+    const operator = self.advance();
+    const right = try self.parseRange();
+    const subject = if (left.data == .comparison) left.data.comparison.operands[0] else left;
+    const subject_text = self.source.text[subject.span.start..subject.span.end];
+    const left_text = self.source.text[left.span.start..left.span.end];
+    const right_text = self.source.text[right.span.start..right.span.end];
+    return self.report(
+        spanning(operator.span, right.span),
+        "a comparison needs a value on its left",
+        if (shortText(subject_text) != null and shortText(left_text) != null and shortText(right_text) != null)
+            try std.fmt.allocPrint(self.arena, "Repeat the value: write `{s} and {s} {s} {s}`.", .{ left_text, subject_text, self.text(operator), right_text })
+        else
+            "Repeat the value in each comparison, as in `x > 0 and x < 10`.",
+    );
+}
+
+/// Python's `"Bo" in names`.
+fn reportMembershipTest(self: *Parser, item: *const Ast.Expression) Error {
+    const keyword = self.advance();
+    const collection = try self.parseRange();
+    const item_text = self.source.text[item.span.start..item.span.end];
+    const collection_text = self.source.text[collection.span.start..collection.span.end];
+    return self.report(
+        spanning(item.span, collection.span),
+        try std.fmt.allocPrint(self.arena, "`{s}` does not test membership in Emerald", .{self.text(keyword)}),
+        if (shortText(item_text) != null and shortText(collection_text) != null and collection.data == .name)
+            try std.fmt.allocPrint(self.arena, "Ask the collection instead: write `{s}.contains?({s})`.", .{ collection_text, item_text })
+        else
+            "Ask the collection instead, as in `names.contains?(\"Bo\")`.",
+    );
+}
+
+/// Pascal's `n mod 2`.
+fn reportModWord(self: *Parser, left: *const Ast.Expression) Error {
+    const word = self.advance();
+    const right = try self.parseUnary();
+    const left_text = self.source.text[left.span.start..left.span.end];
+    const right_text = self.source.text[right.span.start..right.span.end];
+    return self.report(
+        word.span,
+        "`mod` is not an operator in Emerald",
+        if (shortText(left_text) != null and shortText(right_text) != null)
+            try std.fmt.allocPrint(self.arena, "Write `%` for the remainder: `{s} % {s}`.", .{ left_text, right_text })
+        else
+            "Write `%` for the remainder, as in `n % 2`.",
+    );
+}
+
 fn parseConjunction(self: *Parser) Error!*const Ast.Expression {
     var left = try self.parseNegation();
     while (self.check(.keyword_and)) {
         _ = self.advance();
+        if (comparisonOperator(self.peek().kind) != null) return self.reportCutComparison(left);
         const right = try self.parseNegation();
         left = try self.node(spanning(left.span, right.span), .{ .logical = .{
             .operator = .conjunction,
@@ -3789,6 +3851,7 @@ fn parseNegation(self: *Parser) Error!*const Ast.Expression {
 fn parseComparison(self: *Parser) Error!*const Ast.Expression {
     const first = try self.parseRange();
     if (self.check(.keyword_is)) return self.finishTypeTest(first);
+    if (self.check(.keyword_in)) return self.reportMembershipTest(first);
     if (comparisonOperator(self.peek().kind) == null) return first;
 
     var operands: std.ArrayList(*const Ast.Expression) = .empty;
@@ -3919,6 +3982,7 @@ fn parseAdditive(self: *Parser) Error!*const Ast.Expression {
 fn parseMultiplicative(self: *Parser) Error!*const Ast.Expression {
     var left = try self.parseUnary();
     while (true) {
+        if (self.check(.identifier) and std.mem.eql(u8, self.text(self.peek()), "mod")) return self.reportModWord(left);
         const operator: Ast.BinaryOperator = switch (self.peek().kind) {
             .star => .multiply,
             .slash => .divide,

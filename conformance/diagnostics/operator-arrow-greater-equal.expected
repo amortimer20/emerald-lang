@@ -1,0 +1,4 @@
+diagnostics/operator-arrow-greater-equal.em:2:10: `=>` is not a comparison
+  if score => 50 {
+           ^^
+Write `>=` for greater than or equal. `=>` belongs to a block, as in `{ n => n * 2 }`.

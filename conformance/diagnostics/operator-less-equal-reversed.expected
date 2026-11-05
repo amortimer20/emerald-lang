@@ -1,0 +1,4 @@
+diagnostics/operator-less-equal-reversed.em:2:10: `=<` is not an operator in Emerald
+  if score =< 50 {
+           ^^
+Write `<=` for less than or equal.

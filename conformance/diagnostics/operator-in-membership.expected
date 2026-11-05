@@ -1,0 +1,4 @@
+diagnostics/operator-in-membership.em:2:4: `in` does not test membership in Emerald
+  if "Bo" in names {
+     ^^^^^^^^^^^^^
+Ask the collection instead: write `names.contains?("Bo")`.

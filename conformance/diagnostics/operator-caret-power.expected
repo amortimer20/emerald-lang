@@ -1,0 +1,4 @@
+diagnostics/operator-caret-power.em:2:19: `^` is not an operator in Emerald
+  const area = side ^ 2
+                    ^
+Write `**` for a power, as in `side ** 2`.

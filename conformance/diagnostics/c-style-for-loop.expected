@@ -1,0 +1,4 @@
+diagnostics/c-style-for-loop.em:1:1: a `for` loop does not take three parts
+  for (var i = 0; i < 5; i++) {
+  ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Emerald's `for` visits a range or a collection: write `for i in 0..<5 { ... }`, which visits 0 through 4.

@@ -1,0 +1,4 @@
+diagnostics/operator-not-equal-diamond.em:2:11: `<>` is not an operator in Emerald
+  if answer <> "yes" {
+            ^^
+Write `!=` to compare for inequality.
