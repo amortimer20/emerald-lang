@@ -2440,6 +2440,15 @@ test "a failed allocation in Json.parse or split frees what was built" {
     try checkRunAllocationFailures("print(\"a,b,c,d,e,f,g,h,i\".split(\",\"))\n");
 }
 
+test "a failed allocation in reduce, reduce_right, or Float.format releases each value once" {
+    // The block owns the accumulator once it is called, even when it fails.
+    try checkRunAllocationFailures("print([\"a\", \"b\"].reduce(\"s\") { text, item => text + item })\n");
+    try checkRunAllocationFailures("print([\"a\", \"b\"].reduce_right(\"s\") { text, item => text + item })\n");
+    // Grouping that cannot allocate leaves the rendered digits to free.
+    try checkRunAllocationFailures("print(1234567.891.format(decimal_places: 2, group_digits: true))\n");
+    try checkRunAllocationFailures("print(1234567.5.format(group_digits: true))\n");
+}
+
 fn expectProjectOutput(files: []const ProjectFile, expected: []const u8) !void {
     var project = try buildProject(testing.allocator, files);
     defer project.deinit(testing.allocator);

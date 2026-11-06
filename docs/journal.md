@@ -6379,3 +6379,25 @@ discarded-result warning's mutator list is hand-written beside `builtins.json`'s
 flags, so a new value-returning mutator must be added to both; the warnings skip a statement
 inside a `try` with a `catch` (a call made to see whether it raises); hover now also shows
 prelude trait documentation on built-in overrides (`Date.compare`). Batch 4's follow-ups stand.
+
+## 2026-11-05: Final check, mutation sweeps and allocation failures
+
+The plan's "done when" asks for area 2's mutation sweep and area 1's allocation-failure harness to
+be rerun once the fixes are in. Both ran on main at `53967a4` (all five batches merged), Windows,
+Zig 0.17.0, Debug build.
+
+- Mutation sweeps (`docs/review/repro/robustness/mutate.py`): seed 20261028, one mutant per
+  operator per file, 7,046 mutants through `check`, `format --check`, `format` twice and a language
+  server session each: no findings. Seed 2, two per operator, no server, 14,087 mutants: no
+  findings. The corpus is larger than the review's 983 files, since conformance has grown.
+- Allocation failure (`docs/review/repro/memory/oom/`): the eight reproductions are clean at every
+  index. A sample of 41 conformance `run` programs (every seventh, at every seventh index) found
+  two memory errors that the review's 40-program sample had not reached, both only on a failed
+  allocation: `reduce_right` (and `reduce`) released the accumulator a second time when the block
+  failed, which panicked on a reference-count underflow; and `Float.format(group_digits: true)`
+  leaked its rendered text when grouping could not allocate, in two paths. Both are fixed, with a
+  `checkRunAllocationFailures` test that fails without the fix. The sample is not exhaustive: the
+  other 240 programs, and every index of the 41, have not been run.
+
+Noted, not fixed: the earlier note about `min_max` and a caught index error using memory
+nondeterministically is unchanged.
