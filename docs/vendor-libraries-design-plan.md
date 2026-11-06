@@ -1,8 +1,8 @@
 # Vendor libraries and raylib: design plan
 
 Status: proposed, 2026-11-06. Slice 0 (the spike) has run; its report is below, and it changed
-decisions 2 and 11 and tightened 1 and 10. Three questions are the user's (see "Slice 0
-report"). Nothing here is accepted until the user accepts or changes the decisions below. This is roadmap item 11 (handoff), written after Odin's `vendor:` collection
+decisions 2 and 11 and tightened 1 and 10. Question A is answered (see "Slice 0
+report"); B and C are still the user's. Nothing here is accepted until the user accepts or changes the decisions below. This is roadmap item 11 (handoff), written after Odin's `vendor:` collection
 and the user's request that the way a vendor library is added be **reproducible for every
 library the user brings in later**. So the plan has two parts: a general recipe (what every
 vendor library is, and how one is added), and raylib as the first library built with it. Where
@@ -371,10 +371,12 @@ links X11 by name, so the load fails with a missing-library error, which decisio
 must cover).
 
 **Questions for the user from the spike.**
-- **A. Link glibc dynamically in the Linux `emerald`** (built for glibc 2.28 and later), so
+- **A. Accepted by the user, 2026-11-06: link glibc dynamically in the Linux `emerald`** (built for glibc 2.28 and later), so
   modules can load. The alternative keeps the Linux binary fully static and gives it no module
   loading: vendor libraries would live in a separate games executable on Linux, which breaks
-  "one installation" there. Recommended: link glibc.
+  "one installation" there. The release workflow therefore builds the Linux binary for
+  `x86_64-linux-gnu.2.28` with libc linked; slice 1 makes that change and adds the bare-container
+  check to the release workflow. Windows and macOS are unchanged.
 - **B. Test drawing with the software backend and pixel checksums** instead of a recorded
   command log (decision 11 as amended). Recommended: yes.
 - **C. Measure the frame rate on your Mac and on one slow machine** before slice 2. The
