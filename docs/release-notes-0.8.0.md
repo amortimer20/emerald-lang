@@ -1,5 +1,3 @@
-Draft for the next release, written ahead of it. Revise before tagging if anything below changes, and drop this line.
-
 Emerald 0.8.0 lets you write a type or a function once for every kind of value it holds, and lets an enum's choices carry data. Both come with the plain-words errors, editor help, and guide pages the rest of the language has. It also follows a review of the whole language against a corpus of real beginner mistakes: errors now name what you wrote and what Emerald writes instead, five new warnings catch mistakes that used to pass silently, and about thirty wrong answers and crashes are fixed.
 
 ## Install
