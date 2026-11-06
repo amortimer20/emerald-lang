@@ -77,20 +77,17 @@ jobs:
           docker run --rm -v "$PWD/zig-glibc228/bin:/e" debian:10 /e/emerald --version || true
           docker run --rm -v "$PWD/zig-glibc228/bin:/e" ubuntu:20.04 /e/emerald --version || true
 
-      - name: Software-renderer backend (memory): build, size, pixel checksum
+      - name: Software-renderer backend (memory) build, size, pixel checksum
         shell: bash
-        working-directory: spike/raylib
         run: |
           set +e
-          zig build -Doptimize=ReleaseSafe -Dplatform=memory -Dconfig="-std=gnu11" --prefix ../zig-memory 2>&1 | tail -20
-          cd ..
+          (cd spike/raylib && zig build -Doptimize=ReleaseSafe -Dplatform=memory -Dconfig="-std=gnu11" --prefix ../../zig-memory 2>&1 | tail -20)
           ls -l zig-memory/lib zig-memory/bin 2>/dev/null
           case "$RUNNER_OS" in
-            Linux) lib="$PWD/../zig-memory/lib/libemerald-raylib.so" ;;
-            macOS) lib="$PWD/../zig-memory/lib/libemerald-raylib.dylib" ;;
-            Windows) lib="$PWD/../zig-memory/bin/emerald-raylib.dll" ;;
+            Linux) lib="$PWD/zig-memory/lib/libemerald-raylib.so" ;;
+            macOS) lib="$PWD/zig-memory/lib/libemerald-raylib.dylib" ;;
+            Windows) lib="$PWD/zig-memory/bin/emerald-raylib.dll" ;;
           esac
-          cd ..
           exe=zig-libc/bin/emerald; [ "$RUNNER_OS" = Windows ] && exe=zig-nolibc/bin/emerald.exe
           for i in 1 2; do EMERALD_SPIKE_LIB="$lib" ./$exe run spike/bench/checksum.em; done
           EMERALD_SPIKE_LIB="$lib" ./$exe run spike/bench/frames.em -- calls 60 2000 500

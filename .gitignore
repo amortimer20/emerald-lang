@@ -17,3 +17,5 @@ spike/raylib/.zig-cache/
 /emerald-raylib.dll
 zig-pkg/
 spike/raylib/zig-pkg/
+mem.dll
+out-memory/
