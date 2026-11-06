@@ -24,6 +24,10 @@ jobs:
             asset: emerald-linux-x86_64.tar.gz
             binary: zig-out/bin/emerald
             binary_name: emerald
+            # glibc 2.28 keeps the dynamically linked binary running on old
+            # distributions (Debian 10, Ubuntu 20.04) so vendor native
+            # modules can be loaded with dlopen.
+            zig_target: x86_64-linux-gnu.2.28
           - os: macos-latest
             name: macos-arm64
             architecture: arm64
@@ -31,6 +35,7 @@ jobs:
             asset: emerald-macos-arm64.tar.gz
             binary: zig-out/bin/emerald
             binary_name: emerald
+            zig_target: ""
           - os: windows-latest
             name: windows-x86_64
             architecture: x86_64
@@ -38,6 +43,7 @@ jobs:
             asset: emerald-windows-x86_64.zip
             binary: zig-out/bin/emerald.exe
             binary_name: emerald.exe
+            zig_target: ""
 
     steps:
       - name: Checkout
@@ -67,7 +73,11 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             version="${GITHUB_REF_NAME#v}"
           fi
-          zig build -Doptimize=ReleaseSafe -Dcpu=baseline -Dversion="$version"
+          target_flag=()
+          if [ -n "${{ matrix.zig_target }}" ]; then
+            target_flag=("-Dtarget=${{ matrix.zig_target }}")
+          fi
+          zig build -Doptimize=ReleaseSafe -Dcpu=baseline "${target_flag[@]}" -Dversion="$version"
 
       - name: Package and smoke-test binary
         shell: bash
@@ -105,6 +115,19 @@ jobs:
               shasum -a 256 "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
             fi
           )
+
+      - name: Run the binary in bare containers
+        if: matrix.name == 'linux-x86_64'
+        shell: bash
+        # Proves the binary needs nothing but libc: the images carry no
+        # display libraries.
+        run: |
+          printf 'print("hello")\n' > smoke/hello.em
+          for image in ubuntu:20.04 debian:10; do
+            docker run --rm -v "$PWD/smoke:/e:ro" "$image" /e/emerald --version
+            out="$(docker run --rm -v "$PWD/smoke:/e:ro" "$image" /e/emerald run /e/hello.em)"
+            test "$out" = "hello"
+          done
 
       - name: Upload prepared release asset
         uses: actions/upload-artifact@v4
