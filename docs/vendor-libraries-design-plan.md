@@ -1,8 +1,9 @@
 # Vendor libraries and raylib: design plan
 
-Status: proposed, 2026-11-06. Slice 0 (the spike) has run; its report is below, and it changed
+Status: accepted by the user, 2026-11-06 (all decisions as recommended, with the spike's changes to 2 and
+11); slice 1 is under way. Written as a proposal the same day. Slice 0 (the spike) has run; its report is below, and it changed
 decisions 2 and 11 and tightened 1 and 10. Questions A and B are answered and C is agreed, with its measurements pending (see "Slice 0
-report"). Nothing here is accepted until the user accepts or changes the decisions below. This is roadmap item 11 (handoff), written after Odin's `vendor:` collection
+report"). Do not reopen an accepted decision. This is roadmap item 11 (handoff), written after Odin's `vendor:` collection
 and the user's request that the way a vendor library is added be **reproducible for every
 library the user brings in later**. So the plan has two parts: a general recipe (what every
 vendor library is, and how one is added), and raylib as the first library built with it. Where
