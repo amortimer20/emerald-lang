@@ -8805,6 +8805,9 @@ fn callReduce(
     const closure = block.data.closure;
     for (receiver.data.list.items.items) |item| {
         const arguments = [_]Value{ accumulator, Heap.retain(item) };
+        // The block owns the accumulator now, even when it fails, so the
+        // `errdefer` above must not release it a second time.
+        accumulator = Value.nothing;
         accumulator = try self.invokeClosure(expression.span, closure, callable, &arguments);
     }
     return accumulator;
@@ -8833,6 +8836,9 @@ fn callReduceRight(
         index -= 1;
         const item = receiver.data.list.items.items[index];
         const arguments = [_]Value{ accumulator, Heap.retain(item) };
+        // The block owns the accumulator now, even when it fails, so the
+        // `errdefer` above must not release it a second time.
+        accumulator = Value.nothing;
         accumulator = try self.invokeClosure(expression.span, closure, callable, &arguments);
     }
     return accumulator;
@@ -10917,8 +10923,7 @@ fn floatFormat(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call,
     if (!std.math.isFinite(value)) return self.ownedText(try self.displayFloatAlloc(value));
 
     if (bound.values[0].data == .nothing) {
-        const text = try self.displayFloatAlloc(value);
-        return self.ownedText(if (group_digits) try self.groupFloatText(text) else text);
+        return self.ownedText(try self.groupedIf(group_digits, try self.displayFloatAlloc(value)));
     }
 
     const places = bound.values[0].data.int;
@@ -10929,7 +10934,18 @@ fn floatFormat(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call,
         "Pass a whole number of digits after the decimal point.",
     );
     const fixed = try std.fmt.allocPrint(self.gpa, "{d:.[1]}", .{ value, @as(usize, @intCast(places)) });
-    return self.ownedText(if (group_digits) try self.groupFloatText(fixed) else fixed);
+    return self.ownedText(try self.groupedIf(group_digits, fixed));
+}
+
+/// `text` with thousands separators when `group_digits` asks for them. It takes
+/// `text` either way: grouping frees it on success, and this frees it when
+/// grouping cannot allocate.
+fn groupedIf(self: *Interpreter, group_digits: bool, text: []u8) Error![]u8 {
+    if (!group_digits) return text;
+    return self.groupFloatText(text) catch |err| {
+        self.gpa.free(text);
+        return err;
+    };
 }
 
 /// Inserts thousands separators into the integer part of already-rendered
