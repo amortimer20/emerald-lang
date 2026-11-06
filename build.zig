@@ -53,7 +53,7 @@ pub fn build(b: *std.Build) void {
 
     // The vendor libraries: a registry of their declarations and names for the
     // front end, and each library's module built beside the executable.
-    // `ships = false` libraries (the selftest) are built for the tests only.
+    // A library with `ships = false` (the selftest) is not installed with Emerald.
     var registry_text: std.ArrayList(u8) = .empty;
     registry_text.appendSlice(b.allocator,
         \\pub const Library = struct {
@@ -79,12 +79,11 @@ pub fn build(b: *std.Build) void {
         for (library.names) |name| registry_text.appendSlice(b.allocator, b.fmt(" \"{s}\",", .{name})) catch @panic("out of memory");
         registry_text.appendSlice(b.allocator, b.fmt(" }}, .module = \"{s}\", .error_type = \"{s}\", .ships = {}, .source = @embedFile(\"{s}\") }},\n", .{ library.module, library.error_type, library.ships, import_name })) catch @panic("out of memory");
         const module = library.add(b, target, optimize);
-        if (library.ships) {
-            b.installArtifact(module);
-        } else {
-            const install = b.addInstallArtifact(module, .{ .dest_dir = .{ .override = .{ .custom = "vendor-test-modules" } } });
-            vendor_tests.dependOn(&install.step);
-        }
+        // Every module is installed where the tests look for it; only a
+        // library that ships is installed with Emerald itself.
+        const install_for_tests = b.addInstallArtifact(module, .{ .dest_dir = .{ .override = .{ .custom = "vendor-test-modules" } } });
+        vendor_tests.dependOn(&install_for_tests.step);
+        if (library.ships) b.installArtifact(module);
     }
     registry_text.appendSlice(b.allocator, "};\n") catch @panic("out of memory");
     const registry_module = b.createModule(.{

@@ -224,6 +224,52 @@ test "conformance suite" {
     }
 }
 
+// A vendor library's module and its declarations must agree: a native the
+// module exports but no declaration names would never be called, and a
+// declaration marked `# Native:` with no export would silently run its stub.
+test "every module entry has a declared native, and every declared native an entry" {
+    const gpa = testing.allocator;
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    emerald.Module.search_dirs = &.{build_options.vendor_module_dir};
+
+    for (emerald.Vendor.libraries) |library| {
+        const loaded = try emerald.Module.load(arena, library.module);
+        try testing.expectEqualStrings(library.name, std.mem.span(loaded.table.library));
+
+        for (loaded.table.entries[0..loaded.table.entry_count]) |entry| {
+            const name = std.mem.span(entry.name);
+            const split = std.mem.indexOf(u8, name, "::") orelse return error.BadEntryName;
+            const declaration = try std.fmt.allocPrint(arena, "func {s}.{s}(", .{ name[0..split], name[split + 2 ..] });
+            if (std.mem.indexOf(u8, library.source, declaration) == null) {
+                std.debug.print("\n{s}: the module exports `{s}`, but no `{s}` is declared\n", .{ library.name, name, declaration });
+                return error.UndeclaredEntry;
+            }
+        }
+
+        var after_marker = false;
+        var lines = std.mem.splitScalar(u8, library.source, '\n');
+        while (lines.next()) |line| {
+            const trimmed = std.mem.trim(u8, line, " \t\r");
+            if (std.mem.startsWith(u8, trimmed, "# Native:")) {
+                after_marker = true;
+                continue;
+            }
+            if (!after_marker) continue;
+            after_marker = false;
+            const header = std.mem.trimStart(u8, trimmed, "func ");
+            const dot = std.mem.indexOfScalar(u8, header, '.') orelse return error.BadNativeDeclaration;
+            const open = std.mem.indexOfScalar(u8, header, '(') orelse return error.BadNativeDeclaration;
+            const entry_name = try std.fmt.allocPrint(arena, "{s}::{s}", .{ header[0..dot], header[dot + 1 .. open] });
+            if (loaded.find(entry_name) == null) {
+                std.debug.print("\n{s}: `{s}` is marked `# Native:` but the module exports no `{s}`\n", .{ library.name, header[0..open], entry_name });
+                return error.MissingEntry;
+            }
+        }
+    }
+}
+
 // Section 3.4 starts `else`, `catch`, and `finally` on their own lines, in
 // both brace styles. The formatter writes them that way, but most conformance
 // cases are never formatted, because many exercise layouts the formatter would

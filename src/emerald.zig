@@ -4634,7 +4634,13 @@ test "every prelude body checks cleanly, reached or not" {
     const gpa = testing.allocator;
     var program_source = try Source.init(gpa, "main.em", "print(1)\n");
     defer program_source.deinit(gpa);
-    var prelude_source = try Source.init(gpa, "prelude.em", prelude_text);
+    // With every vendor library's declarations after the prelude's, so a
+    // mistake in one that no program reaches is found as well.
+    var every_library: Vendor.Set = .empty;
+    for (0..Vendor.libraries.len) |index| every_library.set(index);
+    const with_libraries = try Vendor.extendedPrelude(gpa, prelude_text, every_library);
+    defer if (with_libraries) |text| gpa.free(text);
+    var prelude_source = try Source.init(gpa, "prelude.em", with_libraries orelse prelude_text);
     defer prelude_source.deinit(gpa);
     const files = [_]Project.File{
         .{ .source = program_source, .namespace = "", .entry = true },
@@ -4665,6 +4671,44 @@ test "every prelude body checks cleanly, reached or not" {
     }
     try testing.expectEqual(0, checked.diagnostics.len);
     try testing.expectEqual(null, checked.prelude_reached);
+}
+
+test "a vendor library's declarations load only when a program names it" {
+    const gpa = testing.allocator;
+    Vendor.test_libraries = true;
+    defer Vendor.test_libraries = false;
+
+    const cases = [_]struct { text: []const u8, named: bool }{
+        .{ .text = "print(Selftest.add(1, 2))\n", .named = true },
+        .{ .text = "const counter: SelftestCounter = Selftest.counter()\n", .named = true },
+        .{ .text = "# Selftest is mentioned in a comment\n", .named = true },
+        .{ .text = "print(1)\n", .named = false },
+        .{ .text = "const SelftestX = 1\nconst my_Selftest = 2\n", .named = false },
+    };
+    for (cases) |case| {
+        var source = try Source.init(gpa, "main.em", case.text);
+        defer source.deinit(gpa);
+        const files = [_]Project.File{.{ .source = source, .namespace = "", .entry = true }};
+        try testing.expectEqual(case.named, Vendor.named(&files).count() != 0);
+    }
+
+    // A program that names one analyzes cleanly, for the editor's analysis too.
+    var source = try Source.init(gpa, "main.em", "print(Selftest.add(1, 2))\n");
+    defer source.deinit(gpa);
+    var files = [_]Project.File{.{ .source = source, .namespace = "", .entry = true }};
+    const project: Project = .{ .files = &files, .entry = 0, .bad_directories = &.{} };
+    var analysis = (try analyzeProject(gpa, &project)).?;
+    defer analysis.deinit(gpa);
+    try testing.expectEqual(@as(usize, 0), analysis.checked.diagnostics.len);
+    var report = try checkProject(gpa, &project);
+    defer report.deinit();
+    try testing.expectEqual(@as(usize, 0), report.diagnostics.len);
+
+    // The library is not there for a release build, where the name is unknown.
+    Vendor.test_libraries = false;
+    var hidden = try checkProject(gpa, &project);
+    defer hidden.deinit();
+    try testing.expect(hidden.diagnostics.len != 0);
 }
 
 test "the prelude's syntax tree, built with Emerald, matches parsing it now" {
