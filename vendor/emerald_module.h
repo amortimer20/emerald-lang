@@ -7,6 +7,9 @@
  * window, an image, a sound) stays inside the module and crosses as an integer
  * handle that the module owns. No callbacks, pointers, or lists cross.
  *
+ * An error's message is UTF-8 text: its first line is the message and any lines
+ * after it are the help, what the reader should try. Say what to try.
+ *
  * Memory: text, bytes, and error messages that a native returns belong to the
  * module and must stay valid until the next call into the module. Emerald
  * copies them at once. Arguments belong to Emerald and are valid only for the
@@ -35,7 +38,7 @@ enum {
     EM_FLOAT = 3,
     EM_TEXT = 4,  /* UTF-8, not zero-terminated */
     EM_BYTES = 5,
-    EM_ERROR = 6, /* a native's failure: `as.bytes` is the message, UTF-8 */
+    EM_ERROR = 6, /* a native's failure: `as.bytes` is the message, then help */
 };
 
 typedef struct EmValue {

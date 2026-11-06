@@ -1,3 +1,4 @@
 vendor-errors/selftest/always-fails.em:2:1: SelftestError: the selftest library always fails here
   Selftest.fails()
   ^^^^^^^^^^^^^^^^
+It exists to test Emerald, so it fails on purpose.

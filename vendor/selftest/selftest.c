@@ -55,7 +55,7 @@ static EmValue ping(const EmValue *a, size_t n) {
 static EmValue always_fails(const EmValue *a, size_t n) {
     (void)a;
     (void)n;
-    return fail("the selftest library always fails here");
+    return fail("the selftest library always fails here\nIt exists to test Emerald, so it fails on purpose.");
 }
 
 /* Counters: an opaque resource held as an integer handle. */
@@ -81,13 +81,13 @@ static int live(int64_t handle) {
 
 static EmValue counter_next(const EmValue *a, size_t n) {
     (void)n;
-    if (!live(a[0].as.integer)) return fail("that counter is closed");
+    if (!live(a[0].as.integer)) return fail("that counter is closed\nOpen a new one with `Selftest.counter()`.");
     return em_int(++counters[a[0].as.integer - 1]);
 }
 
 static EmValue counter_close(const EmValue *a, size_t n) {
     (void)n;
-    if (!live(a[0].as.integer)) return fail("that counter is closed");
+    if (!live(a[0].as.integer)) return fail("that counter is closed\nOpen a new one with `Selftest.counter()`.");
     open_counters[a[0].as.integer - 1] = 0;
     return em_nothing();
 }

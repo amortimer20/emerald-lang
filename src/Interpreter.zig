@@ -6522,10 +6522,14 @@ fn callVendor(self: *Interpreter, expression: *const Ast.Expression, call: Ast.E
         },
         .bytes => try self.heap.copyBytes(result.slice()),
         .@"error" => blk: {
-            const message = self.arena.dupe(u8, result.slice()) catch return error.OutOfMemory;
+            // The first line is the message; any lines after it are the help.
+            const whole = result.slice();
+            const split = std.mem.indexOfScalar(u8, whole, '\n');
+            const message = self.arena.dupe(u8, whole[0 .. split orelse whole.len]) catch return error.OutOfMemory;
+            const help = if (split) |at| self.arena.dupe(u8, std.mem.trim(u8, whole[at + 1 ..], " \r\n")) catch return error.OutOfMemory else "";
             const error_key = std.fmt.allocPrint(self.arena, Resolver.prelude_namespace ++ ".{s}", .{library.error_type}) catch return error.OutOfMemory;
             self.task.state.raised_value = self.makeError(error_key, message) catch return error.OutOfMemory;
-            break :blk self.raiseTyped(expression.span, library.error_type, message, "");
+            break :blk self.raiseTyped(expression.span, library.error_type, message, help);
         },
     };
 }
