@@ -486,7 +486,9 @@ compiler), or the compiler depends on it.
    shows beginner games run well enough.
    The plan is [`vendor-libraries-design-plan.md`](vendor-libraries-design-plan.md) (proposed
    2026-11-06, awaiting the user): a reproducible recipe for any vendor library, with raylib first,
-   a spike (slice 0) to settle the module and frame-rate questions before anything merges.
+   slice 0 (the spike, branch `claude/raylib-spike`, not for merge) has run and reported in the plan:
+   the module approach works on all three systems, Linux needs a glibc-linked `emerald`, and the software
+   backend gives identical pixels everywhere; three questions (A, B, C) wait for the user.
 
 Suggested order: 3 first (it needs the user's decisions) while 8 and 9 proceed; then 4 (the audit,
 then the slices, networking last), 5 and 7, all done, as are 8 and 9; 6 moved after 1.0. Now 10,

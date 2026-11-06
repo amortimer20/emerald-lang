@@ -1,7 +1,8 @@
 # Vendor libraries and raylib: design plan
 
-Status: proposed, 2026-11-06. Nothing here is accepted until the user accepts or changes the
-decisions below. This is roadmap item 11 (handoff), written after Odin's `vendor:` collection
+Status: proposed, 2026-11-06. Slice 0 (the spike) has run; its report is below, and it changed
+decisions 2 and 11 and tightened 1 and 10. Three questions are the user's (see "Slice 0
+report"). Nothing here is accepted until the user accepts or changes the decisions below. This is roadmap item 11 (handoff), written after Odin's `vendor:` collection
 and the user's request that the way a vendor library is added be **reproducible for every
 library the user brings in later**. So the plan has two parts: a general recipe (what every
 vendor library is, and how one is added), and raylib as the first library built with it. Where
@@ -154,7 +155,8 @@ Each carries a recommendation. The alternatives are kept for the record.
    repository, like the Unicode tables. That removes the one fetch but adds 15 MB of C and a
    review burden on every upgrade.
 
-2. **Each vendor library builds as its own dynamic module loaded on first use (recommended),**
+2. **Each vendor library builds as its own dynamic module loaded on first use (recommended;
+   the spike confirmed it works, with one cost on Linux, below),**
    not linked into `emerald`. The release archive carries `lib/emerald-raylib.{so,dylib,dll}`
    beside the binary; the install scripts already extract the whole archive. A program that
    never names `Graphics` never loads it, so `emerald` is the same size and the same
@@ -232,7 +234,13 @@ Each carries a recommendation. The alternatives are kept for the record.
     interface do not depend on the engine that calls them. This is the question the handoff
     left open ("interpreter or compiler first"); the gate answers it with a number.
 
-11. **Headless testing is a recorded command log (recommended).** The glue sits above raylib,
+11. **Headless testing is raylib's software backend, compared by pixel checksum (recommended,
+    changed by the spike).** The first draft recommended a recorded command log, because the
+    software backend did not build in the probe. The spike built it with three small fixes and
+    it drew **byte-identical pixels on Windows, macOS, and Linux** (one checksum, three
+    systems), so CI can test real drawing with no display and no extra glue. The command log
+    below stays as the fallback if input scripting or a future raylib breaks the software
+    backend. The original recommendation, a recorded command log: the glue sits above raylib,
     so it has a `headless` mode (`EMERALD_GRAPHICS=headless`, and always on under `zig build
     test`) that never opens a window: every draw call appends a line to a log the program can
     read with `Graphics.recorded()`, and input comes from a script. Conformance cases assert
@@ -289,6 +297,90 @@ no-device case (a laptop with no speakers must not crash a program).
 needed. May be dropped.
 
 Later, on the same recipe and with the user's go: `Gui` (raygui), 3D, and further libraries.
+
+## Slice 0 report (2026-11-06)
+
+The spike is the branch `claude/raylib-spike` (not for merge; delete it once this plan is
+accepted). It builds raylib 6.2 into an eight-function C-ABI module, loads it from the
+interpreter through a throwaway `Gfx` class, and ran on this Windows machine and, through a
+workflow, on GitHub's Ubuntu, macOS, and Windows runners (run 42238784259). It answers the
+plan's open questions:
+
+**Can the interpreter call into a module?** Yes, on all three systems. Three things were
+learned on the way:
+- Zig 0.17's `std.DynLib` has **no Windows support**; the spike declares `LoadLibraryA` and
+  `GetProcAddress` itself. The macOS path (`dlopen` through `std.DynLib`) works unchanged.
+- On Linux, `std.DynLib` falls back to a pure-Zig ELF loader when the program does not link
+  libc, and that loader **cannot load a module that has its own dependencies** (libc, libX11):
+  the spike segfaulted at the first call. With `emerald` linked against glibc, the system's
+  `dlopen` loads the module and it drew frames under a virtual display (Xvfb).
+- Linking glibc makes the Linux `emerald` a dynamic executable that needs only `libc.so.6`.
+  Built for `x86_64-linux-gnu.2.28`, it ran in `debian:10` and `ubuntu:20.04` containers with
+  no X11 or GL installed, so principle 2 holds in spirit (no display libraries needed) but not
+  in letter (the Linux binary is no longer fully static, and an Alpine or other musl system
+  needs glibc compatibility). **This is question A for the user.**
+
+**Frame rate (decision 10).** On this machine (16 cores, ReleaseSafe, vsync off, a window
+open), updating 500 objects takes 1.1 ms a frame, and drawing 2,000 circles through the module
+adds 10 ms for the loop and the calls, so **87 frames a second for 2,000 shapes and 500
+entities, and 38 for 5,000 shapes**. In the 2,000-shape frame, about 3.2 ms is the
+interpreter running the drawing loop itself and about 2.9 ms is the 2,000 module calls
+including raylib's own drawing (roughly 1.5 microseconds a call). So the module boundary is
+not the cost; the interpreter's loop is, and batching calls would help only the smaller part.
+On GitHub's shared runners with raylib's software renderer, the draw-only case (2,000 shapes)
+ran at 78 frames a second on Linux, 76 on Windows, and 58 on macOS. The gate (60 frames a
+second on the three release machines) is **met on the one real machine measured and not
+proven on a school-class laptop or a Mac**, which the spike had no access to. **This is
+question C for the user.**
+
+**Headless backend (decision 11).** raylib's `memory` platform builds with three fixes that
+our own build file applies, none of them in raylib's code: compile as C11 (`-std=gnu11`),
+add the build root to the include path (`rlsw.h` includes itself by a path relative to it),
+and link `winmm` on Windows. It renders in software and, read back with `LoadImageFromScreen`,
+gave the same checksum (`1779814050833076541`, FNV-1a over the pixels) for the same drawing
+on all three systems, on every run. The module is 1.9 MB on Windows, 1.5 MB on macOS, and
+7.0 MB on Linux (debug information included). **This is question B for the user.** Not
+tried: scripting keyboard and mouse input into this backend; slice 2 settles it.
+
+**Real windows in CI.** On GitHub's hosted Windows and macOS runners, opening a window
+crashes (no display or GPU), so a real-window smoke test is possible only on Linux under
+Xvfb, as decision 11 already says. The manual per-release pass stays.
+
+**Sizes (ReleaseSafe, GLFW backend).** Windows module 2.1 MB, macOS 1.8 MB, Linux 7.6 MB
+(unstripped). The macOS module depends only on system frameworks (AppKit, CoreGraphics, IOKit
+and the like); the Linux module on libX11 and its dependencies, plus libc and libm.
+
+**Build facts for the recipe.**
+- raylib's `build.zig.zon` lists a lazy dependency, `xcode_frameworks`, fetched from
+  `pkg.machengine.org`, a third party's host. A native macOS build asked for it anyway and
+  panicked at configure time until the spike listed it in its own `build.zig.zon`. So a
+  vendor library's pin must also list its dependencies' lazy dependencies, and a third-party
+  host is a release risk worth a mirror or a copy if it ever fails.
+- Linux needs the X11 and GL development packages to build the module (`libx11-dev`,
+  `libgl1-mesa-dev`, `libxrandr-dev`, `libxinerama-dev`, `libxcursor-dev`, `libxi-dev`), and
+  Xvfb with Mesa to run it. Zig 0.17 keeps fetched packages in the project's `zig-pkg/`
+  folder, which the repository must ignore.
+- Building the GLFW module takes 1.5 to 3 minutes per system, so the release workflow grows
+  by that much per vendor library.
+
+**What the spike did not settle.** A real-window run on macOS and on a weak machine; input
+scripting in the software backend; whether the native-call cache matters (the spike's check
+sits first in the dispatch chain, and a native placed later pays more string comparisons per
+call); and what a Linux machine without the X11 libraries sees when it loads the module (it
+links X11 by name, so the load fails with a missing-library error, which decision 2's message
+must cover).
+
+**Questions for the user from the spike.**
+- **A. Link glibc dynamically in the Linux `emerald`** (built for glibc 2.28 and later), so
+  modules can load. The alternative keeps the Linux binary fully static and gives it no module
+  loading: vendor libraries would live in a separate games executable on Linux, which breaks
+  "one installation" there. Recommended: link glibc.
+- **B. Test drawing with the software backend and pixel checksums** instead of a recorded
+  command log (decision 11 as amended). Recommended: yes.
+- **C. Measure the frame rate on your Mac and on one slow machine** before slice 2. The
+  spike's program is `spike/bench/frames.em`, run against the module built by
+  `spike/raylib/build.zig`. Recommended: yes, ten minutes each; if either misses 60 frames a
+  second at 2,000 shapes, the plan's fallback is the compiler.
 
 ## Validation
 
