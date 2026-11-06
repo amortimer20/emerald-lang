@@ -92,6 +92,7 @@ pub fn main(init: std.process.Init) !u8 {
 
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     if (args.len < 2) return printGlobalHelp(io);
+    setModuleSearch(init, io);
     if (std.mem.eql(u8, args[1], "--version")) {
         if (args.len == 2) return printVersion(io);
         return commandMisuse(io, null, "`--version` must be used on its own");
@@ -180,6 +181,29 @@ pub fn main(init: std.process.Init) !u8 {
 /// Section 15.8's `TimeZone.local` for one invocation, allocated in `arena`.
 /// Whatever cannot be read or understood leaves the program in UTC, as glibc
 /// does, rather than stopping it.
+/// Where library modules are looked for (docs/vendor-libraries-design-plan.md,
+/// decision 2): the directories in `EMERALD_MODULE_PATH` first, then `lib`
+/// beside the executable and beside its directory. The arena lives for the
+/// whole run, so the slice stays valid.
+fn setModuleSearch(init: std.process.Init, io: std.Io) void {
+    const arena = init.arena.allocator();
+    var directories: std.ArrayList([]const u8) = .empty;
+    if (init.environ_map.get("EMERALD_MODULE_PATH")) |list| {
+        var parts = std.mem.splitScalar(u8, list, std.fs.path.delimiter);
+        while (parts.next()) |part| {
+            if (part.len != 0) directories.append(arena, part) catch return;
+        }
+    }
+    if (std.process.executableDirPathAlloc(io, arena)) |executable_dir| {
+        directories.append(arena, std.fs.path.join(arena, &.{ executable_dir, "lib" }) catch return) catch return;
+        directories.append(arena, std.fs.path.join(arena, &.{ executable_dir, "..", "lib" }) catch return) catch return;
+    } else |_| {}
+    emerald.Module.search_dirs = directories.items;
+    // Contributors: the test-only libraries load when this is set, to try the
+    // mechanism by hand (docs/vendor-libraries.md).
+    if (init.environ_map.get("EMERALD_VENDOR_TEST") != null) emerald.Vendor.test_libraries = true;
+}
+
 fn resolveLocalZone(arena: std.mem.Allocator, io: std.Io, environ_map: *const std.process.Environ.Map) TimeZone.Local {
     if (builtin.os.tag == .windows) return windowsZone(arena);
     var link_buffer: [std.fs.max_path_bytes]u8 = undefined;

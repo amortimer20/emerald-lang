@@ -52,6 +52,10 @@ jobs:
         shell: bash
         run: bash tools/check-toolchain.sh
 
+      - name: Check the vendor library recipe
+        shell: bash
+        run: bash tools/check-vendor.sh
+
       - name: Run test suite
         shell: bash
         run: zig build test -Doptimize=${{ matrix.optimize }} ${{ matrix.test_flags }}
@@ -89,3 +93,33 @@ jobs:
       - name: Run fixed fuzz campaign
         shell: bash
         run: zig build fuzz -Doptimize=ReleaseSafe -- 12648430 1000
+
+  bare-container:
+    name: bare container (glibc 2.28)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain with Mise
+        uses: jdx/mise-action@v2
+
+      - name: Validate toolchain
+        shell: bash
+        run: bash tools/check-toolchain.sh
+
+      - name: Build for glibc 2.28
+        shell: bash
+        run: zig build -Doptimize=ReleaseSafe -Dcpu=baseline -Dtarget=x86_64-linux-gnu.2.28
+
+      - name: Run in a bare container
+        shell: bash
+        # The image carries no display libraries: emerald must need only libc.
+        run: |
+          mkdir -p bare
+          cp zig-out/bin/emerald bare/emerald
+          printf 'print("hello")\n' > bare/hello.em
+          docker run --rm -v "$PWD/bare:/e:ro" ubuntu:20.04 /e/emerald --version
+          out="$(docker run --rm -v "$PWD/bare:/e:ro" ubuntu:20.04 /e/emerald run /e/hello.em)"
+          test "$out" = "hello"

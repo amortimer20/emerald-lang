@@ -1,0 +1,4 @@
+vendor-errors/selftest/undeclarable-type.em:1:1: the native `Selftest._takes_list` is declared with a type a library module cannot carry
+  Selftest.takes_list([1, 2, 3])
+  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Natives take and give only nothing, Bool, Int, Float, String, and Bytes.

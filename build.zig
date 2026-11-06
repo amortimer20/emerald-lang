@@ -1,4 +1,5 @@
 const std = @import("std");
+const vendor = @import("vendor/libraries.zig");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -7,10 +8,16 @@ pub fn build(b: *std.Build) void {
     // shipped. Release automation overrides this from its vX.Y.Z tag.
     const version = b.option([]const u8, "version", "Version string printed by `emerald --version`") orelse "0.7.0-dev";
 
+    // Vendor libraries load as shared libraries (docs/vendor-libraries-design-plan.md,
+    // decision 2). On Linux that needs the system loader, which only a program
+    // linked against glibc has; the release workflow builds for glibc 2.28.
+    const link_libc: ?bool = if (target.result.os.tag == .linux and target.result.abi.isGnu()) true else null;
+
     const emerald_module = b.createModule(.{
         .root_source_file = b.path("src/emerald.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = link_libc,
     });
 
     // The prelude's syntax tree is parsed when Emerald is built and compiled
@@ -44,6 +51,49 @@ pub fn build(b: *std.Build) void {
     // default User-Agent, just as the executable prints it for --version.
     emerald_module.addOptions("version_options", version_options);
 
+    // The vendor libraries: a registry of their declarations and names for the
+    // front end, and each library's module built beside the executable.
+    // A library with `ships = false` (the selftest) is not installed with Emerald.
+    var registry_text: std.ArrayList(u8) = .empty;
+    registry_text.appendSlice(b.allocator,
+        \\pub const Library = struct {
+        \\    name: []const u8,
+        \\    names: []const []const u8,
+        \\    module: []const u8,
+        \\    error_type: []const u8,
+        \\    ships: bool,
+        \\    source: []const u8,
+        \\};
+        \\
+        \\pub const libraries = [_]Library{
+        \\
+    ) catch @panic("out of memory");
+    const registry_files = b.addWriteFiles();
+    var registry_imports: std.ArrayList(std.Build.Module.Import) = .empty;
+    const vendor_tests = b.step("vendor-test-modules", "Build the test-only vendor modules");
+    for (vendor.all) |library| {
+        const import_name = b.fmt("vendor_{s}_source", .{library.name});
+        const source_module = b.createModule(.{ .root_source_file = b.path(b.fmt("vendor/{s}/{s}.em", .{ library.name, library.name })) });
+        registry_imports.append(b.allocator, .{ .name = import_name, .module = source_module }) catch @panic("out of memory");
+        registry_text.appendSlice(b.allocator, b.fmt("    .{{ .name = \"{s}\", .names = &.{{", .{library.name})) catch @panic("out of memory");
+        for (library.names) |name| registry_text.appendSlice(b.allocator, b.fmt(" \"{s}\",", .{name})) catch @panic("out of memory");
+        registry_text.appendSlice(b.allocator, b.fmt(" }}, .module = \"{s}\", .error_type = \"{s}\", .ships = {}, .source = @embedFile(\"{s}\") }},\n", .{ library.module, library.error_type, library.ships, import_name })) catch @panic("out of memory");
+        const module = library.add(b, target, optimize);
+        // Every module is installed where the tests look for it; only a
+        // library that ships is installed with Emerald itself.
+        const install_for_tests = b.addInstallArtifact(module, .{ .dest_dir = .{ .override = .{ .custom = "vendor-test-modules" } } });
+        vendor_tests.dependOn(&install_for_tests.step);
+        if (library.ships) b.installArtifact(module);
+    }
+    registry_text.appendSlice(b.allocator, "};\n") catch @panic("out of memory");
+    const registry_module = b.createModule(.{
+        .root_source_file = registry_files.add("vendor_registry.zig", registry_text.items),
+        .target = target,
+        .optimize = optimize,
+        .imports = registry_imports.items,
+    });
+    emerald_module.addImport("vendor_registry", registry_module);
+
     // The conformance suite reads Emerald files at test time, from these
     // directories relative to the repository root, where its run step starts.
     // Zig 0.17 no longer accepts a directory as an option path, so they are
@@ -54,6 +104,9 @@ pub fn build(b: *std.Build) void {
     test_options.addOption([]const u8, "examples_dir", "examples");
     test_options.addOption([]const u8, "docs_dir", "docs");
     test_options.addOption([]const u8, "benchmarks_dir", "benchmarks");
+    // Where the `vendor-test-modules` step installs the test-only vendor modules, relative to the
+    // repository root like the other directories (the default prefix).
+    test_options.addOption([]const u8, "vendor_module_dir", "zig-out/vendor-test-modules");
 
     const conformance_module = b.createModule(.{
         .root_source_file = b.path("src/conformance.zig"),
@@ -67,6 +120,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = link_libc,
         .imports = &.{.{ .name = "emerald", .module = emerald_module }},
     });
     const exe = b.addExecutable(.{
@@ -104,6 +158,7 @@ pub fn build(b: *std.Build) void {
     // so an edited `.expected` file must not leave a cached pass in place.
     run_conformance.setCwd(b.path("."));
     run_conformance.has_side_effects = true;
+    run_conformance.step.dependOn(vendor_tests);
 
     // `Repl.zig` is `main.zig`'s sibling, not `emerald_module`'s, so its own
     // tests (the completeness heuristic) need their own module: `zig build

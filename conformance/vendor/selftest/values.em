@@ -1,0 +1,11 @@
+# Every kind of value a native module carries, in and out.
+print(Selftest.add(40, 2))
+print(Selftest.add(-7, 7))
+print(Selftest.halve(5.0))
+print(Selftest.invert(true))
+print(Selftest.invert(false))
+print(Selftest.shout("hello, wörld"))
+print(Selftest.shout("").count)
+print(Selftest.reverse(Bytes.from_hex("010203ff")).to_hex())
+Selftest.ping()
+print("done")

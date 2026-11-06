@@ -9,6 +9,10 @@ It has two audiences:
 - [`language/`](language/) explains how to write Emerald programs.
 - [`library/`](library/) records the standard-library surface and its behavior.
 
+For maintainers, [`vendor-libraries.md`](vendor-libraries.md) is the recipe for adding a
+native vendor library (`Graphics` on raylib is the first), and its design plan is
+[`vendor-libraries-design-plan.md`](vendor-libraries-design-plan.md).
+
 `rewrite-context.md` remains the design baseline. The guides and reference translate settled
 design into material a programmer can use; they do not silently redefine the language.
 

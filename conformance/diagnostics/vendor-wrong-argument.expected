@@ -1,0 +1,4 @@
+diagnostics/vendor-wrong-argument.em:1:20: this is String, but parameter `first` of `Selftest.add` needs Int
+  print(Selftest.add("two", 3))
+                     ^^^^^
+Pass a value of the expected type, or convert it first.

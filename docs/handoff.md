@@ -13,6 +13,13 @@ workflow green, all three assets and `SHA256SUMS`, install scripts checked, rele
 code. The user deploys the website, including `emerald-website` `35c6a9d` (Path separator, Set
 order, message text). The user's order: wider allocation-failure run (done), then raylib as the
 first vendor library (design plan first), then review the compiler plan and finish loose ends.
+Raylib is under way: the plan is accepted (`vendor-libraries-design-plan.md`), the slice 0 spike ran
+(branch `claude/raylib-spike`, not for merge; delete it once convenient), and slice 1, the vendor
+library mechanism, is on `claude/vendor-mechanism`: a module interface (`vendor/emerald_module.h`),
+the loader (`src/Module.zig`), declarations that join the prelude only when a program names a
+library (`src/Vendor.zig`), the test-only `vendor/selftest` library, `vendor/_template`,
+`tools/check-vendor.sh`, and the how-to `vendor-libraries.md`. The user still owes the frame-rate
+measurement on a Mac and a slow machine (question C of the plan) before slice 2, `Graphics`.
 Earlier status: `v0.8.0-rc1` was published as a prerelease. The codebase review
 (roadmap item 10) has reported and been triaged in [`review/triage.md`](review/triage.md), with
 every decision accepted. Fix batches 1, 2 and 3 are merged (PRs #57–#66; the journal has each).

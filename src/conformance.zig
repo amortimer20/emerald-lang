@@ -16,6 +16,8 @@
 //!   conformance/http/            runs against Emerald's local HTTP test server
 //!   conformance/local-zone/      runs with `TimeZone.local` set to `EST5EDT`
 //!   conformance/runtime-errors/  runs, then fails with exactly its `.expected`
+//!   conformance/vendor/          runs with the test-only vendor library loaded
+//!   conformance/vendor-errors/   the same, then fails with exactly its `.expected`
 //!
 //! A case is usually one `.em` file. A directory holding a `main.em` is one
 //! case too — a whole project, per section 14.1 — and its `.expected` sits
@@ -137,6 +139,8 @@ const Kind = enum {
     http,
     local_zone,
     runtime_errors,
+    vendor,
+    vendor_errors,
     format,
     repl,
     lsp,
@@ -151,6 +155,8 @@ const Kind = enum {
         if (std.mem.eql(u8, directory, "http")) return .http;
         if (std.mem.eql(u8, directory, "local-zone")) return .local_zone;
         if (std.mem.eql(u8, directory, "runtime-errors")) return .runtime_errors;
+        if (std.mem.eql(u8, directory, "vendor")) return .vendor;
+        if (std.mem.eql(u8, directory, "vendor-errors")) return .vendor_errors;
         if (std.mem.eql(u8, directory, "format")) return .format;
         if (std.mem.eql(u8, directory, "repl")) return .repl;
         if (std.mem.eql(u8, directory, "lsp")) return .lsp;
@@ -201,6 +207,12 @@ test "conformance suite" {
 
     try testing.expect(cases.len > 0);
 
+    // The test-only vendor library (vendor/selftest) takes part, and its module
+    // is where the `vendor-test-modules` build step installed it.
+    emerald.Vendor.test_libraries = true;
+    emerald.Module.search_dirs = &.{build_options.vendor_module_dir};
+    defer emerald.Vendor.test_libraries = false;
+
     var failures: usize = 0;
     for (cases) |case| {
         failures += try runCase(gpa, io, root, case);
@@ -209,6 +221,54 @@ test "conformance suite" {
     if (failures != 0) {
         std.debug.print("\n{d} of {d} conformance cases failed\n", .{ failures, cases.len });
         return error.ConformanceFailed;
+    }
+}
+
+// A vendor library's module and its declarations must agree: a native the
+// module exports but no declaration names would never be called, and a
+// declaration marked `# Native:` with no export would silently run its stub.
+test "every module entry has a declared native, and every declared native an entry" {
+    const gpa = testing.allocator;
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    emerald.Module.search_dirs = &.{build_options.vendor_module_dir};
+
+    for (emerald.Vendor.libraries) |library| {
+        const loaded = try emerald.Module.load(arena, library.module);
+        try testing.expectEqualStrings(library.name, std.mem.span(loaded.table.library));
+
+        for (loaded.table.entries[0..loaded.table.entry_count]) |entry| {
+            const name = std.mem.span(entry.name);
+            const split = std.mem.indexOf(u8, name, "::") orelse return error.BadEntryName;
+            const declaration = try std.fmt.allocPrint(arena, "func {s}.{s}(", .{ name[0..split], name[split + 2 ..] });
+            if (std.mem.indexOf(u8, library.source, declaration) == null) {
+                std.debug.print("\n{s}: the module exports `{s}`, but no `{s}` is declared\n", .{ library.name, name, declaration });
+                return error.UndeclaredEntry;
+            }
+        }
+
+        var after_marker = false;
+        var lines = std.mem.splitScalar(u8, library.source, '\n');
+        while (lines.next()) |line| {
+            const trimmed = std.mem.trim(u8, line, " \t\r");
+            if (std.mem.startsWith(u8, trimmed, "# Native:")) {
+                after_marker = true;
+                continue;
+            }
+            if (!after_marker) continue;
+            // A comment may run on for several lines before the declaration.
+            if (trimmed.len == 0 or trimmed[0] == '#') continue;
+            after_marker = false;
+            const header = std.mem.trimStart(u8, trimmed, "func ");
+            const dot = std.mem.indexOfScalar(u8, header, '.') orelse return error.BadNativeDeclaration;
+            const open = std.mem.indexOfScalar(u8, header, '(') orelse return error.BadNativeDeclaration;
+            const entry_name = try std.fmt.allocPrint(arena, "{s}::{s}", .{ header[0..dot], header[dot + 1 .. open] });
+            if (loaded.find(entry_name) == null) {
+                std.debug.print("\n{s}: `{s}` is marked `# Native:` but the module exports no `{s}`\n", .{ library.name, header[0..open], entry_name });
+                return error.MissingEntry;
+            }
+        }
     }
 }
 
@@ -501,7 +561,7 @@ fn produce(
             defer report.deinit();
             return try renderDiagnostics(gpa, sources, report.diagnostics);
         },
-        .run, .color, .http, .local_zone, .runtime_errors => {
+        .run, .color, .http, .local_zone, .runtime_errors, .vendor, .vendor_errors => {
             var out: std.Io.Writer.Allocating = .init(gpa);
             defer out.deinit();
 
@@ -533,7 +593,7 @@ fn produce(
                 return null;
             }
 
-            if (kind == .run or kind == .color or kind == .http or kind == .local_zone) {
+            if (kind == .run or kind == .color or kind == .http or kind == .local_zone or kind == .vendor) {
                 if (report.failure) |failure| {
                     const rendered = try renderDiagnostics(gpa, sources, &.{failure});
                     defer gpa.free(rendered);

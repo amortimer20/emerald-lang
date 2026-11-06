@@ -21,6 +21,8 @@ project files, to catch formatting that breaks valid syntax. No cases are exclud
 | `http/` | The program runs against a local HTTP server; its base address is `Program.arguments[0]`. |
 | `local-zone/` | The program runs with `TimeZone.local` set to `EST5EDT`, the United States' Eastern rules, so changes of clocks are the same everywhere. |
 | `runtime-errors/` | The program runs, then fails with exactly its `.expected` file. |
+| `vendor/` | The program runs with the test-only vendor library (`vendor/selftest`) loaded and prints exactly its `.expected` file; cases sit in a folder named for the library. |
+| `vendor-errors/` | The same, then the program fails with exactly its `.expected` file. |
 | `format/` | `emerald format` produces exactly its `.expected` file, and formatting that output again changes nothing. |
 | `repl/` | A `.input` session produces exactly its `.expected` transcript, on 50 consecutive runs. |
 | `lsp/` | A marked document produces exactly the selected framed LSP reply, on 50 consecutive runs. |

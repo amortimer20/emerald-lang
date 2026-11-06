@@ -1,0 +1,11 @@
+# A native resource crosses as an integer handle that the type wraps.
+const first = Selftest.counter(10)
+const second = Selftest.counter()
+print(first.next())
+print(first.next())
+print(second.next())
+print(Selftest.open_count())
+first.close()
+print(Selftest.open_count())
+second.close()
+print(Selftest.open_count())

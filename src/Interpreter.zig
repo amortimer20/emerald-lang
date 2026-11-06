@@ -35,6 +35,8 @@ const FloatMath = @import("FloatMath.zig");
 const Diagnostic = @import("Diagnostic.zig");
 const Heap = @import("Heap.zig");
 const Http = @import("Http.zig");
+const Module = @import("Module.zig");
+const Vendor = @import("Vendor.zig");
 const Json = @import("Json.zig");
 const Project = @import("Project.zig");
 const Range = @import("Range.zig").Range;
@@ -318,6 +320,14 @@ scopes: std.ArrayList(*Environment) = .empty,
 /// every iteration, and taking one from here instead of allocating makes a loop
 /// that declares a local cost no allocation at all once it is running.
 spare_scopes: std.ArrayList(*Environment) = .empty,
+/// Vendor libraries (`Vendor.zig`): which the program names, found the first
+/// time a native is called, and the modules loaded so far.
+vendor_named: Vendor.Set = .empty,
+vendor_state: enum { unknown, none, some } = .unknown,
+vendor_loaded: [@max(Vendor.libraries.len, 1)]?Module.Loaded = @splat(null),
+/// Each call site that reaches a vendor native, resolved once: a hash of the
+/// site, not of the native's name, answers every later call.
+vendor_sites: std.AutoHashMapUnmanaged(*const Ast.Expression, VendorSite) = .empty,
 
 functions: std.StringHashMapUnmanaged(Ast.FunctionDeclaration) = .empty,
 /// A persistent session must own resolver-produced names stored in runtime
@@ -854,6 +864,7 @@ pub const Session = struct {
         }
         self.root_task.state.spare_scopes.deinit(interpreter.gpa);
         interpreter.deinitHttpClient();
+        interpreter.deinitVendor();
         interpreter.deinitFileWriters();
         interpreter.deinitFileHandles();
         interpreter.literal_texts.deinit(interpreter.gpa);
@@ -997,6 +1008,7 @@ pub fn run(
     defer interpreter.deinitFileHandles();
     defer interpreter.deinitFileWriters();
     defer interpreter.deinitHttpClient();
+    defer interpreter.deinitVendor();
 
     // Hoisted, matching the resolver and checker. Every file's functions are
     // in place before anything runs, so a call into another file never depends
@@ -4033,6 +4045,9 @@ fn evaluateCallInner(
     // resolver decided which, and recorded it.
     if (self.trait_calls.get(expression)) |key| return self.callTraitDefault(expression.span, key, call);
     if (self.facts.qualified.get(call.callee)) |key| {
+        if (Vendor.libraries.len != 0 and self.vendor_state != .none) {
+            if (try self.callVendor(expression, call, key)) |result| return result;
+        }
         if (Resolver.builtinFunctionName(key)) |name| return self.callBuiltin(expression, call, name);
         if (std.mem.eql(u8, key, Resolver.preludeKey("Channel"))) return self.createChannel(expression, call);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Tasks::run")) return self.callTasksRun(expression.span, call);
@@ -6439,6 +6454,153 @@ fn httpClient(self: *Interpreter, span: Source.Span) Error!*Http.Client {
     );
     self.http_client = client;
     return client;
+}
+
+/// A call site that reaches a vendor library's native, or one that was checked
+/// and reaches none (a private function written in Emerald).
+const VendorSite = struct {
+    library: usize,
+    native: ?Module.Native,
+    /// The kind the declaration says the native gives back.
+    returns: Module.Kind = .nothing,
+};
+
+/// The module kind that carries a value of Emerald type `kind`, if one does.
+fn moduleKind(kind: Type.Kind) ?Module.Kind {
+    return switch (kind) {
+        .nothing => .nothing,
+        .bool => .bool,
+        .int => .int,
+        .float => .float,
+        .string => .text,
+        .bytes => .bytes,
+        else => null,
+    };
+}
+
+const max_vendor_arguments = 8;
+
+/// A call of a vendor library's native, such as `Selftest._add`: the arguments
+/// cross as plain values, and what comes back becomes an Emerald value or a
+/// raised error (docs/vendor-libraries-design-plan.md, decision 3). Null when
+/// the callee is not a native, so the ordinary call goes on.
+fn callVendor(self: *Interpreter, expression: *const Ast.Expression, call: Ast.Expression.Call, key: []const u8) Error!?Value {
+    if (self.vendor_state == .unknown) {
+        self.vendor_named = Vendor.named(self.files);
+        self.vendor_state = if (self.vendor_named.count() == 0) .none else .some;
+    }
+    if (self.vendor_state == .none) return null;
+    const named = self.vendor_named;
+
+    const site = self.vendor_sites.get(expression) orelse blk: {
+        const found = Vendor.libraryOfNative(key, Resolver.prelude_namespace) orelse return null;
+        var resolved: VendorSite = .{ .library = found.index, .native = null };
+        if (named.isSet(found.index)) {
+            resolved.native = (try self.vendorModule(expression.span, found.index)).find(found.entry);
+            if (resolved.native != null) resolved.returns = try self.vendorReturns(expression.span, key);
+        }
+        try self.vendor_sites.put(self.gpa, expression, resolved);
+        break :blk resolved;
+    };
+    const native = site.native orelse return null;
+    const library = Vendor.libraries[site.library];
+
+    if (call.arguments.len > max_vendor_arguments) {
+        return self.raiseFmt(expression.span, "`{s}` takes too many arguments for a library module", .{try Resolver.displayKey(self.arena, key)}, "A native takes at most eight.");
+    }
+    var held: [max_vendor_arguments]Value = undefined;
+    var arguments: [max_vendor_arguments]Module.Value = undefined;
+    var evaluated: usize = 0;
+    defer for (held[0..evaluated]) |value| self.heap.release(value);
+    for (call.arguments) |argument| {
+        const value = try self.evaluate(argument);
+        held[evaluated] = value;
+        evaluated += 1;
+        arguments[evaluated - 1] = switch (value.data) {
+            .nothing => .nothing,
+            .bool => |flag| .fromBool(flag),
+            .int => |number| .fromInt(number),
+            .float => |number| .fromFloat(number),
+            .string => |text| .fromText(text.bytes),
+            .bytes => |data| .fromBytes(data.bytes),
+            else => return self.raiseFmt(expression.span, "`{s}` cannot pass this value to a library module", .{key}, "Natives take only nothing, Bool, Int, Float, String, and Bytes."),
+        };
+    }
+
+    const result = native(&arguments, evaluated);
+    if (result.kind != .@"error" and result.kind != site.returns) {
+        return self.raiseHelp(expression.span, "the `{s}` library gave `{s}` the wrong kind of value", .{ library.names[0], try Resolver.displayKey(self.arena, key) }, "This is a bug in the `{s}` library module, which must give back what its declaration says.", .{library.module});
+    }
+    return switch (result.kind) {
+        .nothing => Value.nothing,
+        .bool => Value.initBool(result.as.boolean != 0),
+        .int => Value.initInt(result.as.integer),
+        .float => Value.initFloat(result.as.number),
+        .text => blk: {
+            if (!std.unicode.utf8ValidateSlice(result.slice())) {
+                return self.raiseHelp(expression.span, "`{s}` gave back text that is not valid UTF-8", .{key}, "This is a bug in the `{s}` library module.", .{library.name});
+            }
+            break :blk try self.heap.copyText(result.slice());
+        },
+        .bytes => try self.heap.copyBytes(result.slice()),
+        .@"error" => blk: {
+            // The first line is the message; any lines after it are the help.
+            const whole = result.slice();
+            const split = std.mem.indexOfScalar(u8, whole, '\n');
+            const message = self.arena.dupe(u8, whole[0 .. split orelse whole.len]) catch return error.OutOfMemory;
+            const help = if (split) |at| self.arena.dupe(u8, std.mem.trim(u8, whole[at + 1 ..], " \r\n")) catch return error.OutOfMemory else "";
+            const error_key = std.fmt.allocPrint(self.arena, Resolver.prelude_namespace ++ ".{s}", .{library.error_type}) catch return error.OutOfMemory;
+            self.task.state.raised_value = self.makeError(error_key, message) catch return error.OutOfMemory;
+            break :blk self.raiseTyped(expression.span, library.error_type, message, help);
+        },
+    };
+}
+
+/// The module kind a native's declaration says it gives back. A native's
+/// parameters and result must be types a module can carry; a declaration that
+/// says otherwise is the library's bug, found at the first call.
+fn vendorReturns(self: *Interpreter, span: Source.Span, key: []const u8) Error!Module.Kind {
+    const signature = self.signatures.get(key) orelse return .nothing;
+    for (signature.parameters) |parameter| {
+        if (moduleKind(parameter.kind) == null) return self.vendorBadType(span, key);
+    }
+    return moduleKind(signature.return_type.kind) orelse self.vendorBadType(span, key);
+}
+
+fn vendorBadType(self: *Interpreter, span: Source.Span, key: []const u8) Error {
+    return self.raiseFmt(span, "the native `{s}` is declared with a type a library module cannot carry", .{try Resolver.displayKey(self.arena, key)}, "Natives take and give only nothing, Bool, Int, Float, String, and Bytes.");
+}
+
+/// `raiseFmt` with a help that also takes values.
+fn raiseHelp(self: *Interpreter, span: Source.Span, comptime message_format: []const u8, message_args: anytype, comptime help_format: []const u8, help_args: anytype) Error {
+    const help = try std.fmt.allocPrint(self.arena, help_format, help_args);
+    return self.raiseFmt(span, message_format, message_args, help);
+}
+
+/// The loaded module of vendor library `index`, loading it on first use. A
+/// module that cannot load stops the program with a message a beginner can act on.
+fn vendorModule(self: *Interpreter, span: Source.Span, index: usize) Error!Module.Loaded {
+    if (self.vendor_loaded[index]) |loaded| return loaded;
+    const library = Vendor.libraries[index];
+    const loaded = Module.load(self.arena, library.module) catch |err| return switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        error.Unsupported => self.raiseHelp(span, "`{s}` is not available in this build of Emerald", .{library.names[0]}, "This build cannot load library modules. Use a release build of Emerald for this system.", .{}),
+        error.NotFound => self.raiseHelp(span, "`{s}` is not available here", .{library.names[0]}, "Either this Emerald was installed without its `{s}` library file, or this machine is missing a system library it needs. Reinstalling Emerald restores the file.", .{library.module}),
+        error.BadModule, error.WrongVersion => self.raiseHelp(span, "the `{s}` library does not match this Emerald", .{library.names[0]}, "Reinstall Emerald, so its library files and the program agree.", .{}),
+    };
+    self.vendor_loaded[index] = loaded;
+    return loaded;
+}
+
+fn deinitVendor(self: *Interpreter) void {
+    var loaded: [@max(Vendor.libraries.len, 1)]Module.Loaded = undefined;
+    var count: usize = 0;
+    for (self.vendor_loaded) |maybe| if (maybe) |module| {
+        loaded[count] = module;
+        count += 1;
+    };
+    Module.shutdownAll(loaded[0..count]);
+    self.vendor_sites.deinit(self.gpa);
 }
 
 fn deinitHttpClient(self: *Interpreter) void {
