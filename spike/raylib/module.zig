@@ -15,6 +15,9 @@ extern fn SetTargetFPS(fps: c_int) void;
 extern fn SetConfigFlags(flags: c_uint) void;
 extern fn GetFPS() c_int;
 extern fn SetTraceLogLevel(level: c_int) void;
+const Image = extern struct { data: ?*anyopaque, width: c_int, height: c_int, mipmaps: c_int, format: c_int };
+extern fn LoadImageFromScreen() Image;
+extern fn UnloadImage(image: Image) void;
 
 fn color(rgba: u32) Color {
     return .{ .r = @truncate(rgba >> 24), .g = @truncate(rgba >> 16), .b = @truncate(rgba >> 8), .a = @truncate(rgba) };
@@ -48,4 +51,15 @@ export fn spike_rect(x: i64, y: i64, w: i64, h: i64, rgba: i64) void {
 }
 export fn spike_fps() i64 {
     return GetFPS();
+}
+
+/// FNV-1a over the pixels of the last frame: proves a headless backend draws the same pixels twice.
+export fn spike_checksum() i64 {
+    const image = LoadImageFromScreen();
+    defer UnloadImage(image);
+    const bytes: [*]const u8 = @ptrCast(image.data orelse return 0);
+    const length: usize = @intCast(image.width * image.height * 4);
+    var hash: u64 = 14695981039346656037;
+    for (bytes[0..length]) |byte| hash = (hash ^ byte) *% 1099511628211;
+    return @bitCast(hash >> 1);
 }

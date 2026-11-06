@@ -214,6 +214,7 @@ class Gfx {
     func Gfx.circle(x: Int, y: Int, radius: Float, rgba: Int) {}
     func Gfx.rect(x: Int, y: Int, w: Int, h: Int, rgba: Int) {}
     func Gfx.fps(): Int { return 0 }
+    func Gfx.checksum(): Int { return 0 }
 }
 
 # Terminal styling is written in Emerald so it keeps normal named/defaulted

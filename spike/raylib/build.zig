@@ -16,6 +16,12 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
         }),
     });
-    lib.root_module.linkLibrary(raylib.artifact("raylib"));
+    const artifact = raylib.artifact("raylib");
+    // rlsw.h includes itself by the path it was compiled under, which is
+    // relative to the build root; searching the root finds it.
+    if (std.mem.eql(u8, platform, "memory")) artifact.root_module.addIncludePath(.{ .cwd_relative = "." });
+    lib.root_module.linkLibrary(artifact);
+    // The memory backend calls timeBeginPeriod but raylib's build does not link winmm for it.
+    if (target.result.os.tag == .windows and std.mem.eql(u8, platform, "memory")) lib.root_module.linkSystemLibrary("winmm", .{});
     b.installArtifact(lib);
 }

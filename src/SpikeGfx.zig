@@ -13,6 +13,7 @@ pub const Fns = struct {
     circle: *const fn (i64, i64, f64, i64) callconv(.c) void,
     rect: *const fn (i64, i64, i64, i64, i64) callconv(.c) void,
     fps: *const fn () callconv(.c) i64,
+    checksum: *const fn () callconv(.c) i64,
 };
 
 // Zig 0.17's std.DynLib has no Windows implementation, so the spike asks the

@@ -4912,6 +4912,7 @@ fn callGfx(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Erro
     if (is_circle) { f.circle(ints[0], ints[1], radius, ints[3]); return .nothing; }
     if (std.mem.eql(u8, name, "rect")) { f.rect(ints[0], ints[1], ints[2], ints[3], ints[4]); return .nothing; }
     if (std.mem.eql(u8, name, "fps")) return .initInt(f.fps());
+    if (std.mem.eql(u8, name, "checksum")) return .initInt(f.checksum());
     return .nothing;
 }
 

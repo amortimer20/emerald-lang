@@ -8,6 +8,10 @@
             .url = "git+https://github.com/raysan5/raylib#02566453880e06bec97f5b8160fa6fe1e98397ca",
             .hash = "raylib-6.0.0-whq8uDpYOAVcH_KyOZ0--nYF1dEsjdQ5r4e9R24UkQOi",
         },
+        .xcode_frameworks = .{
+            .url = "https://pkg.machengine.org/xcode-frameworks/8a1cfb373587ea4c9bb1468b7c986462d8d4e10e.tar.gz",
+            .hash = "N-V-__8AALShqgXkvqYU6f__FrA22SMWmi2TXCJjNTO1m8XJ",
+        },
     },
     .paths = .{ "build.zig", "build.zig.zon", "module.zig" },
 }
