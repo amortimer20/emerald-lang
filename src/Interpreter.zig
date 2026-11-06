@@ -322,7 +322,8 @@ scopes: std.ArrayList(*Environment) = .empty,
 spare_scopes: std.ArrayList(*Environment) = .empty,
 /// Vendor libraries (`Vendor.zig`): which the program names, found the first
 /// time a native is called, and the modules loaded so far.
-vendor_named: ?Vendor.Set = null,
+vendor_named: Vendor.Set = .empty,
+vendor_state: enum { unknown, none, some } = .unknown,
 vendor_loaded: [@max(Vendor.libraries.len, 1)]?Module.Loaded = @splat(null),
 /// Each call site that reaches a vendor native, resolved once: a hash of the
 /// site, not of the native's name, answers every later call.
@@ -4044,7 +4045,9 @@ fn evaluateCallInner(
     // resolver decided which, and recorded it.
     if (self.trait_calls.get(expression)) |key| return self.callTraitDefault(expression.span, key, call);
     if (self.facts.qualified.get(call.callee)) |key| {
-        if (Vendor.libraries.len != 0) if (try self.callVendor(expression, call, key)) |result| return result;
+        if (Vendor.libraries.len != 0 and self.vendor_state != .none) {
+            if (try self.callVendor(expression, call, key)) |result| return result;
+        }
         if (Resolver.builtinFunctionName(key)) |name| return self.callBuiltin(expression, call, name);
         if (std.mem.eql(u8, key, Resolver.preludeKey("Channel"))) return self.createChannel(expression, call);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Tasks::run")) return self.callTasksRun(expression.span, call);
@@ -6458,7 +6461,22 @@ fn httpClient(self: *Interpreter, span: Source.Span) Error!*Http.Client {
 const VendorSite = struct {
     library: usize,
     native: ?Module.Native,
+    /// The kind the declaration says the native gives back.
+    returns: Module.Kind = .nothing,
 };
+
+/// The module kind that carries a value of Emerald type `kind`, if one does.
+fn moduleKind(kind: Type.Kind) ?Module.Kind {
+    return switch (kind) {
+        .nothing => .nothing,
+        .bool => .bool,
+        .int => .int,
+        .float => .float,
+        .string => .text,
+        .bytes => .bytes,
+        else => null,
+    };
+}
 
 const max_vendor_arguments = 8;
 
@@ -6467,19 +6485,20 @@ const max_vendor_arguments = 8;
 /// raised error (docs/vendor-libraries-design-plan.md, decision 3). Null when
 /// the callee is not a native, so the ordinary call goes on.
 fn callVendor(self: *Interpreter, expression: *const Ast.Expression, call: Ast.Expression.Call, key: []const u8) Error!?Value {
-    const named = self.vendor_named orelse blk: {
-        const found = Vendor.named(self.files);
-        self.vendor_named = found;
-        break :blk found;
-    };
-    if (named.count() == 0) return null;
+    if (self.vendor_state == .unknown) {
+        self.vendor_named = Vendor.named(self.files);
+        self.vendor_state = if (self.vendor_named.count() == 0) .none else .some;
+    }
+    if (self.vendor_state == .none) return null;
+    const named = self.vendor_named;
 
     const site = self.vendor_sites.get(expression) orelse blk: {
         const found = Vendor.libraryOfNative(key, Resolver.prelude_namespace) orelse return null;
-        const resolved: VendorSite = if (!named.isSet(found.index))
-            .{ .library = found.index, .native = null }
-        else
-            .{ .library = found.index, .native = (try self.vendorModule(expression.span, found.index)).find(found.entry) };
+        var resolved: VendorSite = .{ .library = found.index, .native = null };
+        if (named.isSet(found.index)) {
+            resolved.native = (try self.vendorModule(expression.span, found.index)).find(found.entry);
+            if (resolved.native != null) resolved.returns = try self.vendorReturns(expression.span, key);
+        }
         try self.vendor_sites.put(self.gpa, expression, resolved);
         break :blk resolved;
     };
@@ -6487,7 +6506,7 @@ fn callVendor(self: *Interpreter, expression: *const Ast.Expression, call: Ast.E
     const library = Vendor.libraries[site.library];
 
     if (call.arguments.len > max_vendor_arguments) {
-        return self.raiseFmt(expression.span, "`{s}` takes too many arguments for a library module", .{key}, "A native takes at most eight.");
+        return self.raiseFmt(expression.span, "`{s}` takes too many arguments for a library module", .{try Resolver.displayKey(self.arena, key)}, "A native takes at most eight.");
     }
     var held: [max_vendor_arguments]Value = undefined;
     var arguments: [max_vendor_arguments]Module.Value = undefined;
@@ -6509,6 +6528,9 @@ fn callVendor(self: *Interpreter, expression: *const Ast.Expression, call: Ast.E
     }
 
     const result = native(&arguments, evaluated);
+    if (result.kind != .@"error" and result.kind != site.returns) {
+        return self.raiseHelp(expression.span, "the `{s}` library gave `{s}` the wrong kind of value", .{ library.names[0], try Resolver.displayKey(self.arena, key) }, "This is a bug in the `{s}` library module, which must give back what its declaration says.", .{library.module});
+    }
     return switch (result.kind) {
         .nothing => Value.nothing,
         .bool => Value.initBool(result.as.boolean != 0),
@@ -6532,6 +6554,21 @@ fn callVendor(self: *Interpreter, expression: *const Ast.Expression, call: Ast.E
             break :blk self.raiseTyped(expression.span, library.error_type, message, help);
         },
     };
+}
+
+/// The module kind a native's declaration says it gives back. A native's
+/// parameters and result must be types a module can carry; a declaration that
+/// says otherwise is the library's bug, found at the first call.
+fn vendorReturns(self: *Interpreter, span: Source.Span, key: []const u8) Error!Module.Kind {
+    const signature = self.signatures.get(key) orelse return .nothing;
+    for (signature.parameters) |parameter| {
+        if (moduleKind(parameter.kind) == null) return self.vendorBadType(span, key);
+    }
+    return moduleKind(signature.return_type.kind) orelse self.vendorBadType(span, key);
+}
+
+fn vendorBadType(self: *Interpreter, span: Source.Span, key: []const u8) Error {
+    return self.raiseFmt(span, "the native `{s}` is declared with a type a library module cannot carry", .{try Resolver.displayKey(self.arena, key)}, "Natives take and give only nothing, Bool, Int, Float, String, and Bytes.");
 }
 
 /// `raiseFmt` with a help that also takes values.

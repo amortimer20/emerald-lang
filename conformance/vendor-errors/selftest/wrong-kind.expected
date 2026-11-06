@@ -1,0 +1,4 @@
+vendor-errors/selftest/wrong-kind.em:2:7: the `Selftest` library gave `Selftest._lies` the wrong kind of value
+  print(Selftest.lies())
+        ^^^^^^^^^^^^^^^
+This is a bug in the `emerald-selftest` library module, which must give back what its declaration says.

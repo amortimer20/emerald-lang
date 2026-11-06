@@ -29,6 +29,14 @@ class Selftest {
     # Native: does nothing, and gives back nothing (the word is `ping` because `nothing` is a keyword).
     func Selftest._ping() {}
 
+    # Native: declared to give back an Int, but the module gives back text, which
+    # the interpreter refuses (a deliberate fault, to test that guard).
+    func Selftest._lies(): Int { return 0 }
+
+    # Native: declared with a list, which a module cannot carry, so the first call
+    # is refused (a deliberate fault, to test that guard).
+    func Selftest._takes_list(items: List[Int]) {}
+
     # Native: always fails, with a message.
     func Selftest._always_fails(): Int { return 0 }
 
@@ -63,6 +71,16 @@ class Selftest {
     ## Does nothing.
     func Selftest.ping() {
         Emerald.Selftest._ping()
+    }
+
+    ## Raises, because the module gives back the wrong kind of value.
+    func Selftest.lies(): Int {
+        return Emerald.Selftest._lies()
+    }
+
+    ## Raises, because a list is a type a module cannot carry.
+    func Selftest.takes_list(items: List[Int]) {
+        Emerald.Selftest._takes_list(items)
     }
 
     ## Always raises a `SelftestError`.

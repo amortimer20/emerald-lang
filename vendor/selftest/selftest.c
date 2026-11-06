@@ -58,6 +58,21 @@ static EmValue always_fails(const EmValue *a, size_t n) {
     return fail("the selftest library always fails here\nIt exists to test Emerald, so it fails on purpose.");
 }
 
+/* Two deliberate faults, to test the guards the interpreter keeps: a native
+ * that gives back a different kind of value than its declaration says, and one
+ * declared with a type a module cannot carry. */
+static EmValue lies(const EmValue *a, size_t n) {
+    (void)a;
+    (void)n;
+    return em_text("not a number", 12);
+}
+
+static EmValue takes_list(const EmValue *a, size_t n) {
+    (void)a;
+    (void)n;
+    return em_nothing();
+}
+
 /* Counters: an opaque resource held as an integer handle. */
 #define MAX_COUNTERS 16
 static int64_t counters[MAX_COUNTERS];
@@ -107,6 +122,8 @@ static const EmEntry entries[] = {
     {"Selftest::_shout", shout},
     {"Selftest::_reverse_bytes", reverse_bytes},
     {"Selftest::_ping", ping},
+    {"Selftest::_lies", lies},
+    {"Selftest::_takes_list", takes_list},
     {"Selftest::_always_fails", always_fails},
     {"SelftestCounter::_open", counter_open},
     {"SelftestCounter::_next", counter_next},
