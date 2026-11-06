@@ -257,6 +257,8 @@ test "every module entry has a declared native, and every declared native an ent
                 continue;
             }
             if (!after_marker) continue;
+            // A comment may run on for several lines before the declaration.
+            if (trimmed.len == 0 or trimmed[0] == '#') continue;
             after_marker = false;
             const header = std.mem.trimStart(u8, trimmed, "func ");
             const dot = std.mem.indexOfScalar(u8, header, '.') orelse return error.BadNativeDeclaration;
