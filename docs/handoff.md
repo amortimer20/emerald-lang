@@ -30,8 +30,10 @@ literally, fix the program (`age.to_int()`, `String?`, `n.or(0)`, `"-".repeat(20
 written, `exit()` ending a path, inherited hover documentation, four new warnings, and the
 deferred D4 features moved to section 21. On the error corpus, 45 of 314 first diagnostics
 changed and the place check went from 288 to 297 right; the journal (2026-11-05, batch 5) has
-the details and what was left. **Next, when the user says go:** a rerun
-of the mutation sweep and allocation-failure harness. The user asked for Sonnet subagents for
+the details and what was left. The review's final check has run (journal, 2026-11-05, final
+check): both mutation sweeps were clean, and the allocation-failure harness found two memory
+errors outside the review's sample, fixed in `claude/oom-fixes`. **Next, when the user says
+go:** the follow-ups in the journal, then the roadmap. The user asked for Sonnet subagents for
 routine fixes to spare usage (Opus for subtle ones), one PR at a time. Still open: two
 allocation-failure programs (`min_max`, a caught index error) used memory nondeterministically,
 not investigated; and the follow-ups noted in the journal (2026-10-30 and 2026-11-01). Then roadmap item 11's
