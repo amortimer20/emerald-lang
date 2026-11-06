@@ -52,6 +52,10 @@ jobs:
         shell: bash
         run: bash tools/check-toolchain.sh
 
+      - name: Check the vendor library recipe
+        shell: bash
+        run: bash tools/check-vendor.sh
+
       - name: Run test suite
         shell: bash
         run: zig build test -Doptimize=${{ matrix.optimize }} ${{ matrix.test_flags }}
