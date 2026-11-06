@@ -6413,3 +6413,38 @@ The wider allocation-failure run finished: the other conformance programs were c
 index except `json-large.em`, which is too slow for the harness (not finished even at every 211th
 index), so it is unchecked. The `min_max` and caught-index-error nondeterminism note stands.
 Loose ends: the `oom-fixes` worktree directory under `~/.cache/emerald-worktrees` is half removed.
+
+## 2026-11-06: Vendor libraries, slice 1: the mechanism
+
+Built on `claude/vendor-mechanism` after the plan was accepted and the spike reported (the
+plan's "Slice 0 report" has the spike's findings). One PR, written by Claude with a Sonnet
+subagent for the release workflow.
+
+- The module interface is a C header (`vendor/emerald_module.h`): one exported function,
+  `emerald_module`, returns a table of natives; values are nothing, Bool, Int, Float, text,
+  bytes, or an error whose first line is the message and later lines the help. `src/Module.zig`
+  loads it (`LoadLibraryW` on Windows, because Zig 0.17's `std.DynLib` has none there; the
+  system `dlopen` elsewhere) from `EMERALD_MODULE_PATH`, then `lib` and `../lib` beside the
+  executable.
+- A library's declarations are Emerald in `vendor/<name>/<name>.em`. `src/Vendor.zig` adds them
+  after the prelude's text only when a program's files write one of the library's names, so the
+  prebuilt prelude tree still serves every other program. `analyze` and the editor's analysis do
+  this; the REPL does not load vendor libraries yet.
+- A native is a private stand-in (`# Native:`) that the module's entry of the same name replaces.
+  Each call site resolves its native once (a hash of the site, not of a name). The interpreter
+  checks the kind a module gives back against the declared result, and a native declared with a
+  type a module cannot carry stops at its first call.
+- `build.zig` reads `vendor/libraries.zig`, generates the registry, builds each module, and
+  installs it where the tests look (`zig-out/vendor-test-modules`). On Linux with a gnu target
+  the executable links glibc; the release workflow builds for glibc 2.28 and a new CI job runs
+  the result in a bare `ubuntu:20.04` container.
+- The recipe is checked by `tools/check-vendor.sh` (in CI). It was proved by adding a second test
+  library from `vendor/_template` following only `docs/vendor-libraries.md`; that found one fault,
+  in the module-agreement test, which could not read a native's comment over two lines, now fixed.
+  The probe library was discarded.
+
+Not done, noted for later: `vendor/_template` is not compiled by any check, so it can drift from
+the selftest library (a probe on each interface change would catch it); the REPL; natives that
+take or give optionals, lists, or structs; calling a module from a task (decision 9's main-thread
+rule belongs to the first graphics library); and the release archive's layout for a shipping
+library's module (slice 2 adds the packaging step `check-vendor.sh` already asks for).
