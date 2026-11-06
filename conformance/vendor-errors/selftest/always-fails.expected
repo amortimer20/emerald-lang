@@ -1,0 +1,3 @@
+vendor-errors/selftest/always-fails.em:2:1: SelftestError: the selftest library always fails here
+  Selftest.fails()
+  ^^^^^^^^^^^^^^^^

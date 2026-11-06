@@ -41,6 +41,8 @@ pub const Json = @import("Json.zig");
 pub const Http = @import("Http.zig");
 pub const Scheduler = @import("Scheduler.zig");
 pub const Builtins = @import("Builtins.zig");
+pub const Module = @import("Module.zig");
+pub const Vendor = @import("Vendor.zig");
 
 /// Declarations every program sees, such as section 11.5's `Ordered`.
 const prelude_text = @embedFile("prelude.em");
@@ -198,7 +200,11 @@ fn analyzeOnce(gpa: std.mem.Allocator, project: *const Project, keep_unresolved:
     // checks the same way it would for `check`/`run`. On success this moves
     // into the returned `Analysis`, which owns it from there; every early
     // "nothing to check" exit below still owns it and frees it itself.
-    var prelude_source = try Source.init(gpa, "prelude.em", prelude_text);
+    // A program that names a vendor library gets its declarations after the
+    // prelude's, parsed with it; any other program uses the prebuilt tree.
+    const extended = try Vendor.extendedPrelude(gpa, prelude_text, Vendor.named(project.files));
+    defer if (extended) |text| gpa.free(text);
+    var prelude_source = try Source.init(gpa, "prelude.em", extended orelse prelude_text);
     errdefer prelude_source.deinit(gpa);
     const files = try gpa.alloc(Project.File, project.files.len + 1);
     errdefer gpa.free(files);
@@ -209,7 +215,7 @@ fn analyzeOnce(gpa: std.mem.Allocator, project: *const Project, keep_unresolved:
     var lexed: usize = 0;
     var lex_ok = true;
     while (lexed < files.len) : (lexed += 1) {
-        tokenized[lexed] = if (lexed == project.files.len) .{ .tokens = &.{}, .diagnostics = &.{} } else try Lexer.tokenize(gpa, &files[lexed].source);
+        tokenized[lexed] = if (lexed == project.files.len and extended == null) .{ .tokens = &.{}, .diagnostics = &.{} } else try Lexer.tokenize(gpa, &files[lexed].source);
         if (tokenized[lexed].diagnostics.len != 0) lex_ok = false;
     }
     if (!lex_ok) {
@@ -224,7 +230,7 @@ fn analyzeOnce(gpa: std.mem.Allocator, project: *const Project, keep_unresolved:
     var parsed_count: usize = 0;
     var parse_ok = true;
     while (parsed_count < files.len) : (parsed_count += 1) {
-        parsed[parsed_count] = if (parsed_count == project.files.len)
+        parsed[parsed_count] = if (parsed_count == project.files.len and extended == null)
             .{ .arena_state = .init(gpa), .program = prelude_program, .diagnostics = &.{} }
         else
             try Parser.parse(gpa, &files[parsed_count].source, tokenized[parsed_count].tokens);
@@ -802,7 +808,11 @@ fn analyze(
     // stage as one more file. It comes last, so every file of the program
     // keeps the index its diagnostics are rendered against, and nothing is
     // ever reported against the prelude itself.
-    var prelude_source = try Source.init(gpa, "prelude.em", prelude_text);
+    // A program that names a vendor library gets its declarations after the
+    // prelude's, parsed with it; any other program uses the prebuilt tree.
+    const extended = try Vendor.extendedPrelude(gpa, prelude_text, Vendor.named(project.files));
+    defer if (extended) |text| gpa.free(text);
+    var prelude_source = try Source.init(gpa, "prelude.em", extended orelse prelude_text);
     defer prelude_source.deinit(gpa);
     const files = try arena.alloc(Project.File, project.files.len + 1);
     @memcpy(files[0..project.files.len], project.files);
@@ -817,7 +827,7 @@ fn analyze(
         gpa.free(tokenized);
     }
     while (lexed < files.len) : (lexed += 1) {
-        tokenized[lexed] = if (lexed == project.files.len) .{ .tokens = &.{}, .diagnostics = &.{} } else try Lexer.tokenize(gpa, &files[lexed].source);
+        tokenized[lexed] = if (lexed == project.files.len and extended == null) .{ .tokens = &.{}, .diagnostics = &.{} } else try Lexer.tokenize(gpa, &files[lexed].source);
         try appendFrom(arena, &found, tokenized[lexed].diagnostics, @intCast(lexed));
     }
     panicOnPreludeProblem(found.items, &prelude_source, project.files.len);
@@ -832,7 +842,7 @@ fn analyze(
         gpa.free(parsed);
     }
     while (parsed_count < files.len) : (parsed_count += 1) {
-        parsed[parsed_count] = if (parsed_count == project.files.len)
+        parsed[parsed_count] = if (parsed_count == project.files.len and extended == null)
             .{ .arena_state = .init(gpa), .program = prelude_program, .diagnostics = &.{} }
         else
             try Parser.parse(gpa, &files[parsed_count].source, tokenized[parsed_count].tokens);

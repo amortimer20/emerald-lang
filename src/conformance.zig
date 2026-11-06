@@ -16,6 +16,8 @@
 //!   conformance/http/            runs against Emerald's local HTTP test server
 //!   conformance/local-zone/      runs with `TimeZone.local` set to `EST5EDT`
 //!   conformance/runtime-errors/  runs, then fails with exactly its `.expected`
+//!   conformance/vendor/          runs with the test-only vendor library loaded
+//!   conformance/vendor-errors/   the same, then fails with exactly its `.expected`
 //!
 //! A case is usually one `.em` file. A directory holding a `main.em` is one
 //! case too — a whole project, per section 14.1 — and its `.expected` sits
@@ -137,6 +139,8 @@ const Kind = enum {
     http,
     local_zone,
     runtime_errors,
+    vendor,
+    vendor_errors,
     format,
     repl,
     lsp,
@@ -151,6 +155,8 @@ const Kind = enum {
         if (std.mem.eql(u8, directory, "http")) return .http;
         if (std.mem.eql(u8, directory, "local-zone")) return .local_zone;
         if (std.mem.eql(u8, directory, "runtime-errors")) return .runtime_errors;
+        if (std.mem.eql(u8, directory, "vendor")) return .vendor;
+        if (std.mem.eql(u8, directory, "vendor-errors")) return .vendor_errors;
         if (std.mem.eql(u8, directory, "format")) return .format;
         if (std.mem.eql(u8, directory, "repl")) return .repl;
         if (std.mem.eql(u8, directory, "lsp")) return .lsp;
@@ -200,6 +206,12 @@ test "conformance suite" {
     }
 
     try testing.expect(cases.len > 0);
+
+    // The test-only vendor library (vendor/selftest) takes part, and its module
+    // is where the `vendor-test-modules` build step installed it.
+    emerald.Vendor.test_libraries = true;
+    emerald.Module.search_dirs = &.{build_options.vendor_module_dir};
+    defer emerald.Vendor.test_libraries = false;
 
     var failures: usize = 0;
     for (cases) |case| {
@@ -501,7 +513,7 @@ fn produce(
             defer report.deinit();
             return try renderDiagnostics(gpa, sources, report.diagnostics);
         },
-        .run, .color, .http, .local_zone, .runtime_errors => {
+        .run, .color, .http, .local_zone, .runtime_errors, .vendor, .vendor_errors => {
             var out: std.Io.Writer.Allocating = .init(gpa);
             defer out.deinit();
 
@@ -533,7 +545,7 @@ fn produce(
                 return null;
             }
 
-            if (kind == .run or kind == .color or kind == .http or kind == .local_zone) {
+            if (kind == .run or kind == .color or kind == .http or kind == .local_zone or kind == .vendor) {
                 if (report.failure) |failure| {
                     const rendered = try renderDiagnostics(gpa, sources, &.{failure});
                     defer gpa.free(rendered);

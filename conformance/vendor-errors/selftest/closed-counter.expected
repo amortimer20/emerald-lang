@@ -1,0 +1,3 @@
+vendor-errors/selftest/closed-counter.em:4:1: SelftestError: that counter is closed
+  counter.close()
+  ^^^^^^^^^^^^^^^
