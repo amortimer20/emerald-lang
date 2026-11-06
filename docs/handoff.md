@@ -24,7 +24,8 @@ user asked for "Raylib everywhere" (the library keeps its name: `vendor/raylib/`
 `Raylib`, no `Graphics`/`Audio`/`Game` split) and full access to everything raylib offers,
 raygui included; the plan's Revision 1 (R1 to R8, questions D to F: a generator over raylib's API
 description, module ABI version 2, slices 2 to 7) is accepted as recommended (D: `Raygui`; E: rlgl
-as slice 6; F: callbacks after slice 7). Slice 2 waits on question C's measurements.
+as slice 6; F: callbacks after slice 7). **Paused by the user, 2026-11-06: raylib waits for the
+compiler** (decision 10's fallback; question C will not be measured). Next: the compiler (item 12).
 Earlier status: `v0.8.0-rc1` was published as a prerelease. The codebase review
 (roadmap item 10) has reported and been triaged in [`review/triage.md`](review/triage.md), with
 every decision accepted. Fix batches 1, 2 and 3 are merged (PRs #57–#66; the journal has each).

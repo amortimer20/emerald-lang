@@ -3,7 +3,9 @@
 Status: accepted by the user, 2026-11-06 (all decisions as recommended, with the spike's changes to 2 and
 11); slice 1 merged (PR #70). **Revision 1** (below, proposed the same day at the user's request: Raylib by name,
 the whole surface including raygui) replaces several decisions and the slices; the user accepted it as
-recommended, questions D to F included, the same day. Written as a proposal the same day. Slice 0 (the spike) has run; its report is below, and it changed
+recommended, questions D to F included, the same day. **Paused by the user, 2026-11-06: slice 2 onward
+waits for the compiler** (decision 10's fallback, chosen without question C's measurements). Slices 0
+and 1 stand, and the module mechanism is merged; resume at slice 2 when the compiler can call a module. Written as a proposal the same day. Slice 0 (the spike) has run; its report is below, and it changed
 decisions 2 and 11 and tightened 1 and 10. Questions A and B are answered and C is agreed, with its measurements pending (see "Slice 0
 report"). Do not reopen an accepted decision. This is roadmap item 11 (handoff), written after Odin's `vendor:` collection
 and the user's request that the way a vendor library is added be **reproducible for every
