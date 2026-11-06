@@ -1,7 +1,8 @@
 # The compiler: design plan
 
-Status: proposed, 2026-11-06. Written when the user paused raylib to wait for the compiler
-("I'm ready to get going on it"). Nothing here is decided until the user accepts it. This is
+Status: accepted by the user, 2026-11-06, every decision as recommended and questions A to D
+answered as recommended; slice 0 is under way. Proposed the same day. Written when the user paused raylib to wait for the compiler
+("I'm ready to get going on it"). This is
 roadmap item 12 (handoff): **choose the backend by prototype, then build the compiler, in Zig,
 for 1.0.** It gathers what the handoff's "Longer term: the native compiler" section already
 settled, adds the decisions that section left open, and orders the work into slices.
@@ -215,11 +216,11 @@ reachable; it does not ship them.
 
 ## Questions for the user
 
-- **A. Where the C toolchain comes from.** Recommended: a separate, optional "Emerald build
+- **A. Accepted: a separate, optional build-tools archive.** Where the C toolchain comes from. Recommended: a separate, optional "Emerald build
   tools" archive holding the pinned Zig (decision 2), so the 2.4 MB download stays small.
   Alternatives: bundle it in every download, or fetch it on first use.
-- **B. The route.** Recommended: emit C (decision 1), confirmed or overturned by slice 0's
+- **B. Accepted: emit C, pending slice 0.** The route. Recommended: emit C (decision 1), confirmed or overturned by slice 0's
   numbers.
-- **C. `emerald run`.** Recommended: stays the interpreter; revisit after the whole suite
+- **C. Accepted: `run` stays the interpreter for now.** Recommended: stays the interpreter; revisit after the whole suite
   passes compiled.
-- **D. Generics.** Recommended: erased first, monomorphized later as an optimization.
+- **D. Accepted: erased first.** Generics. Recommended: erased first, monomorphized later as an optimization.

@@ -26,8 +26,8 @@ raygui included; the plan's Revision 1 (R1 to R8, questions D to F: a generator 
 description, module ABI version 2, slices 2 to 7) is accepted as recommended (D: `Raygui`; E: rlgl
 as slice 6; F: callbacks after slice 7). **Paused by the user, 2026-11-06: raylib waits for the
 compiler** (decision 10's fallback; question C will not be measured). Next: the compiler (item 12):
-`compiler-design-plan.md` is proposed (route, build tools, IR, shared runtime, slices 0 to 7) and
-awaits the user's answers to its questions A to D.
+`compiler-design-plan.md` is accepted as recommended (route, build tools, IR, shared runtime,
+slices 0 to 7); slice 0, the prototypes, is under way.
 Earlier status: `v0.8.0-rc1` was published as a prerelease. The codebase review
 (roadmap item 10) has reported and been triaged in [`review/triage.md`](review/triage.md), with
 every decision accepted. Fix batches 1, 2 and 3 are merged (PRs #57–#66; the journal has each).
@@ -537,7 +537,7 @@ the review, with 11's plan alongside it, both before the compiler.
 ## Longer term: the native compiler
 
 The user wants a real compiler for Emerald 1.0; the interpreter is a means to that end. The
-design plan is `compiler-design-plan.md` (proposed 2026-11-06).
+design plan is `compiler-design-plan.md` (accepted 2026-11-06).
 
 **Decided (the user, 2026-10-11): the implementation stays in Zig, for good.** The compiler is
 written in Zig, in this repository, on the front end the interpreter already uses; nothing is
