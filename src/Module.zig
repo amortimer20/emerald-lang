@@ -124,7 +124,7 @@ fn openAt(scratch: std.mem.Allocator, path: []const u8) LoadError!Loaded {
             break :blk @ptrCast(@alignCast(address));
         },
         else => blk: {
-            const path_z = scratch.dupeZ(u8, path) catch return error.OutOfMemory;
+            const path_z = scratch.dupeSentinel(u8, path, 0) catch return error.OutOfMemory;
             var library = std.DynLib.openZ(path_z) catch return error.NotFound;
             break :blk library.lookup(Export, "emerald_module") orelse {
                 library.close();
