@@ -1,0 +1,12 @@
+diagnostics/printed-nothing.em:6:7: warning: this prints `nothing`, because `greet` gives back no value
+  print(greet("Ava"))
+        ^^^^^^^^^^^^
+Call `greet("Ava")` on its own line instead.
+diagnostics/printed-nothing.em:7:18: warning: this prints `nothing`, because `greet` gives back no value
+  print("Result:", greet("Bo"))
+                   ^^^^^^^^^^^
+Call `greet("Bo")` on its own line instead.
+diagnostics/printed-nothing.em:15:7: warning: this prints `nothing`, because `open` gives back no value
+  print(door.open())
+        ^^^^^^^^^^^
+Call `door.open()` on its own line instead.

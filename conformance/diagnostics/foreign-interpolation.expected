@@ -1,0 +1,16 @@
+diagnostics/foreign-interpolation.em:4:14: warning: `${name}` stays in the String as written
+  print("Hello ${name}")
+               ^^^^^^^
+Emerald interpolates with `#{...}`: write `#{name}`.
+diagnostics/foreign-interpolation.em:5:14: warning: `{name}` stays in the String as written
+  print("Hello {name}!")
+               ^^^^^^
+Emerald interpolates with `#{...}`: write `#{name}`.
+diagnostics/foreign-interpolation.em:7:34: warning: `{name}` stays in the String as written
+  print("Score: #{player.count} of {name}")
+                                   ^^^^^^
+Emerald interpolates with `#{...}`: write `#{name}`.
+diagnostics/foreign-interpolation.em:10:15: warning: `{person}` stays in the String as written
+      print("Hi {person}")
+                ^^^^^^^^
+Emerald interpolates with `#{...}`: write `#{person}`.

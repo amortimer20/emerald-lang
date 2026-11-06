@@ -350,8 +350,16 @@ current_return_type: ?Type = null,
 /// is legal instead (14.1), since the entry file's top level is the only
 /// other place a `return` statement can appear (`checkReturn`).
 in_function: bool = false,
+/// Checking the body of a block such as `each { ... }`, which is not a loop.
+in_block: bool = false,
 /// Bare `raise` is valid only while a catch body is being checked.
 catch_depth: usize = 0,
+/// How many `try` bodies with a `catch` enclose the statement being checked.
+/// A result discarded there may be a call made only to see whether it raises.
+try_depth: usize = 0,
+/// String literals already warned about for `${name}` or `{name}`, so a
+/// literal checked twice warns once.
+interpolation_warned: std.AutoHashMapUnmanaged(*const Ast.Expression, void) = .empty,
 /// The loop depth on entry to an active `finally`, for exits that would leave it.
 finally_loop_depth: ?usize = null,
 /// How many scopes enclose the innermost block being checked, so a name found
@@ -412,6 +420,10 @@ function_parameters: std.StringHashMapUnmanaged([]const *const Type.Parameter) =
 /// with or without `else`. A statement `case` among them cannot finish without
 /// running an arm, which is what `stmtCompletes` needs to know.
 exhaustive_cases: std.AutoHashMapUnmanaged(*const Ast.Case, void) = .empty,
+/// Calls of the built-in `exit` (14.1, 15.2), which never come back: like
+/// `raise`, one ends its path for `stmtCompletes`. A program function named
+/// `exit` is an ordinary call and is not listed.
+exit_calls: std.AutoHashMapUnmanaged(*const Ast.Expression, void) = .empty,
 /// The loops enclosing the statement being checked, innermost last. Empty at
 /// the start of every function body, since a `break` cannot leave a function.
 loops: std.ArrayList(Loop) = .empty,
@@ -3227,17 +3239,7 @@ fn checkStatements(self: *Checker, statements: []const Ast.Statement) Error!void
         try self.checkStatement(statement);
         if (unreachable_from == null and !self.stmtCompletes(statement)) unreachable_from = index + 1;
     }
-    if (unreachable_from) |from| {
-        const first = for (statements[from..]) |statement| {
-            if (statement.data != .function_declaration) break statement;
-        } else null;
-        if (first) |statement| try self.reportWarning(
-            statement.span,
-            "this code can never run",
-            .{},
-            "Every path above it already returns, raises, breaks, or continues. Remove it, or move it earlier.",
-        );
-    }
+    if (unreachable_from) |from| try self.reportUnreachable(statements, from);
 }
 
 /// Section 7.1's nested functions, callable anywhere in the block that
@@ -3293,7 +3295,12 @@ fn checkBlock(self: *Checker, block: Ast.Block) Error!void {
 
 fn checkStatement(self: *Checker, statement: Ast.Statement) Error!void {
     switch (statement.data) {
-        .expression => |expression| _ = try self.typeOf(expression),
+        .expression => |expression| {
+            const reported = self.diagnostics.items.len;
+            const result = try self.typeOf(expression);
+            // A REPL entry's value is echoed, so it is not discarded.
+            if (!statement.interactive_expression) try self.warnDiscardedResult(expression, result, reported);
+        },
         .declaration => |declaration| try self.checkDeclaration(declaration),
         .assignment => |assignment| try self.checkAssignment(assignment),
         .conditional => |conditional| try self.checkConditional(conditional),
@@ -3331,7 +3338,7 @@ fn checkRaise(self: *Checker, raised: Ast.Raise) Error!void {
         return;
     };
     const actual = try self.typeOfExpected(value, self.errorType());
-    if (actual.kind != .invalid and !actual.assignableTo(self.errorType())) try self.report(value.span, "only an Error can be raised, but this is {f}", .{actual}, "Raise an Error value, such as `Error(\"what went wrong\")`.");
+    if (actual.kind != .invalid and !actual.assignableTo(self.errorType())) try self.report(value.span, "only an Error can be raised, but this is {f}", .{actual}, (try self.raiseHelp(actual)) orelse "Raise an Error value, such as `Error(\"what went wrong\")`.");
 }
 
 fn checkAssert(self: *Checker, assertion: Ast.Assert) Error!void {
@@ -3344,7 +3351,9 @@ fn checkAssert(self: *Checker, assertion: Ast.Assert) Error!void {
 
 fn checkTry(self: *Checker, protected: Ast.Try) Error!void {
     const before = try self.snapshot();
+    if (protected.catches.len > 0) self.try_depth += 1;
     try self.checkBlock(protected.body);
+    if (protected.catches.len > 0) self.try_depth -= 1;
     var joined: ?Snapshot = if (self.blockCompletes(protected.body.statements)) try self.snapshot() else null;
     for (protected.catches, 0..) |caught, index| {
         self.restore(before);
@@ -3873,7 +3882,11 @@ fn enclosingLoop(self: *Checker, span: Source.Span, comptime keyword: []const u8
             "`" ++ keyword ++ "` can only be used inside a loop",
             .{},
             // Inside a function, the likely intent is ending the caller's loop.
-            if (self.in_function)
+            if (self.in_block and std.mem.eql(u8, keyword, "break"))
+                "`break` ends a `for` or `while` loop; a block passed to `each` or `map` is not a loop. Write a `for` loop over the items instead, as in `for item in items`."
+            else if (self.in_block and std.mem.eql(u8, keyword, "continue"))
+                "`continue` moves to the next turn of a `for` or `while` loop; a block is not a loop. To skip an item, `return` from the block."
+            else if (self.in_function)
                 "A function cannot end the loop that called it. Return a value the caller can check instead."
             else
                 "Put it inside a `while` or `for` loop, or remove it.",
@@ -3903,7 +3916,8 @@ fn checkDeclaration(self: *Checker, declaration: Ast.Declaration) Error!void {
                         .type_mismatch,
                         "this is {f}, but `{s}` was declared as {f}",
                         .{ actual, declaration.name, declared },
-                        mismatchHelp(actual, declared, "Give the declaration the type of its value, or convert the value to match."),
+                        (try self.optionalMismatchHelp(actual, declared, initializer.span, true)) orelse
+                            mismatchHelp(actual, declared, "Give the declaration the type of its value, or convert the value to match."),
                     );
                 }
             }
@@ -3989,7 +4003,11 @@ fn checkAssignmentTo(self: *Checker, assignment: Ast.Assignment) Error!void {
         const result = if (try self.typeOfAnnotatedOperatorAssignment(assignment, operation, binding.type, value)) |selected|
             selected
         else
-            try self.arithmetic(assignment.name_span, operation, binding.type, value);
+            try self.arithmetic(assignment.name_span, operation, binding.type, value, .{
+                .left = self.spanText(assignment.name_span),
+                .right = self.spanText(assignment.value.span),
+                .compound = true,
+            });
 
         if (!result.assignableTo(binding.type)) {
             // Worth explaining rather than only reporting. `/` always produces a
@@ -4270,7 +4288,11 @@ fn checkPlaceAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
         const result = if (try self.typeOfAnnotatedOperatorAssignment(assignment, operation, element, value)) |selected|
             selected
         else
-            try self.arithmetic(assignment.target_span, operation, element, value);
+            try self.arithmetic(assignment.target_span, operation, element, value, .{
+                .left = self.spanText(assignment.target_span),
+                .right = self.spanText(assignment.value.span),
+                .compound = true,
+            });
         if (!result.assignableTo(element)) {
             try self.report(
                 assignment.target_span,
@@ -4395,7 +4417,11 @@ fn checkSuperAssignment(self: *Checker, assignment: Ast.Assignment) Error!void {
         const result = if (try self.typeOfAnnotatedOperatorAssignment(assignment, operation, element, value)) |selected|
             selected
         else
-            try self.arithmetic(assignment.target_span, operation, element, value);
+            try self.arithmetic(assignment.target_span, operation, element, value, .{
+                .left = self.spanText(assignment.target_span),
+                .right = self.spanText(assignment.value.span),
+                .compound = true,
+            });
         if (!result.assignableTo(element)) {
             try self.report(
                 assignment.target_span,
@@ -4446,6 +4472,53 @@ fn requireReadyForSet(self: *Checker, assignment: Ast.Assignment, name: []const 
 /// The correction for a value that does not fit where it is used. Two list
 /// types get their own, because section 4.4's invariance is a surprise to
 /// anyone used to a language where an `[Int]` can pass for a `[Float]`.
+/// A value that may be nothing given where one is needed, or `nothing` itself
+/// given to a declaration that cannot hold it: the fix is a fallback, a check,
+/// or a question mark on the declared type.
+fn optionalMismatchHelp(self: *Checker, actual: Type, expected: Type, span: Source.Span, declaring: bool) Error!?[]const u8 {
+    if (expected.optional) return null;
+    if (declaring and actual.kind == .nothing and !actual.optional and expected.kind != .invalid and expected.kind != .nothing) {
+        return try std.fmt.allocPrint(
+            self.arena,
+            "`{f}` cannot hold nothing. To allow it, write the type with a question mark: `{f}?`.",
+            .{ expected, expected },
+        );
+    }
+    if (!actual.optional or !actual.payload().assignableTo(expected)) return null;
+    const text = self.spanText(span);
+    if (!quotable(text)) return null;
+    const fallback: []const u8 = switch (expected.kind) {
+        .int => "0",
+        .float => "0.0",
+        .string => "\"\"",
+        .bool => "false",
+        .list => "[]",
+        else => "...",
+    };
+    if (declaring) return try std.fmt.allocPrint(
+        self.arena,
+        "`{s}` may be nothing. Give it a fallback with `{s}.or({s})`, or declare the type as `{f}?`.",
+        .{ text, try receiverText(self.arena, text), fallback, expected },
+    );
+    return try std.fmt.allocPrint(
+        self.arena,
+        "`{s}` may be nothing. Give it a fallback with `{s}.or({s})`, or check `{s} != nothing` first.",
+        .{ text, try receiverText(self.arena, text), fallback, text },
+    );
+}
+
+/// `raise BadScore(...)` where `BadScore` is a class that does not extend `Error`.
+fn raiseHelp(self: *Checker, actual: Type) Error!?[]const u8 {
+    if (actual.kind != .struct_value or actual.optional) return null;
+    const user = actual.user orelse return null;
+    if (!user.class) return null;
+    return try std.fmt.allocPrint(
+        self.arena,
+        "Only an `Error` can be raised. Declare it as `class {s} extends Error`, so it can be raised and caught.",
+        .{user.display_name},
+    );
+}
+
 fn mismatchHelp(actual: Type, expected: Type, general: []const u8) []const u8 {
     if (actual.kind == .list and expected.kind == .list) {
         return "A list keeps the element type it was built with, so one list type cannot stand in for another. Build the list with the type it needs, as in `var rates: List[Float] = [1, 2]`.";
@@ -5204,25 +5277,32 @@ fn checkBodyWithSelfIn(
     const outer_loops = self.loops;
     const outer_constructing = self.constructing;
     const outer_catch_depth = self.catch_depth;
+    const outer_try_depth = self.try_depth;
+    const outer_in_block = self.in_block;
     const outer_finally_loop_depth = self.finally_loop_depth;
     defer {
         self.scopes = outer_scopes;
         self.current_return_type = outer_return_type;
         self.in_function = outer_in_function;
+        self.in_block = outer_in_block;
         self.loops = outer_loops;
         self.constructing = outer_constructing;
         self.catch_depth = outer_catch_depth;
+        self.try_depth = outer_try_depth;
         self.finally_loop_depth = outer_finally_loop_depth;
     }
 
     self.scopes = .empty;
     self.loops = .empty;
     self.catch_depth = 0;
+    self.try_depth = 0;
     self.finally_loop_depth = null;
     try self.scopes.appendSlice(self.arena, enclosing);
     try self.scopes.append(self.arena, parameters);
     self.current_return_type = expected_return_type;
     self.in_function = true;
+    // A function declared inside a block is not itself a block (`enclosingLoop`).
+    self.in_block = false;
     self.constructing = constructing;
 
     // Section 7.3's defaults, each against its parameter's type. The resolver
@@ -5385,7 +5465,8 @@ fn typeFieldValue(self: *Checker, key: []const u8) Error!Type {
             field.field.initializer.span,
             "this is {f}, but `{s}` was declared as {f}",
             .{ actual, try Resolver.displayKey(self.arena, key), declared },
-            mismatchHelp(actual, declared, "Give the declaration the type of its value, or convert the value to match."),
+            (try self.optionalMismatchHelp(actual, declared, field.field.initializer.span, true)) orelse
+                mismatchHelp(actual, declared, "Give the declaration the type of its value, or convert the value to match."),
         );
     }
     return declared;
@@ -5585,7 +5666,7 @@ fn checkConstructorBody(self: *Checker, key: []const u8) Error!void {
     const constructor = self.constructors.get(key).?.constructor.?;
     const super_call = superCallOf(constructor.body.statements);
     if (self.structs.get(key).?.user.?.base) |base| {
-        if (super_call == null and try self.constructionNeedsArguments(base.name)) {
+        if (super_call == null and !hasLaterSuperCall(constructor.body.statements) and try self.constructionNeedsArguments(base.name)) {
             try self.reportWithHelp(
                 constructor.keyword_span,
                 "this constructor has to start with `super(...)`, because building `{s}` takes arguments",
@@ -6342,13 +6423,63 @@ fn checkLambdaCaptures(self: *Checker, call_span: Source.Span, lambda: *const As
 // Supporting checks.
 
 fn requireCondition(self: *Checker, expression: *const Ast.Expression) Error!void {
+    return self.requireConditionBeside(expression, null);
+}
+
+/// What `and`/`or` joins a condition to, when it is one of two operands.
+const Beside = struct {
+    other: *const Ast.Expression,
+    keyword: []const u8,
+    /// The checked operand is the right one.
+    right: bool,
+};
+
+fn requireConditionBeside(self: *Checker, expression: *const Ast.Expression, beside: ?Beside) Error!void {
     const actual = try self.typeOf(expression);
     if (actual.kind == .invalid or actual.kind == .bool) return;
     try self.report(
         expression.span,
         "a condition must be a Bool, but this is {f}",
         .{actual},
-        "Compare it to something, as in `count > 0`. Emerald has no truthy or falsey values.",
+        (try self.shortcutOrHelp(expression, beside)) orelse
+            (try self.optionalConditionHelp(expression, actual)) orelse
+            "Compare it to something, as in `count > 0`. Emerald has no truthy or falsey values.",
+    );
+}
+
+/// `if found {` with `found` possibly nothing: ask whether it is there.
+fn optionalConditionHelp(self: *Checker, expression: *const Ast.Expression, actual: Type) Error!?[]const u8 {
+    if (!actual.optional) return null;
+    const text = self.spanText(expression.span);
+    if (!quotable(text)) return null;
+    if (actual.payload().kind == .bool) return try std.fmt.allocPrint(
+        self.arena,
+        "`{s}` may be nothing as well as true or false. Say which you want: `{s} == true`, or `{s} != nothing` to ask only whether it is there.",
+        .{ text, text, text },
+    );
+    return try std.fmt.allocPrint(
+        self.arena,
+        "`{s}` may be nothing. To ask whether it is there, write `{s} != nothing`.",
+        .{ text, text },
+    );
+}
+
+/// `choice == 1 or 2`: the second operand is a bare value, so each comparison
+/// has to be written out.
+fn shortcutOrHelp(self: *Checker, expression: *const Ast.Expression, beside: ?Beside) Error!?[]const u8 {
+    const joined = beside orelse return null;
+    if (!joined.right or joined.other.data != .comparison) return null;
+    const comparison = joined.other.data.comparison;
+    if (comparison.operators.len != 1) return null;
+    const subject = self.spanText(comparison.operands[0].span);
+    const first = self.spanText(comparison.operands[1].span);
+    const value = self.spanText(expression.span);
+    if (!quotable(subject) or !quotable(first) or !quotable(value)) return null;
+    const operator = comparison.operators[0].lexeme();
+    return try std.fmt.allocPrint(
+        self.arena,
+        "`{s}` is a value, not a comparison. Write the comparison again for each value: `{s} {s} {s} {s} {s} {s} {s}`.",
+        .{ value, subject, operator, first, joined.keyword, subject, operator, value },
     );
 }
 
@@ -6501,7 +6632,7 @@ fn resolveWrittenType(self: *Checker, annotation: Ast.TypeExpression) Error!Type
         annotation.span,
         "`{s}` is not a type",
         .{annotation.name},
-        try self.misspeltTypeHelp(annotation.name, "Check the spelling or declare the struct in this project."),
+        try self.misspeltTypeHelp(annotation.name, "Check the spelling, or declare the type in this program."),
     );
     return .invalid;
 }
@@ -6898,10 +7029,14 @@ fn typeOfUnrecorded(self: *Checker, expression: *const Ast.Expression, expected:
             return .invalid;
         },
         .list_literal => self.typeOfList(expression, null),
-        .string_literal => .string,
+        .string_literal => blk: {
+            try self.warnForeignInterpolation(expression);
+            break :blk .string;
+        },
         // Section 5.1: any value can be interpolated, displayed as `print`
         // would display it.
         .interpolation => |parts| blk: {
+            try self.warnForeignInterpolation(expression);
             for (parts) |part| switch (part) {
                 .text => {},
                 .expression => |part_expression| _ = try self.typeOf(part_expression),
@@ -7572,6 +7707,7 @@ fn checkLambdaBody(
 
     const outer_return_type = self.current_return_type;
     const outer_in_function = self.in_function;
+    const outer_in_block = self.in_block;
     const outer_loops = self.loops;
     const outer_pending = self.pending_return_types;
     const outer_catch_depth = self.catch_depth;
@@ -7580,6 +7716,7 @@ fn checkLambdaBody(
         _ = self.scopes.pop();
         self.current_return_type = outer_return_type;
         self.in_function = outer_in_function;
+        self.in_block = outer_in_block;
         self.loops = outer_loops;
         self.pending_return_types = outer_pending;
         self.catch_depth = outer_catch_depth;
@@ -7594,6 +7731,7 @@ fn checkLambdaBody(
     self.finally_loop_depth = null;
     self.pending_return_types = .empty;
     self.in_function = true;
+    self.in_block = true;
     self.current_return_type = wanted_result;
 
     switch (lambda.body) {
@@ -8722,6 +8860,12 @@ fn typeOfMethodCall(
                     "Pass a whole number."
                 else if (operand == .list)
                     "Pass a List of the same element type."
+                else if (std.mem.eql(u8, member.name, "remove") and actual.kind == .int and !actual.optional)
+                    try std.fmt.allocPrint(
+                        self.arena,
+                        "`remove` takes the item itself, not its position. To remove the item at a position, write `{s}.remove_at({s})`.",
+                        .{ self.spanText(member.base.span), self.spanText(argument.span) },
+                    )
                 else
                     "Pass a value of the type the list holds, or convert it first.",
             );
@@ -8798,6 +8942,12 @@ fn requirePresent(
             self.arena,
             "Give it a fallback with `.or(...)`, or check it first with `if {s} != nothing {{ ... }}`.",
             .{at.data.name},
+        )
+    else if (at.data == .member and at.data.member.optional and member != null and quotable(self.spanText(at.span)))
+        try std.fmt.allocPrint(
+            self.arena,
+            "Each link after a `?.` needs its own `?.`. Write `{s}?.{s}`.",
+            .{ self.spanText(at.span), member.? },
         )
     else
         "Give it a fallback with `.or(...)`, or put it in a name and check that against `nothing` first.";
@@ -8888,6 +9038,7 @@ fn typeOfEach(
         try self.requireIndexedBlock(call, member, base) orelse return .nothing
     else
         try self.requireBlock(call, member, base, .invalid) orelse return .nothing;
+    try self.warnReturnLeavesBlock(block, member.name);
     if (block.data == .lambda and block.data.lambda.body == .expression) {
         const body = block.data.lambda.body.expression;
         if (body.data != .call) {
@@ -10240,8 +10391,35 @@ fn closeType(self: *Checker, name: []const u8) ?[]const u8 {
 
 /// `general`, or "Did you mean ...?" when a type name is a small edit away.
 fn misspeltTypeHelp(self: *Checker, name: []const u8, general: []const u8) Error![]const u8 {
+    if (familiarTypeHelp(name)) |help| return help;
     const close = self.closeType(name) orelse return general;
     return std.fmt.allocPrint(self.arena, "Did you mean `{s}`?", .{close});
+}
+
+/// Type names from other languages, answered with the Emerald type to write
+/// (or, for `void` and the error classes, what to do instead).
+fn familiarTypeHelp(name: []const u8) ?[]const u8 {
+    const Entry = struct { []const u8, []const u8 };
+    const table = [_]Entry{
+        .{ "void", "A function with nothing to give back leaves the return type out, or writes `Nothing`." },
+        .{ "str", "Did you mean `String`?" },
+        .{ "boolean", "Did you mean `Bool`?" },
+        .{ "integer", "Did you mean `Int`?" },
+        .{ "long", "Did you mean `Int`?" },
+        .{ "short", "Did you mean `Int`?" },
+        .{ "double", "Did you mean `Float`?" },
+        .{ "char", "Emerald has no separate character type. A single character is a `String`." },
+        .{ "Exception", "Did you mean `Error`? Every error Emerald raises extends `Error`." },
+        .{ "ValueError", "Emerald has no `ValueError`. `to_int`, `to_float`, and the other failures Emerald raises itself are a `RuntimeError`, so write `catch error: RuntimeError`, or `catch error` to handle any error." },
+        .{ "TypeError", "Emerald has no `TypeError`; type mistakes are found before the program runs. To handle a failure at run time, write `catch error: RuntimeError`, or `catch error` to handle any error." },
+        .{ "ParseError", "Emerald has no `ParseError`. `to_int`, `to_float`, and the other failures Emerald raises itself are a `RuntimeError`, so write `catch error: RuntimeError`, or `catch error` to handle any error." },
+        .{ "NumberFormatException", "Emerald has no `NumberFormatException`. `to_int` and `to_float` raise a `RuntimeError`, so write `catch error: RuntimeError`, or `catch error` to handle any error." },
+        .{ "IOError", "Did you mean `FileError`?" },
+    };
+    for (table) |entry| {
+        if (std.mem.eql(u8, name, entry[0])) return entry[1];
+    }
+    return null;
 }
 
 /// Spellings from other languages whose Emerald equivalent is not a renamed
@@ -10530,6 +10708,7 @@ fn typeOfCountingBlock(self: *Checker, expression: *const Ast.Expression, call: 
     });
     const block = call.arguments[wanted - 1];
     const actual = try self.typeOfExpected(block, expected);
+    try self.warnReturnLeavesBlock(block, member.name);
     if (actual.kind != .function and actual.kind != .invalid) {
         try self.reportWithHelp(
             block.span,
@@ -10558,7 +10737,14 @@ fn typeOfUnary(
                 expression.span,
                 "`-` needs a number, but this is {f}",
                 .{operand},
-                "Use `not` to invert a Bool.",
+                if (operand.kind == .bool and !operand.optional)
+                    "Use `not` to invert a Bool."
+                else if (operand.optional and operand.payload().isNumber())
+                    "This may be `nothing`. Give it a fallback with `.or(0)`, or check it against `nothing` first."
+                else if (operand.kind == .struct_value and !operand.optional)
+                    "Unary `-` works only on Int and Float, and a type cannot define it. Write a named method such as `negated()` instead."
+                else
+                    "Unary `-` works only on Int and Float.",
             );
         },
         .not => {
@@ -10584,7 +10770,10 @@ fn typeOfBinary(
     if (left.kind == .struct_value and !left.optional) {
         if (try self.typeOfAnnotatedOperatorCall(expression, binary, left, right)) |result| return result;
     }
-    return self.arithmetic(expression.span, binary.operator, left, right);
+    return self.arithmetic(expression.span, binary.operator, left, right, .{
+        .left = self.spanText(binary.left.span),
+        .right = self.spanText(binary.right.span),
+    });
 }
 
 const AnnotatedOperatorSelection = struct {
@@ -10719,12 +10908,346 @@ fn typeOfAnnotatedOperatorAssignment(
     return selected.signature.return_type;
 }
 
+/// The program's own text for each operand of an arithmetic operation, so a
+/// help can write the fix with the names the reader used.
+const Written = struct {
+    left: []const u8 = "",
+    right: []const u8 = "",
+    /// `left += right` rather than `left + right`.
+    compound: bool = false,
+};
+
+fn spanText(self: *const Checker, span: Source.Span) []const u8 {
+    return self.files[self.file].source.text[span.start..span.end];
+}
+
+/// A written operand short enough to quote in a help, on one line.
+fn quotable(text: []const u8) bool {
+    return text.len > 0 and text.len <= 40 and std.mem.indexOfScalar(u8, text, '\n') == null;
+}
+
+fn isNumberLiteral(text: []const u8) bool {
+    if (text.len == 0) return false;
+    for (text) |character| {
+        if (!std.ascii.isDigit(character) and character != '.' and character != '_') return false;
+    }
+    return true;
+}
+
+fn isStringLiteral(text: []const u8) bool {
+    return text.len >= 2 and text[0] == '"' and text[text.len - 1] == '"' and
+        std.mem.indexOf(u8, text, "#{") == null and std.mem.indexOfScalar(u8, text, '\\') == null;
+}
+
+/// `text`, in parentheses when it has a space outside brackets and quotes,
+/// so that a method can be called on it.
+fn receiverText(arena: std.mem.Allocator, text: []const u8) Error![]const u8 {
+    var depth: usize = 0;
+    var in_quote = false;
+    var loose = false;
+    for (text) |character| {
+        if (character == '"') in_quote = !in_quote;
+        if (in_quote) continue;
+        switch (character) {
+            '(', '[', '{' => depth += 1,
+            ')', ']', '}' => depth -|= 1,
+            ' ' => if (depth == 0) {
+                loose = true;
+            },
+            else => {},
+        }
+    }
+    if (!loose) return text;
+    return std.fmt.allocPrint(arena, "({s})", .{text});
+}
+
+fn conversionOf(self: *Checker, text: []const u8, other: Type) Error![]const u8 {
+    return std.fmt.allocPrint(self.arena, "{s}.{s}()", .{
+        try receiverText(self.arena, text),
+        if (other.kind == .float) "to_float" else "to_int",
+    });
+}
+
+/// `text` as it reads inside `"..."` interpolation: a literal keeps its own
+/// characters, anything else is interpolated.
+fn interpolated(self: *Checker, text: []const u8) Error![]const u8 {
+    if (isNumberLiteral(text)) return text;
+    if (isStringLiteral(text)) return text[1 .. text.len - 1];
+    return std.fmt.allocPrint(self.arena, "#{{{s}}}", .{text});
+}
+
+/// Help for `+`, `-`, `*`, and the rest when one side is text: converting the
+/// text to a number, repeating text, taking text off the end, or filling a
+/// `%` placeholder. Null when no concrete fix applies.
+fn textMixHelp(
+    self: *Checker,
+    operator: Ast.BinaryOperator,
+    left: Type,
+    right: Type,
+    written: Written,
+) Error!?[]const u8 {
+    if (left.optional or right.optional) return null;
+    if (!quotable(written.left) or !quotable(written.right)) return null;
+    const text_left = left.kind == .string;
+    const text_right = right.kind == .string;
+
+    if (text_left and text_right) {
+        if (written.compound) return null;
+        switch (operator) {
+            .subtract => return try std.fmt.allocPrint(
+                self.arena,
+                "To take text off the end, write `{s}.remove_suffix({s})`. `remove_prefix` takes it off the start.",
+                .{ try receiverText(self.arena, written.left), written.right },
+            ),
+            .remainder => {
+                if (!isStringLiteral(written.left)) return null;
+                const at = std.mem.indexOfScalar(u8, written.left, '%') orelse return null;
+                if (at + 1 >= written.left.len or !std.ascii.isAlphabetic(written.left[at + 1])) return null;
+                if (std.mem.indexOfScalarPos(u8, written.left, at + 1, '%') != null) return null;
+                const filled = try std.fmt.allocPrint(self.arena, "{s}#{{{s}}}{s}", .{
+                    written.left[0..at],
+                    written.right,
+                    written.left[at + 2 ..],
+                });
+                return try std.fmt.allocPrint(
+                    self.arena,
+                    "Emerald has no `%` formatting. Put the value in the text with interpolation: `{s}`.",
+                    .{filled},
+                );
+            },
+            else => return null,
+        }
+    }
+    if (text_left == text_right) return null;
+
+    const other = if (text_left) right else left;
+    if (!other.isNumber()) return null;
+    const text = if (text_left) written.left else written.right;
+    const number = if (text_left) written.right else written.left;
+
+    // Words are not a number that conversion could rescue.
+    if (isStringLiteral(text) and !isNumberLiteral(text[1 .. text.len - 1])) {
+        if (written.compound) return null;
+        if (operator == .multiply and other.kind == .int) return try std.fmt.allocPrint(
+            self.arena,
+            "To repeat text, write `{s}.repeat({s})`.",
+            .{ text, number },
+        );
+        if (operator != .add) return null;
+        const joined = if (text_left)
+            try std.fmt.allocPrint(self.arena, "\"{s}{s}\"", .{ try self.interpolated(text), try self.interpolated(number) })
+        else
+            try std.fmt.allocPrint(self.arena, "\"{s}{s}\"", .{ try self.interpolated(number), try self.interpolated(text) });
+        return try std.fmt.allocPrint(
+            self.arena,
+            "To join text and a number, put the number in the text with interpolation: `{s}`.",
+            .{joined},
+        );
+    }
+
+    if (written.compound) {
+        if (text_left) {
+            // `line += 5`: the number is joined on, not added.
+            if (operator != .add) return null;
+            return try std.fmt.allocPrint(
+                self.arena,
+                "`{s}` is text, so only text can be added to it. To put the number on the end, write `{s} += \"#{{{s}}}\"`.",
+                .{ text, text, number },
+            );
+        }
+        return try std.fmt.allocPrint(
+            self.arena,
+            "`{s}` is text. To do arithmetic with it, convert it: `{s} {s}= {s}`.",
+            .{ text, number, operator.lexeme(), try self.conversionOf(text, other) },
+        );
+    }
+
+    const converted = try self.conversionOf(text, other);
+    const arithmetic_form = if (text_left)
+        try std.fmt.allocPrint(self.arena, "{s} {s} {s}", .{ converted, operator.lexeme(), number })
+    else
+        try std.fmt.allocPrint(self.arena, "{s} {s} {s}", .{ number, operator.lexeme(), converted });
+    switch (operator) {
+        .add => {
+            const joined = if (text_left)
+                try std.fmt.allocPrint(self.arena, "\"{s}{s}\"", .{ try self.interpolated(text), try self.interpolated(number) })
+            else
+                try std.fmt.allocPrint(self.arena, "\"{s}{s}\"", .{ try self.interpolated(number), try self.interpolated(text) });
+            return try std.fmt.allocPrint(
+                self.arena,
+                "`{s}` is text. To add, write `{s}`. To join them as text, write `{s}`.",
+                .{ text, arithmetic_form, joined },
+            );
+        },
+        .multiply => if (other.kind == .int) {
+            const repeated = try receiverText(self.arena, text);
+            if (isStringLiteral(text)) return try std.fmt.allocPrint(
+                self.arena,
+                "To repeat text, write `{s}.repeat({s})`.",
+                .{ repeated, number },
+            );
+            return try std.fmt.allocPrint(
+                self.arena,
+                "To repeat text, write `{s}.repeat({s})`. To multiply, convert it first: `{s}`.",
+                .{ repeated, number, arithmetic_form },
+            );
+        },
+        else => {},
+    }
+    return try std.fmt.allocPrint(
+        self.arena,
+        "`{s}` is text. To do arithmetic with it, convert it first: `{s}`.",
+        .{ text, arithmetic_form },
+    );
+}
+
+/// `n > 3` with `n` possibly nothing: order needs a number, so give it one.
+fn optionalOrderHelp(
+    self: *Checker,
+    operator: Ast.ComparisonOperator,
+    left: Type,
+    right: Type,
+    left_span: Source.Span,
+    right_span: Source.Span,
+) Error!?[]const u8 {
+    const left_absent = left.optional and left.payload().isNumber();
+    const right_absent = right.optional and right.payload().isNumber();
+    if (!left_absent and !right_absent) return null;
+    const absent_span = if (left_absent) left_span else right_span;
+    const absent = self.spanText(absent_span);
+    const other = self.spanText(if (left_absent) right_span else left_span);
+    if (!quotable(absent) or !quotable(other)) return null;
+    const checked = try receiverText(self.arena, absent);
+    const fallback: []const u8 = if ((if (left_absent) left else right).payload().kind == .float) "0.0" else "0";
+    const compared = if (left_absent)
+        try std.fmt.allocPrint(self.arena, "{s}.or({s}) {s} {s}", .{ checked, fallback, operator.lexeme(), other })
+    else
+        try std.fmt.allocPrint(self.arena, "{s} {s} {s}.or({s})", .{ other, operator.lexeme(), checked, fallback });
+    return try std.fmt.allocPrint(
+        self.arena,
+        "`{s}` may be nothing, so it has no order yet. Give it a fallback, as in `{s}`, or check `{s} != nothing` first.",
+        .{ absent, compared, absent },
+    );
+}
+
+/// Help for `==`, `>=`, and the other comparisons between text and a number.
+fn textNumberComparisonHelp(
+    self: *Checker,
+    operator: Ast.ComparisonOperator,
+    left: Type,
+    right: Type,
+    left_span: Source.Span,
+    right_span: Source.Span,
+) Error!?[]const u8 {
+    if (left.optional or right.optional) return null;
+    const text_left = left.kind == .string;
+    if (text_left == (right.kind == .string)) return null;
+    const other = if (text_left) right else left;
+    if (!other.isNumber()) return null;
+    const text = self.spanText(if (text_left) left_span else right_span);
+    const number = self.spanText(if (text_left) right_span else left_span);
+    if (!quotable(text) or !quotable(number)) return null;
+
+    const converted = try self.conversionOf(text, other);
+    const compared = if (text_left)
+        try std.fmt.allocPrint(self.arena, "{s} {s} {s}", .{ converted, operator.lexeme(), number })
+    else
+        try std.fmt.allocPrint(self.arena, "{s} {s} {s}", .{ number, operator.lexeme(), converted });
+    if (operator.isEquality() and isNumberLiteral(number)) {
+        const as_text = if (text_left)
+            try std.fmt.allocPrint(self.arena, "{s} {s} \"{s}\"", .{ text, operator.lexeme(), number })
+        else
+            try std.fmt.allocPrint(self.arena, "\"{s}\" {s} {s}", .{ number, operator.lexeme(), text });
+        return try std.fmt.allocPrint(
+            self.arena,
+            "`{s}` is text. To compare numbers, convert it: `{s}`. To compare text, write `{s}`.",
+            .{ text, compared, as_text },
+        );
+    }
+    return try std.fmt.allocPrint(
+        self.arena,
+        "`{s}` is text. To compare numbers, convert it: `{s}`.",
+        .{ text, compared },
+    );
+}
+
+/// Help for `when 1` on a text subject (or `when "1"` on a number).
+fn whenTextHelp(
+    self: *Checker,
+    subject: Type,
+    actual: Type,
+    subject_span: Source.Span,
+    alternative_span: Source.Span,
+) Error!?[]const u8 {
+    if (subject.optional or actual.optional) return null;
+    const subject_text = self.spanText(subject_span);
+    const alternative_text = self.spanText(alternative_span);
+    if (!quotable(subject_text) or !quotable(alternative_text)) return null;
+    if (subject.kind == .string and actual.isNumber()) {
+        if (!isNumberLiteral(alternative_text)) return null;
+        return try std.fmt.allocPrint(
+            self.arena,
+            "`{s}` is text, so each `when` is text: write `when \"{s}\"`. To match numbers instead, convert the subject: `case {s} {{`.",
+            .{ subject_text, alternative_text, try self.conversionOf(subject_text, actual) },
+        );
+    }
+    if (subject.isNumber() and actual.kind == .string and isStringLiteral(alternative_text)) {
+        const inner = alternative_text[1 .. alternative_text.len - 1];
+        if (!isNumberLiteral(inner)) return null;
+        return try std.fmt.allocPrint(
+            self.arena,
+            "`{s}` is a number, so each `when` is a number: write `when {s}`.",
+            .{ subject_text, inner },
+        );
+    }
+    return null;
+}
+
+/// An operand that is the Nothing a function gives back because it declares
+/// no result: say so, since the operator is not at fault.
+fn nothingOperandHelp(self: *Checker, left: Type, right: Type, written: Written) Error!?[]const u8 {
+    for ([_]struct { Type, []const u8 }{ .{ left, written.left }, .{ right, written.right } }) |operand| {
+        if (operand[0].kind != .nothing or operand[0].optional) continue;
+        const text = operand[1];
+        const open = std.mem.indexOfScalar(u8, text, '(') orelse continue;
+        if (open == 0 or text[text.len - 1] != ')') continue;
+        const name = text[0..open];
+        for (name) |character| {
+            if (!std.ascii.isAlphanumeric(character) and character != '_') break;
+        } else {
+            const binding = self.find(name) orelse continue;
+            if (!binding.is_function) continue;
+            return try std.fmt.allocPrint(
+                self.arena,
+                "`{s}` gives back nothing, because it declares no result. Give it a result type and `return` the value instead of printing it.",
+                .{name},
+            );
+        }
+    }
+    return null;
+}
+
+/// `scores + 3` with a List and one of its elements.
+fn listElementHelp(self: *Checker, operator: Ast.BinaryOperator, left: Type, right: Type, written: Written) Error!?[]const u8 {
+    if (operator != .add or left.kind != .list or left.optional or right.optional) return null;
+    if (written.compound or !quotable(written.left) or !quotable(written.right)) return null;
+    const element = left.element orelse return null;
+    if (!right.assignableTo(element.*)) return null;
+    const list = try receiverText(self.arena, written.left);
+    return try std.fmt.allocPrint(
+        self.arena,
+        "To add an item to a list, write `{s}.append({s})` on its own line; it changes the list. To make a new list instead, write `{s}.chain([{s}])`.",
+        .{ list, written.right, list, written.right },
+    );
+}
+
 fn arithmetic(
     self: *Checker,
     span: Source.Span,
     operator: Ast.BinaryOperator,
     left: Type,
     right: Type,
+    written: Written,
 ) Error!Type {
     // `+` joins two Strings; nothing else mixes text and arithmetic. A String
     // that may be absent is not one until it is proved present (4.5).
@@ -10746,14 +11269,16 @@ fn arithmetic(
                 if (left.optional or right.optional)
                     "One of these may be absent. Give it a fallback with `.or(\"\")`, or check it against `nothing` first."
                 else
-                    "Convert the value with `to_string()`, or use interpolation, as in `\"#{name}: #{score}\"`.",
+                    try self.textMixHelp(operator, left, right, written) orelse
+                        "Convert the value with `to_string()`, or use interpolation, as in `\"#{name}: #{score}\"`.",
             );
         } else {
             try self.report(
                 span,
                 "{s} needs numbers, but this is {f} and {f}",
                 .{ operator.describe(), left, right },
-                "Strings have no arithmetic. `+` is the one operator for them, and it joins two Strings.",
+                try self.textMixHelp(operator, left, right, written) orelse
+                    "Strings have no arithmetic. `+` is the one operator for them, and it joins two Strings.",
             );
         }
         return .invalid;
@@ -10761,6 +11286,16 @@ fn arithmetic(
 
     // Section 5.3: `/` always produces a Float.
     return Type.arithmeticResult(left, right, operator == .divide) orelse {
+        if (left.optional and left.kind == .struct_value) {
+            try self.reportWithHelp(
+                span,
+                "{s} needs a value on the left, but this is {f}, which may be `nothing`",
+                .{ operator.describe(), left },
+                "Check it against `nothing` first, or unwrap it, and then use `{s}` on the {f} itself.",
+                .{ operator.lexeme(), left.payload() },
+            );
+            return .invalid;
+        }
         try self.report(
             span,
             "{s} needs numbers, but this is {f} and {f}",
@@ -10769,10 +11304,21 @@ fn arithmetic(
             // different fix from a value that is the wrong kind entirely.
             if ((left.optional and left.payload().isNumber()) or (right.optional and right.payload().isNumber()))
                 "One of these may be absent. Give it a fallback with `.or(0)`, or check it against `nothing` first."
+            else if (try self.nothingOperandHelp(left, right, written)) |help|
+                help
             else if (operator == .add and left.kind == .list and right.kind == .list and !left.optional and !right.optional)
                 "Join two lists with `chain`, as in `first.chain(second)`."
+            else if (try self.listElementHelp(operator, left, right, written)) |help|
+                help
             else if (left.kind == .struct_value and !left.optional)
-                "Register `+`, `-`, `*`, or `/` on this type with `@operator(\"...\")`, or write a named method instead."
+                switch (operator) {
+                    .add, .subtract, .multiply, .divide => try std.fmt.allocPrint(
+                        self.arena,
+                        "{f} does not define `{s}`. Register it with `@operator(\"{s}\")` on a public method, or write a named method instead.",
+                        .{ left, operator.lexeme(), operator.lexeme() },
+                    ),
+                    else => "Only Int and Float have this operator; a type cannot define it.",
+                }
             else if (right.kind == .struct_value and !right.optional and switch (operator) {
                 .add, .subtract, .multiply, .divide => true,
                 else => false,
@@ -10826,6 +11372,15 @@ fn typeOfOperatorCall(
                 .{ lexeme, left, contract.trait },
                 "This program declares its own `{s}`, which takes the prelude's place wherever the name is written, but operators run only through the prelude's. Adopt the built-in as `with " ++ Resolver.prelude_namespace ++ ".{s}`, or rename this program's `{s}`.",
                 .{ contract.trait, contract.trait, contract.trait },
+            );
+        } else if (std.mem.startsWith(u8, user.name, Resolver.prelude_namespace)) {
+            // Built-in types cannot be edited, so adopting a trait is not a fix.
+            try self.reportWithHelp(
+                span,
+                "`{s}` cannot compare {f} values, because {f} is a built-in type that has no order",
+                .{ lexeme, left, left },
+                "A built-in type cannot be changed to adopt `{s}`. Compare with `==`, or choose the values you mean with a `case`.",
+                .{contract.trait},
             );
         } else if (!self.trait_list_errored.contains(user.name)) {
             try self.reportWithHelp(
@@ -10942,7 +11497,7 @@ fn checkCase(self: *Checker, case: *const Ast.Case, expected: ?Type) Error!Type 
         }
         for (arm.alternatives) |alternative| {
             if (subject) |subject_type| {
-                try self.checkAlternative(alternative, subject_type, &covered);
+                try self.checkAlternative(alternative, subject_type, case.subject.?.span, &covered);
             } else {
                 try self.requireCondition(alternative);
                 self.narrow(alternative, true);
@@ -11117,6 +11672,7 @@ fn checkAlternative(
     self: *Checker,
     alternative: *const Ast.Expression,
     subject: Type,
+    subject_span: Source.Span,
     covered: *std.StringHashMapUnmanaged(void),
 ) Error!void {
     // Section 12: `when Download.finished(path)` selects a choice. Its data
@@ -11161,6 +11717,8 @@ fn checkAlternative(
             "{s}",
             .{if (isTrait(subject) or isTrait(actual))
                 "A struct compares by its fields and an object by identity, and a trait may hold either. Match on a concrete value instead."
+            else if (try self.whenTextHelp(subject, actual, subject_span, alternative.span)) |help|
+                help
             else
                 "Each alternative is a value of the subject's type, compared with it by `==`."},
         );
@@ -11286,12 +11844,13 @@ fn equatable(left: Type, right: Type) bool {
 }
 
 fn typeOfLogical(self: *Checker, logical: Ast.Expression.Logical) Error!Type {
-    try self.requireCondition(logical.left);
+    const keyword = if (logical.operator == .conjunction) "and" else "or";
+    try self.requireConditionBeside(logical.left, .{ .other = logical.right, .keyword = keyword, .right = false });
     // Section 4.5: the right side runs only when the left one held, for
     // `and`, or failed, for `or`, so it is checked knowing which.
     const before = try self.snapshot();
     self.narrow(logical.left, logical.operator == .conjunction);
-    try self.requireCondition(logical.right);
+    try self.requireConditionBeside(logical.right, .{ .other = logical.left, .keyword = keyword, .right = true });
     self.restoreTypes(before);
     return .bool;
 }
@@ -11385,6 +11944,8 @@ fn typeOfComparison(self: *Checker, comparison: Ast.Expression.Comparison) Error
                 .{ left, right },
                 if (isClass(left.payload()) and isClass(right.payload()))
                     "Two objects can be compared only when one's class is the other's or extends it, since only then can they be the same object."
+                else if (try self.textNumberComparisonHelp(operator, left, right, left_node.span, operand_node.span)) |help|
+                    help
                 else
                     "`==` and `!=` compare two values of the same type, and Int and Float compare with each other.",
             );
@@ -11395,7 +11956,8 @@ fn typeOfComparison(self: *Checker, comparison: Ast.Expression.Comparison) Error
                 pair,
                 "`{s}` needs numbers, but these are {f} values",
                 .{ operator.lexeme(), left },
-                "Only numbers and Strings are ordered. Use `==` or `!=` to compare other values.",
+                (try self.optionalOrderHelp(operator, left, right, left_node.span, operand_node.span)) orelse
+                    "Only numbers and Strings are ordered. Use `==` or `!=` to compare other values.",
             );
         }
         left = right;
@@ -11697,9 +12259,13 @@ fn typeOfCall(
                     return .invalid;
                 }
             }
+            // Only a call that checks: a broken one is already reported.
+            try self.exit_calls.put(self.arena, expression, {});
             return .nothing;
         }
+        const reported = self.diagnostics.items.len;
         try self.typeArguments(call.arguments);
+        try self.warnPrintedNothing(name, call.arguments, reported);
         return .nothing;
     }
 
@@ -11804,6 +12370,12 @@ const JsonEncodeIssue = struct {
     /// field is the useful correction: it points at the declaration the
     /// programmer changes rather than at an opaque call site.
     field_path: []const u8 = "",
+    /// Section 11.3: Csv does not take a generic struct; `type` is that struct.
+    generic_struct: bool = false,
+    /// Sections 15.9 and 15.11: a private field with no default cannot be read,
+    /// so the refusal is the missing default, not the field's type. `owner` is
+    /// the struct being built and `type` the field's type.
+    missing_private_default: ?Type = null,
 };
 
 /// Section 12: a plain enum is saved as its choice's name; one whose choices
@@ -11855,7 +12427,14 @@ fn typeOfTypedEncode(self: *Checker, call: Ast.Expression.Call, name: []const u8
             try self.reportCarriesData(call.arguments[bound[0].?].span, found_issue, if (csv) "written as CSV" else "written as JSON", "Saving only the choice's name would lose its data. Convert it first, with a `case` that builds a plain struct or text.");
             return .string;
         }
-        if (found_issue.field_path.len > 0) {
+        if (found_issue.generic_struct) {
+            try self.report(
+                call.arguments[bound[0].?].span,
+                "Csv cannot write a generic struct like `{f}`",
+                .{found_issue.type},
+                "Declare a struct with concrete field types, and write a List of that.",
+            );
+        } else if (found_issue.field_path.len > 0) {
             if (csv) {
                 try self.report(
                     call.arguments[bound[0].?].span,
@@ -11991,6 +12570,22 @@ fn typeOfTypedDecode(self: *Checker, call: Ast.Expression.Call, name: []const u8
                     "JSON builds a struct through its generated constructor. Decode into a struct without its own constructor, then use those values to construct this one.",
                 );
             }
+        } else if (found_issue.missing_private_default) |owner| {
+            const field = found_issue.field_path[if (std.mem.lastIndexOfScalar(u8, found_issue.field_path, '.')) |dot| dot + 1 else 0..];
+            try self.reportWithHelp(
+                target_expression.span,
+                "private field `{s}` has no default, so {s} cannot build {f}",
+                .{ field, api, owner },
+                "A private field is never read from {s}, so it starts from its default. Give `{s}` one where it is declared, as in `const {s}: {f} = <value>`.",
+                .{ api, field, field, found_issue.type },
+            );
+        } else if (found_issue.generic_struct) {
+            try self.report(
+                target_expression.span,
+                "Csv cannot read a generic struct like `{f}`",
+                .{found_issue.type},
+                "Declare a struct with concrete field types, and read a List of that.",
+            );
         } else if (found_issue.field_path.len > 0) {
             try self.report(
                 target_expression.span,
@@ -12081,7 +12676,7 @@ fn jsonDecodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?J
                 // A private field is never read from JSON, so it needs a
                 // default to start from (15.9).
                 if (Resolver.isPrivate(resolved.name)) {
-                    if (field.default == null) return .{ .type = resolved.type, .field_path = next };
+                    if (field.default == null) return .{ .type = resolved.type, .field_path = next, .missing_private_default = value };
                     continue;
                 }
                 if (try self.jsonDecodeIssue(resolved.type, next)) |issue| return issue;
@@ -12200,10 +12795,11 @@ fn csvDecodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?Js
     if (element.kind != .struct_value or element.optional) return .{ .type = element, .field_path = field_path };
     const user = element.user.?;
     if (user.class or user.trait or user.enumeration) return .{ .type = element, .field_path = field_path };
+    if (user.type_parameters.len > 0) return .{ .type = element, .field_path = field_path, .generic_struct = true };
     const declaration = self.struct_declarations.get(user.name).?;
     for (declaration.fields, user.fields) |written, resolved| {
         if (Resolver.isPrivate(resolved.name)) {
-            if (written.default == null) return .{ .type = resolved.type, .field_path = resolved.name };
+            if (written.default == null) return .{ .type = resolved.type, .field_path = resolved.name, .missing_private_default = element };
             continue;
         }
         if (try self.csvCellFieldIssue(resolved.type, resolved.name)) |issue| return issue;
@@ -12236,6 +12832,7 @@ fn csvEncodeIssue(self: *Checker, value: Type, field_path: []const u8) Error!?Js
     if (element.kind != .struct_value or element.optional) return .{ .type = element, .field_path = field_path };
     const user = element.user.?;
     if (user.class or user.trait or user.enumeration) return .{ .type = element, .field_path = field_path };
+    if (user.type_parameters.len > 0) return .{ .type = element, .field_path = field_path, .generic_struct = true };
     for (user.fields) |field| {
         // A private field is the struct's own business and is never written.
         if (Resolver.isPrivate(field.name)) continue;
@@ -12744,7 +13341,18 @@ fn typeOfSuperCall(self: *Checker, expression: *const Ast.Expression, call: Ast.
         return .nothing;
     };
     if (building.super_call != expression) {
-        try self.report(
+        const statements = building.declaration.constructor.?.body.statements;
+        if (statements.len > 0 and !(statements[0].data == .expression and statements[0].data.expression == expression)) {
+            const text = self.spanText(statements[0].span);
+            const first_line = std.mem.trim(u8, text[0 .. std.mem.indexOfScalar(u8, text, '\n') orelse text.len], " \t\r");
+            try self.reportWithHelp(
+                call.callee.span,
+                "`super(...)` has to be the first statement of the constructor",
+                .{},
+                "Move it to the constructor's first line, before `{s}`, so the base class's part of the object is built before anything else runs.",
+                .{first_line},
+            );
+        } else try self.report(
             call.callee.span,
             "`super(...)` can only begin a constructor",
             .{},
@@ -12768,6 +13376,17 @@ fn typeOfSuperCall(self: *Checker, expression: *const Ast.Expression, call: Ast.
 }
 
 /// Whether a constructor body starts with `super(...)`, and if so that call.
+/// A `super(...)` written as a statement after the first one.
+fn hasLaterSuperCall(statements: []const Ast.Statement) bool {
+    if (statements.len < 2) return false;
+    for (statements[1..]) |statement| {
+        if (statement.data != .expression) continue;
+        const expression = statement.data.expression;
+        if (expression.data == .call and isSuper(expression.data.call.callee)) return true;
+    }
+    return false;
+}
+
 fn superCallOf(statements: []const Ast.Statement) ?*const Ast.Expression {
     if (statements.len == 0 or statements[0].data != .expression) return null;
     const expression = statements[0].data.expression;
@@ -13137,7 +13756,8 @@ fn checkArguments(
                 argument.span,
                 "this is {f}, but {s} `{s}` of `{s}` needs {f}",
                 .{ actual, parameters.noun, parameter_name, name, expected },
-                mismatchHelp(actual, expected, parameters.mismatch_help),
+                (try self.optionalMismatchHelp(actual, expected, argument.span, false)) orelse
+                    mismatchHelp(actual, expected, parameters.mismatch_help),
             );
         }
         if (parameters.declared) |declared| try self.markWidening(argument, declared[position], expected, actual);
@@ -13181,7 +13801,8 @@ fn checkArguments(
                 pending.argument.span,
                 "this is {f}, but {s} `{s}` of `{s}` needs {f}",
                 .{ actual, parameters.noun, pending.name, name, target },
-                mismatchHelp(actual, target, parameters.mismatch_help),
+                (try self.optionalMismatchHelp(actual, target, pending.argument.span, false)) orelse
+                    mismatchHelp(actual, target, parameters.mismatch_help),
             );
         }
         try self.markWidening(pending.argument, pending.declared, target, actual);
@@ -13269,7 +13890,8 @@ fn typeOfValueCall(self: *Checker, call: Ast.Expression.Call, callee: Type, name
             argument.span,
             "this is {f}, but {f} is expected here",
             .{ actual, expected },
-            mismatchHelp(actual, expected, "Pass a value of the expected type, or convert it first."),
+            (try self.optionalMismatchHelp(actual, expected, argument.span, false)) orelse
+                mismatchHelp(actual, expected, "Pass a value of the expected type, or convert it first."),
         );
     }
     return signature.return_type;
@@ -13356,7 +13978,313 @@ fn typeArguments(self: *Checker, arguments: []const *const Ast.Expression) Error
     for (arguments) |argument| _ = try self.typeOfExpected(argument, .invalid);
 }
 
-// Control-flow shape, computed from the AST alone.
+/// Section 14.1's warning for unreachable code, once, at the first statement
+/// from `from` on that runs where it is written (a nested function is hoisted,
+/// so it is not unreachable). When the statement just above is a `while true`
+/// with no `break`, the loop itself is the mistake, so the warning points at it
+/// and says why, rather than at the code after it.
+fn reportUnreachable(self: *Checker, statements: []const Ast.Statement, from: usize) Error!void {
+    const first = for (statements[from..]) |statement| {
+        if (statement.data != .function_declaration) break statement;
+    } else return;
+    const cause = statements[from - 1];
+    if (cause.data == .while_loop and isLiteralTrue(cause.data.while_loop.condition)) {
+        const loop = cause.data.while_loop;
+        const header: Source.Span = .{ .start = cause.span.start, .end = loop.condition.span.end };
+        if (self.blockLeavesLoop(loop.body.statements)) return self.reportWarning(
+            header,
+            "this loop has no `break`, so the code after it never runs",
+            .{},
+            "The loop ends only by returning, raising, or calling `exit()`. Add a `break` where the loop should stop, or remove the code after it.",
+        );
+        return self.reportWarning(
+            header,
+            "this loop has no `break`, so it never ends and the code after it never runs",
+            .{},
+            "Add a `break` where the loop should stop, or replace `true` with a condition that becomes false.",
+        );
+    }
+    try self.reportWarning(
+        first.span,
+        "this code can never run",
+        .{},
+        "Every path above it already returns, raises, breaks, continues, calls `exit()`, or loops forever. Remove it, or move it earlier.",
+    );
+}
+
+/// Whether a loop body can leave the function it is in, by `return`, `raise`,
+/// or `exit()`, at any depth. A nested function or lambda is a statement or an
+/// expression here, so its own `return` is never counted.
+fn blockLeavesLoop(self: *const Checker, statements: []const Ast.Statement) bool {
+    for (statements) |statement| {
+        if (self.stmtLeavesLoop(statement)) return true;
+    }
+    return false;
+}
+
+fn stmtLeavesLoop(self: *const Checker, statement: Ast.Statement) bool {
+    return switch (statement.data) {
+        .return_statement, .raise_statement => true,
+        .expression => |expression| self.exit_calls.contains(expression),
+        .conditional => |conditional| blk: {
+            if (self.blockLeavesLoop(conditional.then_block.statements)) break :blk true;
+            const otherwise = conditional.otherwise orelse break :blk false;
+            break :blk switch (otherwise) {
+                .block => |block| self.blockLeavesLoop(block.statements),
+                .chained => |chained| self.stmtLeavesLoop(chained.*),
+            };
+        },
+        .while_loop => |loop| self.blockLeavesLoop(loop.body.statements),
+        .for_loop => |loop| self.blockLeavesLoop(loop.body.statements),
+        .try_statement => |protected| blk: {
+            if (self.blockLeavesLoop(protected.body.statements)) break :blk true;
+            for (protected.catches) |caught| if (self.blockLeavesLoop(caught.body.statements)) break :blk true;
+            if (protected.finally_block) |cleanup| break :blk self.blockLeavesLoop(cleanup.statements);
+            break :blk false;
+        },
+        .case_statement => |case| blk: {
+            for (case.arms) |arm| {
+                if (self.blockLeavesLoop(arm.body.block.statements)) break :blk true;
+            }
+            const otherwise = case.otherwise orelse break :blk false;
+            break :blk self.blockLeavesLoop(otherwise.block.statements);
+        },
+        .declaration, .assignment, .function_declaration, .struct_declaration => false,
+        .break_statement, .continue_statement, .assert_statement => false,
+        .destructuring, .destructuring_assignment => false,
+    };
+}
+
+// Warnings for silent mistakes (D5), each written to stay quiet on intended code.
+
+/// Whether the file being checked is one of the program's own, rather than the
+/// prelude, which the warnings for silent mistakes leave alone.
+fn checkingProgramFile(self: *const Checker) bool {
+    if (self.file >= self.files.len) return true;
+    return !std.mem.eql(u8, self.files[self.file].namespace, Resolver.prelude_namespace);
+}
+
+/// A short piece of the file being checked, or null when it is too long, or
+/// spans lines, to quote in a correction.
+fn quotableSpan(self: *const Checker, span: Source.Span) ?[]const u8 {
+    if (self.file >= self.files.len) return null;
+    const text = self.spanText(span);
+    return if (quotable(text)) text else null;
+}
+
+/// `name.trim()` or `scores.sort()` written as a whole statement. A built-in
+/// method that does not change its receiver only gives back its result, so
+/// discarding that result discards everything the call did. A method that
+/// changes its receiver (`append`, `remove_last`, `sort!`) is left alone,
+/// whatever it gives back, as is everything a program declares.
+fn warnDiscardedResult(self: *Checker, expression: *const Ast.Expression, result: Type, reported: usize) Error!void {
+    if (!self.checkingProgramFile()) return;
+    if (self.reportedErrorSince(reported) or self.try_depth > 0) return;
+    if (result.kind == .nothing or result.kind == .invalid) return;
+    if (expression.data != .call) return;
+    const call = expression.data.call;
+    if (call.callee.data != .member) return;
+    const member = call.callee.data.member;
+    if (member.optional or member.position != null) return;
+    if (std.mem.endsWith(u8, member.name, "!")) return;
+    const receiver = (self.expression_types.get(member.base) orelse return).type;
+    if (receiver.optional) return;
+    switch (receiver.kind) {
+        .string, .bytes, .range, .int, .float, .bool => {},
+        .list => if (Type.list_methods.get(member.name)) |method| if (method.mutates) return,
+        .dictionary, .set => if (Type.map_mutators.has(member.name)) return,
+        else => return,
+    }
+
+    const shown = try std.fmt.allocPrint(self.arena, "{f}", .{result});
+    const gives = if (result.kind == receiver.kind and !result.optional)
+        try std.fmt.allocPrint(self.arena, "a new {s}", .{shown})
+    else
+        try std.fmt.allocPrint(self.arena, "{s} {s}", .{ if (std.mem.indexOfScalar(u8, "AEIOU", shown[0]) != null) "an" else "a", shown });
+    const call_text = self.quotableSpan(expression.span);
+    const receiver_name: ?[]const u8 = if (member.base.data == .name) member.base.data.name else null;
+    const in_place = receiver.kind == .list and isInPlaceCounterpart(member.name);
+
+    const help: []const u8 = help: {
+        const quoted = call_text orelse break :help "Store what it gives back in a name, or pass it on to whatever needs it.";
+        if (receiver_name) |name| if (result.kind == receiver.kind and !result.optional) {
+            const reassign = if (self.bindingInScope(name)) |binding| binding.mutability == .variable else false;
+            if (reassign and in_place) break :help try std.fmt.allocPrint(self.arena, "Assign what it gives back, `{s} = {s}`, or call `{s}.{s}!()` to change `{s}` in place.", .{ name, quoted, name, member.name, name });
+            if (reassign) break :help try std.fmt.allocPrint(self.arena, "Assign what it gives back: `{s} = {s}`.", .{ name, quoted });
+        };
+        break :help try std.fmt.allocPrint(self.arena, "Store what it gives back in a name, as in `const result = {s}`.", .{quoted});
+    };
+    const parentheses = if (call.trailing) "" else "()";
+    if (receiver_name) |name| {
+        try self.reportWarning(member.name_span, "`{s}{s}` gives back {s} and leaves `{s}` unchanged", .{ member.name, parentheses, gives, name }, help);
+    } else {
+        try self.reportWarning(member.name_span, "`{s}{s}` gives back {s}, which is never used", .{ member.name, parentheses, gives }, help);
+    }
+}
+
+/// Whether an error was reported after the first `reported` diagnostics: a
+/// warning about something already wrong would only repeat it.
+fn reportedErrorSince(self: *const Checker, reported: usize) bool {
+    for (self.diagnostics.items[reported..]) |diagnostic| {
+        if (diagnostic.severity == .err) return true;
+    }
+    return false;
+}
+
+/// The binding `name` has here, looked up without any of `find`'s reporting.
+fn bindingInScope(self: *Checker, name: []const u8) ?*Binding {
+    const key = self.facts.keyFor(self.file, name);
+    var index = self.scopes.items.len;
+    while (index > 0) {
+        index -= 1;
+        if (self.scopes.items[index].getPtr(name)) |binding| return binding;
+        if (key) |qualified| if (self.scopes.items[index].getPtr(qualified)) |binding| return binding;
+    }
+    return null;
+}
+
+/// D5: `"Hello ${name}"` or `"Hello {name}"`, interpolation as other
+/// languages write it, which Emerald keeps as written. Only braces around
+/// exactly a name in scope (or a dotted path starting with one) count, so JSON
+/// text and format examples are left alone; a raw string is never checked.
+fn warnForeignInterpolation(self: *Checker, expression: *const Ast.Expression) Error!void {
+    if (!self.checkingProgramFile()) return;
+    if (self.file >= self.files.len) return;
+    const text = self.spanText(expression.span);
+    if (text.len == 0 or text[0] != '"') return;
+    if ((try self.interpolation_warned.getOrPut(self.arena, expression)).found_existing) return;
+    var index: usize = 0;
+    while (index < text.len) : (index += 1) {
+        const c = text[index];
+        if (c == '\\') {
+            index += 1;
+            continue;
+        }
+        if (c == '#' and index + 1 < text.len and text[index + 1] == '{') {
+            // Real interpolation: skip its expression.
+            var depth: usize = 0;
+            index += 1;
+            while (index < text.len) : (index += 1) {
+                if (text[index] == '{') depth += 1;
+                if (text[index] == '}') {
+                    depth -= 1;
+                    if (depth == 0) break;
+                }
+            }
+            continue;
+        }
+        // `\#{name}` is the escape for writing `#{name}` itself.
+        if (c != '{' or (index > 0 and text[index - 1] == '#')) continue;
+        const dollar = index > 0 and text[index - 1] == '$';
+        var end = index + 1;
+        while (end < text.len and (std.ascii.isAlphanumeric(text[end]) or text[end] == '_' or text[end] == '.')) end += 1;
+        if (end >= text.len or text[end] != '}' or end == index + 1) continue;
+        const path = text[index + 1 .. end];
+        const first = path[0 .. std.mem.indexOfScalar(u8, path, '.') orelse path.len];
+        if (first.len == 0 or !(std.ascii.isAlphabetic(first[0]) or first[0] == '_')) continue;
+        if (path[path.len - 1] == '.') continue;
+        const binding = self.bindingInScope(first) orelse continue;
+        if (binding.is_function or binding.is_type) continue;
+        const start: u32 = @intCast(expression.span.start + index - @intFromBool(dollar));
+        const written = text[index - @intFromBool(dollar) .. end + 1];
+        return self.reportWarning(
+            .{ .start = start, .end = @intCast(expression.span.start + end + 1) },
+            "`{s}` stays in the String as written",
+            .{written},
+            try std.fmt.allocPrint(self.arena, "Emerald interpolates with `#{{...}}`: write `#{{{s}}}`.", .{path}),
+        );
+    }
+}
+
+/// `print(greet("Ava"))` where `greet` gives back nothing: it prints
+/// `nothing`, which is never what was meant. Only a call written directly as
+/// the argument of `print`, `print_error`, or `write` counts.
+fn warnPrintedNothing(self: *Checker, name: []const u8, arguments: []const *const Ast.Expression, reported: usize) Error!void {
+    if (!self.checkingProgramFile() or self.reportedErrorSince(reported)) return;
+    const printing = std.mem.eql(u8, name, "print") or std.mem.eql(u8, name, "print_error") or std.mem.eql(u8, name, "write");
+    if (!printing) return;
+    for (arguments) |argument| {
+        if (argument.data != .call) continue;
+        const argument_type = (self.expression_types.get(argument) orelse continue).type;
+        if (argument_type.kind != .nothing or argument_type.optional) continue;
+        const callee = argument.data.call.callee;
+        const called: []const u8 = switch (callee.data) {
+            .name => |callee_name| callee_name,
+            .member => |member| member.name,
+            else => "this call",
+        };
+        const quoted = if (callee.data == .name or callee.data == .member) try std.fmt.allocPrint(self.arena, "`{s}`", .{called}) else called;
+        const help = if (self.quotableSpan(argument.span)) |text|
+            try std.fmt.allocPrint(self.arena, "Call `{s}` on its own line instead.", .{text})
+        else
+            "Call it on its own line instead.";
+        try self.reportWarning(argument.span, "this prints `nothing`, because {s} gives back no value", .{quoted}, help);
+    }
+}
+
+/// `items.each_with_index { item, index => return index if ... }`: `return`
+/// leaves only the block (6.5), and a method that ignores what its block gives
+/// back (`each`, `each_with_index`, `reverse_each`, `times`, `up_to`,
+/// `down_to`) simply carries on, so a `return` with a value there was meant
+/// for the enclosing function. A bare `return`, which skips to the next item,
+/// is left alone.
+fn warnReturnLeavesBlock(self: *Checker, block: *const Ast.Expression, method: []const u8) Error!void {
+    if (!self.checkingProgramFile()) return;
+    if (block.data != .lambda or block.data.lambda.body != .block) return;
+    const returned = firstValueReturn(block.data.lambda.body.block.statements) orelse return;
+    try self.reportWarning(
+        returned.keyword_span,
+        "this `return` leaves only the block, and `{s}` carries on with the next item",
+        .{method},
+        if (self.in_function)
+            "A block's `return` does not leave the function around it, and this method ignores what the block gives back. To return from the function, loop with `for` instead."
+        else
+            "A block's `return` leaves only the block, and this method ignores what the block gives back. To stop early, loop with `for` and use `break`.",
+    );
+}
+
+/// The first `return` carrying a value in a block, at any depth of `if`,
+/// loop, `case`, or `try`, but not inside a nested function or lambda, whose
+/// `return` is its own.
+fn firstValueReturn(statements: []const Ast.Statement) ?Ast.Return {
+    for (statements) |statement| {
+        const found: ?Ast.Return = switch (statement.data) {
+            .return_statement => |returned| if (returned.value != null) returned else null,
+            .conditional => |conditional| firstValueReturn(conditional.then_block.statements) orelse
+                if (conditional.otherwise) |otherwise| switch (otherwise) {
+                    .block => |other| firstValueReturn(other.statements),
+                    .chained => |chained| firstValueReturn(chained[0..1]),
+                } else null,
+            .while_loop => |loop| firstValueReturn(loop.body.statements),
+            .for_loop => |loop| firstValueReturn(loop.body.statements),
+            .try_statement => |protected| found: {
+                if (firstValueReturn(protected.body.statements)) |returned| break :found returned;
+                for (protected.catches) |caught| if (firstValueReturn(caught.body.statements)) |returned| break :found returned;
+                if (protected.finally_block) |cleanup| break :found firstValueReturn(cleanup.statements);
+                break :found null;
+            },
+            .case_statement => |case| found: {
+                for (case.arms) |arm| if (firstValueReturn(arm.body.block.statements)) |returned| break :found returned;
+                if (case.otherwise) |otherwise| break :found firstValueReturn(otherwise.block.statements);
+                break :found null;
+            },
+            else => null,
+        };
+        if (found) |returned| return returned;
+    }
+    return null;
+}
+
+/// A List method with a `!` form that changes the list in place (8.5).
+fn isInPlaceCounterpart(name: []const u8) bool {
+    for ([_][]const u8{ "sort", "reverse", "shuffle", "unique" }) |candidate| {
+        if (std.mem.eql(u8, name, candidate)) return true;
+    }
+    return false;
+}
+
+// Control-flow shape, computed from the AST and, for `exit()`, from the calls
+// already checked (`exit_calls`), so each is asked only after checking.
 
 /// Whether control can reach the end of a block, rather than leaving it
 /// through `return`, `break`, or `continue`, or looping forever. Once one
@@ -13382,7 +14310,8 @@ fn stmtCompletes(self: *const Checker, statement: Ast.Statement) bool {
         },
         // Only a `break` ends `while true`. Any other loop can end on its own.
         .while_loop => |loop| !isLiteralTrue(loop.condition) or self.blockBreaks(loop.body.statements),
-        .for_loop, .expression, .declaration, .assignment, .function_declaration, .struct_declaration, .assert_statement => true,
+        .expression => |expression| !self.exit_calls.contains(expression),
+        .for_loop, .declaration, .assignment, .function_declaration, .struct_declaration, .assert_statement => true,
         .try_statement => |protected| blk: {
             if (protected.finally_block) |cleanup| if (!self.blockCompletes(cleanup.statements)) break :blk false;
             if (self.blockCompletes(protected.body.statements)) break :blk true;

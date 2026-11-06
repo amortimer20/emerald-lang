@@ -1,0 +1,12 @@
+diagnostics/unreachable-after-exit.em:5:1: warning: this code can never run
+  print("two")
+  ^^^^^^^^^^^^
+Every path above it already returns, raises, breaks, continues, calls `exit()`, or loops forever. Remove it, or move it earlier.
+diagnostics/unreachable-after-exit.em:9:5: warning: this code can never run
+      print("never")
+      ^^^^^^^^^^^^^^
+Every path above it already returns, raises, breaks, continues, calls `exit()`, or loops forever. Remove it, or move it earlier.
+diagnostics/unreachable-after-exit.em:13:5: warning: this loop has no `break`, so the code after it never runs
+      while true {
+      ^^^^^^^^^^
+The loop ends only by returning, raising, or calling `exit()`. Add a `break` where the loop should stop, or remove the code after it.

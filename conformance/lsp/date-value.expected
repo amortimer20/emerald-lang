@@ -22,7 +22,7 @@
       "label": "compare",
       "kind": 2,
       "detail": "compare(other: Self): Int",
-      "documentation": null,
+      "documentation": "*Documentation from `Ordered.compare`:*\n\nA negative number when this value comes before `other`, zero when they are in the same place, and a positive number when it comes after.",
       "insertText": "compare($0)",
       "insertTextFormat": 2
     },
@@ -102,7 +102,7 @@
       "label": "to_string",
       "kind": 2,
       "detail": "to_string(): String",
-      "documentation": null,
+      "documentation": "*Documentation from `Textual.to_string`:*\n\nThe value as text.",
       "insertText": "to_string()",
       "insertTextFormat": 1
     },

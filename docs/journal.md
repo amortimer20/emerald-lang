@@ -6325,3 +6325,57 @@ diagnostic per `|`; the REPL's top-level echo path does not get the C1 messages;
 (`str`) and 102 (`boolean`) as types and 251 (`p.z`) get no suggestion; annotation typos are not
 suggested; no catalog parity test covers the new member-name entries. The corpus `results.*`
 files keep the review's baseline.
+
+## 2026-11-05: Batch 5, the checker's helps and new warnings
+
+The second diagnostics batch (C5-C7, F14, the rest of D4, D5, and the `return`-in-a-block
+warning from 2026-10-30), measured on the area 7 corpus against batch 4: 45 of 314 programs'
+first diagnostic changed, and the automatic place check went from 288 to 297 right (the two
+left off, 126 and 127, report a missing return at the function header). Three subagents wrote
+it in parallel worktrees: Sonnet on C5, Sonnet on C6 and F14, Opus on the warnings and D4.
+Claude combined the branches (one clash: both added a `quotable` helper), read every changed
+corpus diagnostic, and reviewed.
+
+- C5 (F17-F22): text mixed with a number offers `age.to_int()` (or `to_float()`), and still the
+  interpolated join for `+`; a text literal of words gets only the join. Optionals get the fix
+  that works: `String?` for a declaration given `nothing`, `found != nothing` as a condition,
+  `n.or(0) > 3`, a second `?.`. Operators name the replacement: `"-".repeat(20)`,
+  `word.remove_suffix("!")`, `"Hello #{name}"` for `%s`, `choice == 1 or choice == 2`,
+  `scores.append(3)`, and a call of a function with no result says so. Shapes from other
+  languages: `else (x > 0)` and `else:`, the Python conditional expression, `Int n`,
+  `for name, age in`, `Point.new(...)`, `class Dog(Animal)`, `implements`, a bare enum choice
+  (`Color.red`), a raised class that does not extend `Error`, `break` in a block. `void`,
+  `str`, `boolean`, `ValueError` and other familiar type names get the Emerald type, and the
+  generic unknown-type help no longer says "struct".
+- C6 (rules report 14, 17, 19-23): a same-file duplicate names the other declaration's line
+  ("also declared" when that line is later, as for a hoisted function); `(Int) -> Int` says to
+  write `func(Int): Int`; Csv refuses a generic struct by name; an optional left operand of a
+  user operator, and unary `-` on a struct, get their own messages; an enum value after a member
+  no longer adds "needs at least one value"; `Weekday` is not told to adopt `Ordered`; a private
+  field with no default is blamed on the default. F14: a `super(...)` after the first statement
+  is reported once, at the call, quoting the statement it should precede.
+- C7: `while true` with no `break` is warned at the loop, with the true reason.
+- D4: the built-in `exit()` ends a path like `raise` (warning, missing return, definite
+  assignment, narrowing; 6.5 says so). An undocumented override shows the documentation it
+  inherits in hover and completion, labelled (3.2). Built-in method capture, Range's and
+  Dict/Set's collection additions, and the misleading-indentation warning are deferred (section
+  21). Correction to the triage: `to_list()` does not cover Dict and Set; the spec now gives
+  `map { ... }.take(n)`.
+- D5 and 6.5, four warnings, each in 17.1's list: a discarded result of a built-in method that
+  does not change its receiver (`name.trim()`, with `sort!()` offered for `sort()`); `${name}` and
+  `{name}` in a String when the braces hold a name in scope; printing a call that gives back
+  nothing; and a `return` with a value in a block passed to `each`, `each_with_index`,
+  `reverse_each`, `times`, `up_to` or `down_to`. A function with no declared result type may
+  `return` a value (7.2 infers it), so nothing changed there.
+
+Claude's corpus read found `else:` told to write `else if : {`; fixed. `/code-review` at high
+effort found five points, all fixed: the hoisted-function duplicate read "already declared on
+line 2" at line 1; a `break` in a function declared inside a block got the block's help; two
+span-quoting helpers did one job; `pythonConditional` carried two unused values; and the
+control-flow comment still said "from the AST alone" after `exit_calls`.
+
+Not done here, noted for later: a `super(...)` nested inside an `if` still gets two errors; the
+discarded-result warning's mutator list is hand-written beside `builtins.json`'s `changes`
+flags, so a new value-returning mutator must be added to both; the warnings skip a statement
+inside a `try` with a `catch` (a call made to see whether it raises); hover now also shows
+prelude trait documentation on built-in overrides (`Date.compare`). Batch 4's follow-ups stand.

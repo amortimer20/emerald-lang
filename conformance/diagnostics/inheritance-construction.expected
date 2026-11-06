@@ -38,14 +38,10 @@ diagnostics/inheritance-construction.em:55:14: `label` is a `const` field that `
           self.label = "x"
                ^^^^^
 A subclass cannot change it. Pass the value to `super(...)` so `Shape` sets it.
-diagnostics/inheritance-construction.em:72:5: this constructor has to start with `super(...)`, because building `Shape` takes arguments
-      constructor() {
-      ^^^^^^^^^^^
-Pass what `Shape` needs on the constructor's first line, as in `super(...)`, before anything else.
-diagnostics/inheritance-construction.em:74:9: `super(...)` can only begin a constructor
+diagnostics/inheritance-construction.em:74:9: `super(...)` has to be the first statement of the constructor
           super("late")
           ^^^^^
-Move it to the first line of the constructor, so the base class's part of the object is built before anything else runs.
+Move it to the constructor's first line, before `self.side = 2`, so the base class's part of the object is built before anything else runs.
 diagnostics/inheritance-construction.em:78:9: `super(...)` can only begin a constructor
           super("again")
           ^^^^^

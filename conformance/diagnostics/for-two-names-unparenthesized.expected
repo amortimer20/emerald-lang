@@ -1,0 +1,4 @@
+diagnostics/for-two-names-unparenthesized.em:2:9: expected `in` after `name`, found ,
+  for name, age in ages {
+          ^
+To take two names from each entry, put them in parentheses: `for (name, age) in ...`.

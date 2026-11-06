@@ -1,0 +1,4 @@
+diagnostics/duplicate-function-names-first.em:7:6: `area` is already declared on line 3
+  func area(width: Int, height: Int): Int {
+       ^^^^
+Each name can have one declaration in a scope. Choose a different name, or remove the duplicate.

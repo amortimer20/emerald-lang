@@ -1,0 +1,20 @@
+diagnostics/optional-helps.em:1:20: this is Nothing, but `name` was declared as String
+  var name: String = nothing
+                     ^^^^^^^
+`String` cannot hold nothing. To allow it, write the type with a question mark: `String?`.
+diagnostics/optional-helps.em:3:4: a condition must be a Bool, but this is Int?
+  if found {
+     ^^^^^
+`found` may be nothing. To ask whether it is there, write `found != nothing`.
+diagnostics/optional-helps.em:13:7: this is Address?, so `city` may not be there to use
+  print(user?.address.city)
+        ^^^^^^^^^^^^^
+Each link after a `?.` needs its own `?.`. Write `user?.address?.city`.
+diagnostics/optional-helps.em:15:4: `>` needs numbers, but these are Int? values
+  if n > 3 {
+     ^^^^^
+`n` may be nothing, so it has no order yet. Give it a fallback, as in `n.or(0) > 3`, or check `n != nothing` first.
+diagnostics/optional-helps.em:21:14: this is Int?, but parameter `n` of `square` needs Int
+  print(square(n))
+               ^
+`n` may be nothing. Give it a fallback with `n.or(0)`, or check `n != nothing` first.

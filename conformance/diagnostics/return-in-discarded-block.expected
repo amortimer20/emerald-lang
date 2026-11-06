@@ -1,0 +1,12 @@
+diagnostics/return-in-discarded-block.em:7:13: warning: this `return` leaves only the block, and `each_with_index` carries on with the next item
+              return index
+              ^^^^^^
+A block's `return` does not leave the function around it, and this method ignores what the block gives back. To return from the function, loop with `for` instead.
+diagnostics/return-in-discarded-block.em:15:9: warning: this `return` leaves only the block, and `each` carries on with the next item
+          return number if number > 10
+          ^^^^^^
+A block's `return` does not leave the function around it, and this method ignores what the block gives back. To return from the function, loop with `for` instead.
+diagnostics/return-in-discarded-block.em:18:9: warning: this `return` leaves only the block, and `times` carries on with the next item
+          return round if round == 3
+          ^^^^^^
+A block's `return` does not leave the function around it, and this method ignores what the block gives back. To return from the function, loop with `for` instead.

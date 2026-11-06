@@ -1,0 +1,8 @@
+diagnostics/enum-values-after-member.em:7:5: `hearts` has to be listed with the other values, before any member
+      hearts
+      ^^^^^^
+An enum lists all its values first, so they can be read in one place. Move it up.
+diagnostics/enum-values-after-member.em:8:5: `spades` has to be listed with the other values, before any member
+      spades
+      ^^^^^^
+An enum lists all its values first, so they can be read in one place. Move it up.

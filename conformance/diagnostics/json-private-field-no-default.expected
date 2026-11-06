@@ -1,0 +1,4 @@
+diagnostics/json-private-field-no-default.em:7:56: private field `_token` has no default, so Json cannot build Account
+  const account = Json.decode("{\"name\": \"Ava\"}", as: Account)
+                                                         ^^^^^^^
+A private field is never read from Json, so it starts from its default. Give `_token` one where it is declared, as in `const _token: String = <value>`.

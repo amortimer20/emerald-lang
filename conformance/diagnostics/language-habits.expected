@@ -1,0 +1,12 @@
+diagnostics/language-habits.em:2:14: this is Int, but `remove` needs String
+  names.remove(0)
+               ^
+`remove` takes the item itself, not its position. To remove the item at a position, write `names.remove_at(0)`.
+diagnostics/language-habits.em:5:5: `break` can only be used inside a loop
+      break if n > 1
+      ^^^^^
+`break` ends a `for` or `while` loop; a block passed to `each` or `map` is not a loop. Write a `for` loop over the items instead, as in `for item in items`.
+diagnostics/language-habits.em:11:7: only an Error can be raised, but this is BadScore
+  raise BadScore("too high")
+        ^^^^^^^^^^^^^^^^^^^^
+Only an `Error` can be raised. Declare it as `class BadScore extends Error`, so it can be raised and caught.

@@ -9,4 +9,4 @@ Did you mean `String`?
 diagnostics/close-spelling-types.em:5:12: `boolean` is not a type
   var ready: boolean = true
              ^^^^^^^
-Check the spelling or declare the struct in this project.
+Did you mean `Bool`?

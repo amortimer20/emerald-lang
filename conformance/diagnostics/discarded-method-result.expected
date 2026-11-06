@@ -1,0 +1,24 @@
+diagnostics/discarded-method-result.em:4:6: warning: `trim()` gives back a new String and leaves `name` unchanged
+  name.trim()
+       ^^^^
+Assign what it gives back: `name = name.trim()`.
+diagnostics/discarded-method-result.em:6:8: warning: `sort()` gives back a new List[Int] and leaves `scores` unchanged
+  scores.sort()
+         ^^^^
+Assign what it gives back, `scores = scores.sort()`, or call `scores.sort!()` to change `scores` in place.
+diagnostics/discarded-method-result.em:7:8: warning: `filter` gives back a new List[Int] and leaves `scores` unchanged
+  scores.filter { score => score > 1 }
+         ^^^^^^
+Assign what it gives back: `scores = scores.filter { score => score > 1 }`.
+diagnostics/discarded-method-result.em:9:7: warning: `reverse()` gives back a new List[Int] and leaves `fixed` unchanged
+  fixed.reverse()
+        ^^^^^^^
+Store what it gives back in a name, as in `const result = fixed.reverse()`.
+diagnostics/discarded-method-result.em:10:6: warning: `split()` gives back a List[String] and leaves `name` unchanged
+  name.split(",")
+       ^^^^^
+Store what it gives back in a name, as in `const result = name.split(",")`.
+diagnostics/discarded-method-result.em:11:9: warning: `upper()` gives back a new String, which is never used
+  "shout".upper()
+          ^^^^^
+Store what it gives back in a name, as in `const result = "shout".upper()`.

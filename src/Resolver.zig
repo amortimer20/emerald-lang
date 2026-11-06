@@ -1340,6 +1340,21 @@ fn reportDuplicate(self: *Resolver, name: []const u8, span: Source.Span, key: []
             "Files in one directory share a namespace. Rename one, or make this one private by starting its name with `_`.",
         );
     }
+    if (self.facts.declarations.get(key)) |first| {
+        if (first.file == self.file and first.span.start != span.start) {
+            const source = &self.files[self.file].source;
+            const line = source.location(first.span.start).line;
+            // A function is known before the lines above it run (7.1), so the
+            // declaration it clashes with may be written after this one.
+            const earlier = line < source.location(span.start).line;
+            return self.report(
+                span,
+                "`{s}` is {s} declared on line {d}",
+                .{ name, if (earlier) "already" else "also", line },
+                "Each name can have one declaration in a scope. Choose a different name, or remove the duplicate.",
+            );
+        }
+    }
     try self.report(
         span,
         "`{s}` is already declared",
@@ -1664,6 +1679,27 @@ const foreign_names = std.StaticStringMap(Foreign).initComptime(.{
     .{ "read_line", .read_line },
 });
 
+/// A bare name that is a choice of exactly one of the program's enums, written
+/// without the enum: `red` for `Color.red`.
+fn enumChoiceHelp(self: *Resolver, name: []const u8) Error!?[]const u8 {
+    var found: ?[]const u8 = null;
+    var keys = self.enum_values.keyIterator();
+    while (keys.next()) |key| {
+        if (isPreludeKey(key.*)) continue;
+        const at = std.mem.lastIndexOf(u8, key.*, method_separator) orelse continue;
+        if (!std.mem.eql(u8, key.*[at + method_separator.len ..], name)) continue;
+        if (found != null) return null;
+        found = key.*[0..at];
+    }
+    const type_key = found orelse return null;
+    const display = try displayKey(self.arena, type_key);
+    return try std.fmt.allocPrint(
+        self.arena,
+        "`{s}` is a choice of `{s}`, so write it with the type: `{s}.{s}`.",
+        .{ name, display, display, name },
+    );
+}
+
 /// What Emerald writes for a name other languages use as a built-in, taken
 /// from the written call when there is one. Null for any other name.
 fn foreignHelp(self: *Resolver, span: Source.Span, name: []const u8) Error!?[]const u8 {
@@ -1956,7 +1992,10 @@ fn reportUndefined(self: *Resolver, span: Source.Span, name: []const u8, use: Un
     // What Emerald writes where another language has a built-in, when the
     // name is read as a value.
     const reading = use == .read;
-    const better = if (reading) try self.foreignHelp(span, name) else null;
+    const better = if (reading)
+        (try self.foreignHelp(span, name)) orelse try self.enumChoiceHelp(name)
+    else
+        null;
     // Section 17.2: a name one edit away from one in scope. A specific help
     // above takes precedence.
     const close: ?[]const u8 = if (better == null and use != .explained)
@@ -2991,6 +3030,17 @@ fn qualifyTypeMember(
             );
             return .reported;
         }
+    }
+    if (std.mem.eql(u8, member, "new")) {
+        const arguments = callArguments(self.files[self.file].source.text, span.end) orelse "...";
+        try self.reportWithHelpFmt(
+            span,
+            "`{s}` has no type-level member named `{s}`",
+            .{ written, member },
+            "A value is built by calling the type's name, with no `.new`: write `{s}({s})`.",
+            .{ written, arguments },
+        );
+        return .reported;
     }
     try self.reportWithHelpFmt(
         span,

@@ -1,0 +1,4 @@
+diagnostics/function-type-arrow.em:3:15: Emerald does not write function types with `->`
+  const double: (Int) -> Int = { value => value * 2 }
+                ^^^^^^^^^^^^
+Write `func(Int): Int`; a function type reuses declaration syntax.

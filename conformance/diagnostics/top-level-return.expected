@@ -1,7 +1,7 @@
 diagnostics/top-level-return.em:6:1: warning: this code can never run
   return "value"
   ^^^^^^^^^^^^^^
-Every path above it already returns, raises, breaks, or continues. Remove it, or move it earlier.
+Every path above it already returns, raises, breaks, continues, calls `exit()`, or loops forever. Remove it, or move it earlier.
 diagnostics/top-level-return.em:6:8: a top-level `return` cannot return a value
   return "value"
          ^^^^^^^

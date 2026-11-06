@@ -1,0 +1,4 @@
+diagnostics/unary-minus-user-type.em:11:7: `-` needs a number, but this is Point
+  print(-Point(1))
+        ^^^^^^^^^
+Unary `-` works only on Int and Float, and a type cannot define it. Write a named method such as `negated()` instead.
