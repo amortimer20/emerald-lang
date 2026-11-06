@@ -2987,6 +2987,20 @@ Emerald's static rules, optional rules, ownership model, or naming diagnostics. 
 is the first interoperability target because it is portable across Zig and future native
 backends.
 
+Those bindings are **vendor libraries** (the user, 2026-11-06, decided in
+[`vendor-libraries-design-plan.md`](vendor-libraries-design-plan.md), built in
+[`vendor-libraries.md`](vendor-libraries.md)): a native library behind an Emerald-shaped API,
+curated rather than bound one-to-one, and shipped with Emerald as the one channel for native
+code. A vendor library is a shared module that exports one function, `emerald_module`, whose
+table of natives takes and returns `nothing`, a `Bool`, an `Int`, a `Float`, a `String`, or
+`Bytes`; a window or a sound crosses as an `Int` handle the module owns, and nothing richer
+crosses. Its Emerald declarations join the prelude (namespace `Emerald`, so a program's own
+name of the same spelling wins, 14.2) only when a program names one of the library's types,
+so a program that never names it pays nothing, and its module loads on the first native
+call. A failed native raises the library's own error type, whose message and help the module
+supplies. The Linux `emerald` links glibc (built for 2.28) so the system loader can load a
+module; the REPL does not load vendor libraries yet.
+
 ## 15. Standard library organization
 
 ### 15.1 Philosophy
@@ -3288,8 +3302,8 @@ so the first clear turns that mode on; if the console refuses, clearing does not
 Table and panel layout widgets, and line-oriented prompts (confirm, text input,
 single/multi-select), are implemented slices of Console itself (24), not a separate library.
 They return ordinary strings for composition; prompts use standard input and raise `InputError`
-at end of input. `Graphics`, `Gui`, `Audio`, and `Game` are parked rather than on the roadmap
-(24).
+at end of input. `Graphics`, `Audio`, and `Game` are the platform family's next libraries, built
+on raylib as vendor libraries (14.4, roadmap item 11); `Gui` stays parked (24).
 
 ### 15.7 Roadmap: standard library backlog
 
@@ -4710,8 +4724,10 @@ for working Emerald programs, implementation measurements, or a dedicated design
   collection is: copied libraries stay pure Emerald. The direction (the user, 2026-10-28) is
   curated, Emerald-shaped `Graphics`, `Game`, and `Audio` built on raylib rather than thin C
   bindings, with its own design plan (handoff, roadmap item 11) decided before the compiler.
-  Revisit any of these only once that infrastructure exists, or a concrete
-  beginner program makes an earlier case;
+  That infrastructure now exists (the user, 2026-11-06): 14.4's vendor libraries are the
+  extension mechanism, so `Graphics`, `Audio`, and `Game` are on the roadmap as the first
+  vendor libraries, on raylib, while `Tui` and `Gui` stay parked. Revisit those two only once
+  a concrete beginner program makes the case;
 - multicore execution and wider concurrency APIs beyond the structured tasks of 15.13.
 
 Macros remain deferred as a separate language-design problem. If real boilerplate later
