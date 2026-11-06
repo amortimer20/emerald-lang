@@ -1,6 +1,6 @@
 Draft for the next release, written ahead of it. Revise before tagging if anything below changes, and drop this line.
 
-Emerald 0.8.0 lets you write a type or a function once for every kind of value it holds, and lets an enum's choices carry data. Both come with the plain-words errors, editor help, and guide pages the rest of the language has.
+Emerald 0.8.0 lets you write a type or a function once for every kind of value it holds, and lets an enum's choices carry data. Both come with the plain-words errors, editor help, and guide pages the rest of the language has. It also follows a review of the whole language against a corpus of real beginner mistakes: errors now name what you wrote and what Emerald writes instead, five new warnings catch mistakes that used to pass silently, and about thirty wrong answers and crashes are fixed.
 
 ## Install
 
@@ -97,13 +97,57 @@ Twelve small additions a first program reaches for:
 - **Numbers:** `Math.max(a, b)` and `Math.min(a, b)` for any two values with an order, and `random_fraction()` (and `Random.next_fraction()`) for a number from `0.0` up to `1.0`.
 - **The program's surroundings:** `Program.environment("API_KEY")` reads an environment variable, `print_error(...)` writes to standard error, and `Console.clear()` clears the terminal (and does nothing when output is redirected).
 
+## Errors that say what to write
+
+A mistake from another language now gets the Emerald spelling, using your own names:
+
+- **Words from other languages:** `elif`, `def`, `let`, `switch`, `unless`, `foreach`, `new`, `except`, `i++`, `lives--`, `!`, `&&`, `===`, `<>`, a C-style `for`, `do ... while`, `//` and `/* */` comments, curly quotes, `{"Ava": 12}`, and other languages' lambdas each say what Emerald writes.
+- **Other languages' built-ins:** `len(names)`, `int(text)`, `str(5)`, `True`, `null`, `console.log(x)`, `names.size()`, `text.toUpperCase()` and the like point to `names.count`, `text.to_int()`, `5.to_string()`, `true`, `nothing`, `print(x)`, and `text.upper()`.
+- **Close spellings:** a name, a member, or a type that is one edit from one that exists gets "Did you mean ...?", but only when exactly one candidate is that close.
+- **Helps that fix the program when followed:** text mixed with a number (`age + 1` where `age` came from `input`) offers `age.to_int() + 1`; a value that may be `nothing` offers `.or(0)`, a check, or `String?`; `"-" * 20` offers `"-".repeat(20)`; `else (x > 0)` offers `else if`; `class Dog(Animal)` offers `extends`; and a bare enum choice offers `Color.red`.
+- **Better places and wording:** a missing `)` is reported where the `(` opens, a duplicate name says where the first one is, a misplaced `super(...)` is reported where it is written, and a `break` inside an `each { }` block explains that a block is not a loop.
+
+## Warnings for silent mistakes
+
+Five new warnings, each for a mistake that ran without complaint and never did what was meant:
+
+- `name.trim()` or `scores.sort()` on a line of its own: the result is thrown away and the original is unchanged.
+- `"Hello ${name}"` or `"Hello {name}"`: Emerald interpolates with `#{name}`.
+- `print(greet("Ava"))` where `greet` gives back nothing: it prints `nothing`.
+- `while true` with no `break`: the loop never ends. The warning points at the loop, not at the code after it.
+- `return value` inside a block passed to `each`: it leaves only the block, not the function.
+
+A call to the built-in `exit()` now ends its path like `raise` does, so code after it gets the "this code can never run" warning, and a function whose last statement is `exit(1)` no longer needs a `return`.
+
+In the editor, hovering a method that overrides another, or satisfies a trait, now shows the documentation it inherits when it has none of its own.
+
 ## Fixes and care
 
+- Wrong answers fixed:
+  - `%` and `//` on Floats floor the way the guide says, so `(a // b) * b + a % b` is `a` again, and `x % infinity` is `NaN`.
+  - `**` and `Math.power` are exact to the last digit for large exponents.
+  - `round_to` uses the number as you read it, so `1.005.round_to(2)` is `1.01`, as `format` already gave.
+  - `split` and `replace` keep your text's own characters instead of rewriting them.
+  - A string inside a displayed list or dictionary escapes `#{` and control characters.
+  - Inside a generic function, `x is Int` and `type_name` see the real type, not `T`.
+  - `Csv.format` no longer loses a row holding one empty field.
+  - `Path.join`, `parent` and `absolute` give `/` on every system, and on Windows the path functions also read `\`.
+  - On Windows, text such as `print("é")` shows correctly in a console.
+  - A time zone name in `TZ` now falls back to Emerald's built-in zones.
+- Tasks: `exit(code)` inside a task ends the program with that code, a task cancelled before it first runs does not run, and a cancelled receiver keeps a message already handed to it.
+- Crashes fixed: `group_by` with five or more items in a group, `check` on two declarations with the same name, an `assert` message with interpolation, writing to a closed pipe, and a handful of failed-allocation crashes and leaks. The editor no longer crashes on a very deep expression or a renamed declaration named like a built-in, and answers a request with bad parameters instead of waiting forever.
+- The formatter drops a byte-order mark and the stray `\r` of a CRLF comment, and the editor's formatting agrees with `emerald format`.
+- The text of every error message Emerald raises is now part of the language, so a program that reads `error.message` can rely on it.
 - A set of a type declared later in the file, holding a list, was wrongly accepted. It is refused, as it always should have been.
 - Renaming a struct field, an enum choice's data, or a parameter in the editor now also renames it where a call names it, as in `Point(x: 1)`. Renaming an enum choice's data was refused before.
 - `Stack[Int]()` and similar now explain that types in brackets are written where a value is kept, never where it is built.
 
 ## Upgrading from 0.7.0
+
+- **New warnings can newly fail `emerald check`**, since warnings make it exit with status 1. A program that used to pass may now be told about a discarded `name.trim()`, a `${name}` in a string, a `print` of a call that gives back nothing, a `return` in an `each` block, or a `while true` with no `break`. Each warning says what to change.
+- **A `map_keys` that gives two entries the same key is now an error naming both keys**, instead of quietly dropping one.
+- **`round_to` now rounds the number as written.** `1.005.round_to(2)` is `1.01`, as `format` already gave.
+- **`%` and `//` on Floats follow the divisor's sign, and `x % infinity` is `NaN`.** `7.5 % -2.0` is `-0.5`.
 
 - **Macs need macOS 15 or later.** Emerald is now built with Zig 0.17, whose Mac programs need macOS 15 Sequoia or later; every Mac with Apple silicon can run it. Intel Macs are not supported, as before. The installer checks both and says so.
 
