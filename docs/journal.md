@@ -6401,3 +6401,15 @@ Zig 0.17.0, Debug build.
 
 Noted, not fixed: the earlier note about `min_max` and a caught index error using memory
 nondeterministically is unchanged.
+
+## 2026-11-06: Emerald 0.8.0 released
+
+`v0.8.0-rc2` (on `ba11150`) passed the release workflow and a download check; the final `v0.8.0`
+was tagged on `99256e2`, which differs only by dropping the draft line from the release notes.
+The workflow was green, the release is marked latest with its body set from
+`docs/release-notes-0.8.0.md`, and the Windows asset matches `SHA256SUMS`.
+
+The wider allocation-failure run finished: the other conformance programs were clean at every ninth
+index except `json-large.em`, which is too slow for the harness (not finished even at every 211th
+index), so it is unchecked. The `min_max` and caught-index-error nondeterminism note stands.
+Loose ends: the `oom-fixes` worktree directory under `~/.cache/emerald-worktrees` is half removed.

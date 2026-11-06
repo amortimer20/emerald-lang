@@ -7,8 +7,13 @@ belongs in [`docs/journal.md`](journal.md); settled language behavior belongs in
 
 ## Current status
 
-**Where things stand (2026-11-05):** `v0.8.0-rc1` is published as a
-prerelease (tag on `73b9b19`, all three assets, install scripts checked). The codebase review
+**Where things stand (2026-11-06):** `v0.8.0` is released and marked latest (tag on `99256e2`,
+workflow green, all three assets and `SHA256SUMS`, install scripts checked, release body from
+`release-notes-0.8.0.md`). It follows `v0.8.0-rc1` and `v0.8.0-rc2`, both prereleases with the same
+code. The user deploys the website, including `emerald-website` `35c6a9d` (Path separator, Set
+order, message text). The user's order: wider allocation-failure run (done), then raylib as the
+first vendor library (design plan first), then review the compiler plan and finish loose ends.
+Earlier status: `v0.8.0-rc1` was published as a prerelease. The codebase review
 (roadmap item 10) has reported and been triaged in [`review/triage.md`](review/triage.md), with
 every decision accepted. Fix batches 1, 2 and 3 are merged (PRs #57–#66; the journal has each).
 Batch 3 (#66, `e4c51a7`, CI green on all 14 checks) fixed the spec's three slips (E), made runtime
