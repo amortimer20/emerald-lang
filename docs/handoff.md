@@ -23,7 +23,8 @@ measurement on a Mac and a slow machine (question C of the plan) before slice 2.
 user asked for "Raylib everywhere" (the library keeps its name: `vendor/raylib/`, namespace
 `Raylib`, no `Graphics`/`Audio`/`Game` split) and full access to everything raylib offers,
 raygui included; the plan's Revision 1 (R1 to R8, questions D to F: a generator over raylib's API
-description, module ABI version 2, slices 2 to 7) is proposed and awaits the user's acceptance.
+description, module ABI version 2, slices 2 to 7) is accepted as recommended (D: `Raygui`; E: rlgl
+as slice 6; F: callbacks after slice 7). Slice 2 waits on question C's measurements.
 Earlier status: `v0.8.0-rc1` was published as a prerelease. The codebase review
 (roadmap item 10) has reported and been triaged in [`review/triage.md`](review/triage.md), with
 every decision accepted. Fix batches 1, 2 and 3 are merged (PRs #57–#66; the journal has each).

@@ -2,7 +2,8 @@
 
 Status: accepted by the user, 2026-11-06 (all decisions as recommended, with the spike's changes to 2 and
 11); slice 1 merged (PR #70). **Revision 1** (below, proposed the same day at the user's request: Raylib by name,
-the whole surface including raygui) replaces several decisions and the slices, and awaits acceptance. Written as a proposal the same day. Slice 0 (the spike) has run; its report is below, and it changed
+the whole surface including raygui) replaces several decisions and the slices; the user accepted it as
+recommended, questions D to F included, the same day. Written as a proposal the same day. Slice 0 (the spike) has run; its report is below, and it changed
 decisions 2 and 11 and tightened 1 and 10. Questions A and B are answered and C is agreed, with its measurements pending (see "Slice 0
 report"). Do not reopen an accepted decision. This is roadmap item 11 (handoff), written after Odin's `vendor:` collection
 and the user's request that the way a vendor library is added be **reproducible for every
@@ -23,8 +24,8 @@ everything raylib has to offer, including raygui**. That reopens principle 1, de
 R1 to R8 below, replace those where they conflict; each replaced passage below carries a note.
 Everything else stands: the module mechanism slice 1 built, load-on-name, the frame block
 (decision 6), main-thread only (9), the frame-rate gate (10) and question C, the software
-backend (11), experimental until 1.0 (12). **Status: proposed, awaiting the user's
-acceptance.**
+backend (11), experimental until 1.0 (12). **Status: accepted by the user, 2026-11-06, as
+recommended, with questions D, E and F answered as recommended.**
 
 What "everything" counts, in the raylib 6.2 headers the spike fetched: 619 functions in
 `raylib.h`, 146 in `raymath.h` (the vector and matrix math), and 163 in `rlgl.h` (raylib's
@@ -176,13 +177,13 @@ Raylib.run("Shooter", width: 800, height: 600) { screen =>
 ```
 
 New questions for the user from revision 1:
-- **D. raygui's namespace.** Recommended: `Raygui`, its own name, so a reader sees which
+- **D. Accepted: `Raygui`.** raygui's namespace. Recommended: `Raygui`, its own name, so a reader sees which
   project a call comes from (R1's rule). The alternative is `Raylib.Gui`.
-- **E. rlgl.** raylib's thin layer over OpenGL, for programs that outgrow raylib's drawing
+- **E. Accepted: included, as slice 6.** rlgl: raylib's thin layer over OpenGL, for programs that outgrow raylib's drawing
   functions. It is part of "everything", and it comes last because it is the least
   beginner-facing and the hardest to test in the software backend. Recommended: include it, as
   slice 6.
-- **F. Callbacks.** C calling into Emerald (a log callback, an audio processor) needs the
+- **F. Accepted: later, after slice 7.** Callbacks: C calling into Emerald (a log callback, an audio processor) needs the
   interpreter to be entered from a C stack, which decision 3 ruled out. Recommended: leave
   them out of slices 2 to 7 and decide when the rest is done; the record lists them.
 
