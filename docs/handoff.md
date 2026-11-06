@@ -489,7 +489,8 @@ compiler), or the compiler depends on it.
    slice 0 (the spike, branch `claude/raylib-spike`, not for merge) has run and reported in the plan:
    the module approach works on all three systems, Linux needs a glibc-linked `emerald`, and the software
    backend gives identical pixels everywhere; the user accepted A (link glibc in the Linux `emerald`, 2026-11-06); B (software backend
-   and pixel checksums) and C (frame rate on a Mac and a slow machine) wait for the user.
+   and pixel checksums) was accepted too; C (frame rate on a Mac and a slow machine) is agreed and waits
+   for the user's measurements.
 
 Suggested order: 3 first (it needs the user's decisions) while 8 and 9 proceed; then 4 (the audit,
 then the slices, networking last), 5 and 7, all done, as are 8 and 9; 6 moved after 1.0. Now 10,
