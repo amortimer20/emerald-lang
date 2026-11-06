@@ -1,7 +1,8 @@
 # The compiler: design plan
 
 Status: accepted by the user, 2026-11-06, every decision as recommended and questions A to D
-answered as recommended; slice 0 is under way. Proposed the same day. Written when the user paused raylib to wait for the compiler
+answered as recommended. Slice 0 (the prototypes) has run; its report is below. It confirms
+decision 1 (emit C) and question A (a separate build-tools archive), and slice 1 is next. Proposed the same day. Written when the user paused raylib to wait for the compiler
 ("I'm ready to get going on it"). This is
 roadmap item 12 (handoff): **choose the backend by prototype, then build the compiler, in Zig,
 for 1.0.** It gathers what the handoff's "Longer term: the native compiler" section already
@@ -199,6 +200,95 @@ compiled column, against the ten-times target.
 **Then:** raylib's slice 2, with modules linked statically (decision 12), and Emerald 1.0
 (item 13).
 
+## Slice 0 report (2026-11-06)
+
+The spike is the branch `claude/compiler-spike` (not for merge; `spike/compiler/`). It
+hand-lowers three benchmarks, `fib` (calls and checked `Int` arithmetic), `nbody` (`Float`s
+and structs in a list) and `words` (strings, lists, a dictionary, a seeded `Random`, and a
+block passed to a sort), twice: to C the way decision 1's emitter would write it (unboxed
+scalars, `__builtin_*_overflow`, a status return on every call that can raise, `#line`
+directives), and to Zig. Both call one stub runtime written in Zig (`rt.zig`): reference
+counts with copy-on-write, a tagged value for erased positions, the interpreter's `Random`
+algorithm and `FloatMath.roundTo`, and natives with a C ABI. Every build printed exactly the
+benchmark's `.expected` text. Measured on this Windows machine (16 cores), runtime ReleaseFast,
+C at `-O2`, interpreter ReleaseSafe as released; times are the median of five runs, process
+start included.
+
+**Speed.**
+
+| Program | Interpreter | C | Zig | C speed-up |
+| --- | --- | --- | --- | --- |
+| `fib` | 0.597s | 0.018s | 0.018s | 34x |
+| `nbody` | 0.999s | 0.019s | 0.018s | 52x |
+| `words` | 0.794s | 0.088s | 0.086s | 9x |
+
+The two routes run at the same speed, as expected: both reach LLVM. The ten-times target is
+met on `fib` and `nbody` with a wide margin, even though `nbody`'s structs sit on the shared
+heap as erased values and every field write goes through copy-on-write checks (decision 4 as
+written, with no layout optimization). `words` is at nine times because its time is in the
+runtime (joining, splitting, hashing, sorting), which compiling the program does not touch; a
+faster runtime helps both engines.
+
+**Build time.** This is where the routes differ:
+
+| | C | Zig |
+| --- | --- | --- |
+| First build on a new machine (empty cache) | 38 to 41 s | 50 to 51 s |
+| Each build after that | 0.35 s | 11.5 to 12.2 s |
+
+A Zig emitter recompiles the generated program with the runtime source through Zig's compiler
+every time; the C route compiles only the generated file and links a runtime built once. So
+**decision 1 stands: emit C.** The first build's time is Zig building the C library for the
+target (mingw on Windows) into its cache; the build-tools archive can carry that cache already
+built per host, a size question for slice 7.
+
+**Size.** Each executable is about 930 KB on Windows, almost all of it the C library and the
+runtime, identical for both routes. Not tuned: no stripping and no section garbage collection.
+
+**WebAssembly.** The C route built all three for `wasm32-wasi` with the same runtime built for
+that target (one change: the runtime's value-to-pointer cast must narrow on 32-bit targets),
+and all three ran correctly under Node's WASI. The files are 1.5 to 1.7 MB unstripped.
+
+**Pico.** All three built and linked for a Cortex-M0+ with no operating system
+(`thumb-freestanding-eabi`, `-mcpu=cortex_m0plus`), with the runtime given a fixed 96 KB heap
+and an output hook the board code supplies, and math from Zig's compiler runtime (no
+floating-point hardware). Each is about 50 KB of flash, inside the RP2040's 2 MB; static RAM is
+160 KB, of which 96 KB is the heap and 64 KB the runtime's output buffer, which a board build
+would shrink, against the RP2040's 264 KB. Not done: running it. A real image also needs the
+RP2040's boot stage and vector table, and nothing here was run on a board or an emulator.
+
+**Godot.** Generated C built as a shared library (`-shared`) exporting an entry function and a
+compiled Emerald function with a status result; a host program (Python's `ctypes`, standing in
+for Godot) loaded it, called the entry, and got `fib(40)` back correctly. Godot itself was not
+tried; GDExtension's binding layer is the post-1.0 work of roadmap item 15.
+
+**The build-tools archive (question A).** The Zig 0.17.0 distribution for Windows is 399 MB
+unpacked. Removing what a C build never needs (C++ libraries, the thread sanitizer, docs, and
+the BSD C libraries) leaves 338 MB, which still built and linked for Windows, Linux, macOS and
+WebAssembly. Compressed: **85 MB as a zip, 52 MB as `.tar.xz`**. Most of it is `zig.exe`
+itself (190 MB, carrying clang and LLVM), which cannot be trimmed. That is twenty to forty
+times the 2.4 MB `emerald` download, so the separate optional archive question A chose is
+confirmed. Not measured: the macOS and Linux distributions, which slice 7 measures when it
+builds the archives.
+
+**Learned for the slices.**
+- Status returns cost nothing measurable: `fib` checks one after every call and runs 34 times
+  faster than the interpreter.
+- Closures across the runtime boundary are a C function pointer plus an environment pointer,
+  and the runtime calls back into generated code (`sort_by`). Decision 3's "no callbacks from C
+  into Emerald" for vendor modules does not constrain the compiler's own runtime.
+- A runtime built for one target is a static library of about 2.9 MB (Windows, with debug
+  information) or 60 KB (Cortex-M0+, ReleaseSmall); the build-tools archive carries one per
+  target it supports.
+- The runtime's 64-bit value word must be narrowed to a pointer on 32-bit targets (WebAssembly,
+  ARM), and its allocator and output must be swappable for a board.
+
+**What the spike did not settle.** How much the shared runtime of slice 1 costs compared with
+this stub (it carries the interpreter's full `Value` and `Heap`, which is heavier); compile
+times for a real program of a few thousand lines; debugger experience through `#line`; macOS
+and Linux timings (the spike ran on Windows only); and anything about Godot or a board beyond
+building and loading.
+
 ## Validation
 
 - Each slice: `zig build test -j1`, `zig build test-compiler` on its list, the doc-example
@@ -219,7 +309,7 @@ reachable; it does not ship them.
 - **A. Accepted: a separate, optional build-tools archive.** Where the C toolchain comes from. Recommended: a separate, optional "Emerald build
   tools" archive holding the pinned Zig (decision 2), so the 2.4 MB download stays small.
   Alternatives: bundle it in every download, or fetch it on first use.
-- **B. Accepted: emit C, pending slice 0.** The route. Recommended: emit C (decision 1), confirmed or overturned by slice 0's
+- **B. Accepted: emit C, confirmed by slice 0.** The route. Recommended: emit C (decision 1), confirmed or overturned by slice 0's
   numbers.
 - **C. Accepted: `run` stays the interpreter for now.** Recommended: stays the interpreter; revisit after the whole suite
   passes compiled.

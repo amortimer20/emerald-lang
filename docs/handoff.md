@@ -27,7 +27,10 @@ description, module ABI version 2, slices 2 to 7) is accepted as recommended (D:
 as slice 6; F: callbacks after slice 7). **Paused by the user, 2026-11-06: raylib waits for the
 compiler** (decision 10's fallback; question C will not be measured). Next: the compiler (item 12):
 `compiler-design-plan.md` is accepted as recommended (route, build tools, IR, shared runtime,
-slices 0 to 7); slice 0, the prototypes, is under way.
+slices 0 to 7). Slice 0 ran (branch `claude/compiler-spike`, not for merge): emitted C is 34x
+(`fib`), 52x (`nbody`) and 9x (`words`) faster than the interpreter, rebuilds in 0.35 s against
+Zig source's 11.5 s, and reaches WebAssembly, a Cortex-M0+ and a host-loaded shared library; the
+build-tools archive is 52 MB (`.tar.xz`) to 85 MB (zip). Next: slice 1, the shared runtime layer.
 Earlier status: `v0.8.0-rc1` was published as a prerelease. The codebase review
 (roadmap item 10) has reported and been triaged in [`review/triage.md`](review/triage.md), with
 every decision accepted. Fix batches 1, 2 and 3 are merged (PRs #57–#66; the journal has each).

@@ -6448,3 +6448,22 @@ the selftest library (a probe on each interface change would catch it); the REPL
 take or give optionals, lists, or structs; calling a module from a task (decision 9's main-thread
 rule belongs to the first graphics library); and the release archive's layout for a shipping
 library's module (slice 2 adds the packaging step `check-vendor.sh` already asks for).
+
+## 2026-11-06: raylib paused; the compiler plan and its prototypes
+
+The user renamed the raylib work ("Raylib everywhere": one library, namespace `Raylib`, raygui as
+`Raygui`) and asked for raylib's whole surface; the vendor plan's Revision 1 records it (a
+generator over raylib's API description, module ABI version 2, slices 2 to 7) and was accepted.
+Then the user paused raylib to wait for the compiler rather than measure frame rates on other
+machines, and asked to start the compiler.
+
+`compiler-design-plan.md` was written and accepted as recommended: emit C through Zig's clang, an
+optional build-tools archive, an Emerald IR, one runtime shared with the interpreter (decision
+D2's shared messages by construction), unboxed scalars, erased generics first, status returns
+for errors, slices 0 to 7. Slice 0 hand-lowered `fib`, `nbody` and `words` to C and to Zig on a
+stub Zig runtime (branch `claude/compiler-spike`): both routes run 9 to 57 times faster than the
+interpreter, but C rebuilds in 0.35 s and Zig in 11.5 s, so C stands. The same C built for
+WebAssembly (ran under Node's WASI), a bare Cortex-M0+ (linked, about 50 KB of flash, not run),
+and a shared library a host loaded. A trimmed Zig toolchain compresses to 52 to 85 MB, which
+confirms keeping it out of the 2.4 MB `emerald` download. The plan's "Slice 0 report" has the
+tables and what was not settled.
