@@ -1,7 +1,8 @@
 # Vendor libraries and raylib: design plan
 
 Status: accepted by the user, 2026-11-06 (all decisions as recommended, with the spike's changes to 2 and
-11); slice 1 is under way. Written as a proposal the same day. Slice 0 (the spike) has run; its report is below, and it changed
+11); slice 1 merged (PR #70). **Revision 1** (below, proposed the same day at the user's request: Raylib by name,
+the whole surface including raygui) replaces several decisions and the slices, and awaits acceptance. Written as a proposal the same day. Slice 0 (the spike) has run; its report is below, and it changed
 decisions 2 and 11 and tightened 1 and 10. Questions A and B are answered and C is agreed, with its measurements pending (see "Slice 0
 report"). Do not reopen an accepted decision. This is roadmap item 11 (handoff), written after Odin's `vendor:` collection
 and the user's request that the way a vendor library is added be **reproducible for every
@@ -12,6 +13,178 @@ the two pull apart, the recipe wins, and raylib's slice 1 is where the recipe ge
 The executor makes the remaining judgement calls within a slice and records each under that
 slice's "Settled while building" note. At the start of each slice, reread `git status`, the
 recent `git log`, and docs/handoff.md.
+
+## Revision 1: Raylib by name, and the whole of it (2026-11-06)
+
+The user asked, after slice 1 merged, for two changes: the library keeps its own name
+everywhere a reader sees it ("Raylib everywhere"), and Emerald gives **full access to
+everything raylib has to offer, including raygui**. That reopens principle 1, decisions 3, 4,
+5, 7 and 8, the admission rule, the slices, and the out-of-scope list. Revision 1's decisions,
+R1 to R8 below, replace those where they conflict; each replaced passage below carries a note.
+Everything else stands: the module mechanism slice 1 built, load-on-name, the frame block
+(decision 6), main-thread only (9), the frame-rate gate (10) and question C, the software
+backend (11), experimental until 1.0 (12). **Status: proposed, awaiting the user's
+acceptance.**
+
+What "everything" counts, in the raylib 6.2 headers the spike fetched: 619 functions in
+`raylib.h`, 146 in `raymath.h` (the vector and matrix math), and 163 in `rlgl.h` (raylib's
+OpenGL layer), plus raygui's functions, structs, enums and constants. At that size the glue
+and declarations cannot be written by hand and kept right, so the recipe gains a generator,
+and the generator is what makes the next library reproducible too.
+
+R1. **A vendor library is named after its upstream project, everywhere (the user's rule).**
+For raylib: the folder `vendor/raylib/`, the module `emerald-raylib`, the namespace `Raylib`,
+the error type `RaylibError`, the page `docs/library/raylib.md`. raygui draws through raylib's
+window and state, so it is built into the same module, but it keeps its own name: a second
+namespace, `Raygui`, with its own pin, notice, and section of the record (question D).
+Replaces the names in decisions 4, 5 and 8, and the three-library split of decision 5
+(`Graphics`, `Audio`, `Game`): there is one library, as there is one raylib.
+
+R2. **The whole surface, with exceptions listed (recommended).** Every function, struct, enum
+and named constant in `raylib.h`, `raymath.h`, `rlgl.h` and `raygui.h` at the pinned versions.
+The record lists each exception with its reason. Expected exceptions: raw memory functions
+(`MemAlloc`, `MemFree`, the `Unload...Data` functions that free a buffer the glue already
+copied into Emerald), which have no meaning without pointers; and C callbacks
+(`SetTraceLogCallback`, the file-data and text callbacks, audio stream callbacks and
+processors), which need C to call into Emerald, a thing decision 3 rules out (question F).
+Functions that repeat something Emerald already has (file reading, random numbers, text
+formatting) are kept, because "everything" means a raylib program reads the same in Emerald.
+
+R3. **The glue and declarations are generated (recommended).** A generator,
+`tools/vendor-bind` (Zig, run by `zig build vendor-bind`), reads a library's API description
+and writes `vendor/<name>/generated/native.zig` (the glue) and
+`vendor/<name>/generated/<name>.em` (the declarations). Generated files are committed, so a
+build needs neither the generator's input nor the upstream parser; a CI check regenerates them
+and fails on a difference, the way the editor-signature parity test works. Two hand-written
+files carry what no description holds: `vendor/<name>/bind.json`, the overrides (which calls
+can fail and how to tell, which pointer parameters are outputs, which array goes with which
+count, which structs are resources), and `vendor/<name>/<name>.em`, the hand-written layer
+(R7). The description for raylib, raymath, rlgl and raygui comes from raylib's own header
+parser (`rlparser`, in raylib's repository), whose JSON is committed with the pin; slice 2
+verifies that it covers raygui, and writes the description by hand for anything it misses.
+**For the next library**, the generator reads the same description format: a library with a
+regular header gets an adapter or a hand-written description, then the same overrides file
+and the same generator. Replaces "Glue: `native.zig`, one Zig function per native" in the
+recipe table.
+
+R4. **Names follow one mechanical rule (recommended),** so a reader can work out the Emerald
+name of any function in raylib's cheatsheet:
+- Functions in snake case: `DrawCircle` becomes `Raylib.draw_circle`. A leading `Is` becomes
+  Emerald's trailing `?`: `IsKeyPressed` becomes `Raylib.key_pressed?`.
+- raygui drops its `Gui` prefix, because the namespace says it: `GuiButton` becomes
+  `Raygui.button`.
+- A raymath function whose first parameter is the struct it names becomes a method:
+  `Vector2Add(a, b)` becomes `a.add(b)`, `MatrixInvert(m)` becomes `m.invert()`.
+- Structs keep raylib's names (`Raylib.Vector2`, `Raylib.Camera3D`, `Raylib.Rectangle`), with
+  fields and parameters in snake case, and every parameter can be passed by name.
+- Enums drop their shared prefix: `KEY_SPACE` becomes `Raylib.Key.space`, `FLAG_VSYNC_HINT`
+  becomes `Raylib.ConfigFlags.vsync_hint`; raylib's color constants become
+  `Raylib.Color.raywhite` and the rest.
+- A name that collides with an Emerald keyword gets a trailing underscore, listed in the record.
+
+The record carries the whole C-to-Emerald table, generated.
+
+R5. **Richer values cross the boundary (recommended; widens decision 3).** Module ABI
+version 2 adds three things, still with no pointers and no interpreter internals:
+- **Records.** A value struct (`Vector2`, `Color`, `Rectangle`, `Matrix`, `Camera2D`, `Ray`,
+  `BoundingBox`, and the rest) crosses as a list of scalar values in field order, nested
+  structs flattened, and the Emerald side builds the struct.
+- **Lists.** An array parameter (the points of a polygon, vertices) crosses as a list of
+  records or scalars; the overrides pair it with its count parameter, which the Emerald
+  signature drops. Pixel and sample buffers stay `Bytes`.
+- **Outputs.** A pointer the C function writes through (`bool *active` in a raygui check box,
+  `char *text` in a text box, `int *` scroll positions) becomes a returned value:
+  `Raygui.check_box(bounds, text, checked)` gives back the new `Bool`, and a text box takes
+  and gives back a `String`. A function with several outputs gives back a struct.
+
+Resource structs, which own memory or GPU objects (`Image`, `Texture`, `RenderTexture`,
+`Font`, `Mesh`, `Shader`, `Material`, `Model`, `ModelAnimation`, `Wave`, `Sound`, `Music`,
+`AudioStream`), stay handles the module owns, wrapped in Emerald structs with a private `_id`,
+as slice 1's `SelftestCounter` is. raylib's `Unload...` functions are their `unload()`;
+anything still loaded when the program ends is freed by the module's shutdown. Their public
+fields (a texture's width and height) are read through generated getters.
+
+R6. **Failures are `RaylibError` (recommended; replaces decision 8's names).** Where raylib
+signals failure (a resource that fails its `Is...Valid` check, a false result, an empty
+handle), the overrides say so, and the generated wrapper raises `RaylibError` naming the call
+or the file, with a help line. raylib's console logging is off unless the program turns it on
+with `Raylib.set_trace_log_level`, which is part of the surface.
+
+R7. **A hand-written layer stays on top (recommended).** `vendor/raylib/raylib.em` keeps
+decision 6's frame block as `Raylib.run(title, width:, height:) { screen => ... }`: it opens
+the window, begins and ends each frame, and closes the window even when the block raises.
+Nothing hides the layer below: a program may call `Raylib.init_window`,
+`Raylib.window_should_close?` and `Raylib.begin_drawing` itself, exactly as raylib's own
+examples do. Decision 7's "no `Vector2`" is reversed, since raylib has one; the hand-written
+layer adds forms that take plain `Float`s only where an example reads better for them.
+Hand-written functions are few, and each is documented as Emerald's, not raylib's.
+
+R8. **Testing at this size (recommended; extends decision 11).** Slice 1's agreement test
+already proves every module entry has a declaration and the reverse. Added: the regenerate
+check (R3); a generated case per pure function with a known answer from the C side (all of
+raymath, and the color and text helpers); pixel-checksum cases per header section (shapes,
+text, textures, 3D, raygui) on the software backend; and a set of raylib's own examples ported
+to Emerald per slice, as acceptance. Whether the software backend draws 3D and raygui with one
+checksum on all three systems is unverified; the slice that adds 3D checks it, and decision
+11's command log is the fallback for any section where it does not.
+
+Principle 1 now reads: **Emerald-shaped names, values and errors, over the complete surface.**
+No null returns and no integer error codes, but raylib's own structs and functions are all
+there, by a rule a reader can follow. The admission rule's "a small enough surface to curate"
+now reads: **an API description a generator can read, with the exceptions listed.** The
+out-of-scope list no longer holds 3D, shaders or raygui.
+
+Revised slices (replacing slices 2 to 5 below). Each slice turns on more of raylib's headers in
+the same generator, so most of a slice after the second is overrides, tests, examples and
+docs, not new machinery. Each is one PR, as before.
+
+- **Slice 2: the generator and raylib's core.** Module ABI version 2 (records, lists,
+  outputs), `tools/vendor-bind` and the regenerate check, the raylib pin and module build (the
+  window backend and the software backend), and from `raylib.h` the window, drawing, input and
+  timing functions, shapes, default-font text, and the colors and enums they use;
+  `Raylib.run`; the release workflow carries the module. Done when the bounce program runs on
+  all three systems and in the conformance suite.
+- **Slice 3: images, textures and fonts,** with the file-missing errors.
+- **Slice 4: audio,** with the no-device case (a laptop with no speakers must not crash a
+  program).
+- **Slice 5: 3D and raymath:** models, meshes, materials, shaders, cameras, and the math
+  methods.
+- **Slice 6: rlgl,** raylib's OpenGL layer (question E).
+- **Slice 7: Raygui:** the second pin, the `Raygui` namespace, styles.
+- **Later:** callbacks (question F), and the next library on the same recipe.
+
+The two sketch programs above become, under R4 and R7:
+
+```text
+Raylib.run("Bounce", width: 640, height: 480) { screen =>
+    # ... the same updates ...
+    Raylib.clear_background(Raylib.Color.black)
+    Raylib.draw_circle(ball.x, ball.y, radius: 12.0, color: Raylib.Color.yellow)
+    Raylib.draw_text("Close the window to quit", x: 10, y: 10, font_size: 20, color: Raylib.Color.white)
+}
+```
+
+```text
+Raylib.init_audio_device()
+const hit = Raylib.load_sound("hit.wav")
+const ship = Raylib.load_texture("ship.png")
+
+Raylib.run("Shooter", width: 800, height: 600) { screen =>
+    if Raylib.key_pressed?(Raylib.Key.space) { Raylib.play_sound(hit) }
+    Raylib.draw_texture(ship, x: 400, y: 500, tint: Raylib.Color.white)
+}
+```
+
+New questions for the user from revision 1:
+- **D. raygui's namespace.** Recommended: `Raygui`, its own name, so a reader sees which
+  project a call comes from (R1's rule). The alternative is `Raylib.Gui`.
+- **E. rlgl.** raylib's thin layer over OpenGL, for programs that outgrow raylib's drawing
+  functions. It is part of "everything", and it comes last because it is the least
+  beginner-facing and the hardest to test in the software backend. Recommended: include it, as
+  slice 6.
+- **F. Callbacks.** C calling into Emerald (a log callback, an audio processor) needs the
+  interpreter to be entered from a C stack, which decision 3 ruled out. Recommended: leave
+  them out of slices 2 to 7 and decide when the rest is done; the record lists them.
 
 ## What a vendor library is
 
@@ -74,7 +247,7 @@ beginner can read when a file is missing or a window cannot open.
 
 ## Principles
 
-1. **Emerald-shaped, not C-shaped** (principles 1 and 8). No C names, no null returns, no
+1. **Emerald-shaped, not C-shaped** (principles 1 and 8; reworded by revision 1). No C names, no null returns, no
    integer error codes, no `Vector2` that is really two floats, no flags ORed together.
 2. **The base `emerald` stays what it is.** One file, no runtime dependency beyond the
    operating system's C library, runs on a server with no display. A vendor library must not
@@ -132,7 +305,7 @@ the list, and `tools/check-vendor.sh` (slice 1) fails CI when any item is missin
 | Record | `vendor/<name>/README.md` | Upstream URL, exact version and hash, license, why chosen, what is exposed, what is left out and why, the build options used |
 | Pin | `build.zig.zon` | A lazy dependency with URL and hash, so a plain `zig build` fetches nothing |
 | Build | `vendor/<name>/build.zig` | One function that builds the upstream source and the glue into the native module |
-| Glue | `vendor/<name>/native.zig` | The positional surface, one Zig function per native, each checking its arguments and turning every failure into an error text |
+| Glue | `vendor/<name>/native.zig` (generated, per R3) | The positional surface, one Zig function per native, each checking its arguments and turning every failure into an error text |
 | Declarations | `vendor/<name>/<name>.em` | The Emerald API, doc comments included |
 | Cases | `conformance/vendor/<name>/` | `.em` programs and `.expected` output, run against the headless backend |
 | Notice | `THIRD_PARTY_NOTICES.md` | The upstream license text |
@@ -143,7 +316,7 @@ the list, and `tools/check-vendor.sh` (slice 1) fails CI when any item is missin
 Admission, for the user to apply to any future library: a license that lets Emerald ship it
 (MIT, zlib, BSD, public domain; not GPL, which would change Emerald's own terms); source that
 Zig builds without installing anything; no runtime dependency beyond the operating system; a
-small enough surface to curate; and a way to run it headless. A library that fails one is a
+small enough surface to curate (now: an API description a generator can read, R2 and R3); and a way to run it headless. A library that fails one is a
 conversation, not an exception.
 
 ## Decisions
@@ -170,7 +343,7 @@ Each carries a recommendation. The alternatives are kept for the record.
    several megabytes; only worth it if slice 0 shows the X11 and GL libraries can be loaded
    late on every platform, which GLFW can do and raylib's build does not currently ask for.
 
-3. **The native boundary is positional and small (recommended).** The module exports one
+3. **The native boundary is positional and small (recommended; widened by R5).** The module exports one
    function, `emerald_module(host)`, that returns a table of natives. A native takes and
    returns `Nothing`, `Bool`, `Int`, `Float`, `String`, or `Bytes`, and may fail with an error
    text. An opaque resource (a window, an image, a sound) is an `Int` handle the module owns;
@@ -182,7 +355,7 @@ Each carries a recommendation. The alternatives are kept for the record.
    values directly. That is faster to write and welds every module to the interpreter's
    internals, which the compiler will replace.
 
-4. **Vendor declarations load only when named (recommended).** `Graphics`, `Audio` and
+4. **Vendor declarations load only when named (recommended; the names are now R1's).** `Graphics`, `Audio` and
    `Game` are visible in every file without an import, like the built-ins, and a user
    declaration with the same name wins, as 14.2 already says. Their `.em` files are parsed
    only when a file mentions the name; the prelude and every other program pay nothing. This
@@ -190,7 +363,7 @@ Each carries a recommendation. The alternatives are kept for the record.
    line, which is new syntax, one more thing to teach, and no better for the beginner. A
    second alternative, putting the declarations in the prelude, taxes every run.
 
-5. **The raylib family is three libraries, not one (recommended):** `Graphics` (window,
+5. **Replaced by R1 and R2.** The raylib family is three libraries, not one (recommended): `Graphics` (window,
    frame loop, shapes, text, images and sprites, keyboard and mouse), `Audio` (sounds and
    music), and `Game` (small helpers a game keeps rewriting: a fixed timer, rectangle and
    circle overlap, a camera). They share one module and one handle table, because raylib has
@@ -207,14 +380,14 @@ Each carries a recommendation. The alternatives are kept for the record.
    `while screen.open?() { ... }`, which is how raylib's own examples read and which hands the
    beginner a drawing-state bug (forgetting `end`) that the block cannot have.
 
-7. **Coordinates and colors are plain values (recommended).** Positions are `Float`s, sizes
+7. **Replaced by R4, R5 and R7.** Coordinates and colors are plain values (recommended). Positions are `Float`s, sizes
    are `Int` pixels, with the origin at the top left as every 2D library has it. `Graphics.Color`
    is a struct with named constants (`Graphics.Color.red`) and `Color.rgb(r, g, b)`; it is a
    struct nested in the namespace the way `Console.Color` is (14.3). Keys and mouse buttons are
    enums (`Graphics.Key.space`). Alternative: raylib's `Vector2` and `Rectangle`, which add two
    types to learn before the first circle.
 
-8. **Errors are Emerald errors (recommended).** `GraphicsError` for a window that will not
+8. **Errors are Emerald errors (recommended; the names are now R6's).** `GraphicsError` for a window that will not
    open, an image that will not load, a handle used after it was closed; `AudioError` likewise;
    all extend `Error`, name the file or the call, and say what to try ("`ship.png` is not
    there. Is it in the same folder as the program?"). The module returns error texts and the
@@ -267,6 +440,8 @@ Each carries a recommendation. The alternatives are kept for the record.
     library.
 
 ## Slices
+
+Slices 0 and 1 are done. Slices 2 to 5 below are replaced by revision 1's slices 2 to 7.
 
 Each slice is a branch and a pull request, built the usual way: one commit per change,
 `/code-review` at high effort, handoff and journal updated, the user merges.
@@ -399,7 +574,7 @@ must cover).
 ## Out of scope
 
 WebAssembly and the playground (item 6, after 1.0); Android, Raspberry Pi's DRM backend, and
-other raylib platforms; 3D, shaders, and raygui in the first pass; networked games; a
+other raylib platforms; C callbacks into Emerald (question F; 3D, shaders and raygui are now in, per revision 1); networked games; a
 package manager or any way for a user to add a native library to their own installation (the
 recipe is for Emerald's maintainers, 14.4); and any change to the language itself beyond
 resolver loading and the frame-loop block, which is an ordinary function with a block.

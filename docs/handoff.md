@@ -15,11 +15,15 @@ order, message text). The user's order: wider allocation-failure run (done), the
 first vendor library (design plan first), then review the compiler plan and finish loose ends.
 Raylib is under way: the plan is accepted (`vendor-libraries-design-plan.md`), the slice 0 spike ran
 (branch `claude/raylib-spike`, not for merge; delete it once convenient), and slice 1, the vendor
-library mechanism, is on `claude/vendor-mechanism`: a module interface (`vendor/emerald_module.h`),
+library mechanism, is merged (PR #70, `f630d59`): a module interface (`vendor/emerald_module.h`),
 the loader (`src/Module.zig`), declarations that join the prelude only when a program names a
 library (`src/Vendor.zig`), the test-only `vendor/selftest` library, `vendor/_template`,
 `tools/check-vendor.sh`, and the how-to `vendor-libraries.md`. The user still owes the frame-rate
-measurement on a Mac and a slow machine (question C of the plan) before slice 2, `Graphics`.
+measurement on a Mac and a slow machine (question C of the plan) before slice 2. After slice 1 the
+user asked for "Raylib everywhere" (the library keeps its name: `vendor/raylib/`, namespace
+`Raylib`, no `Graphics`/`Audio`/`Game` split) and full access to everything raylib offers,
+raygui included; the plan's Revision 1 (R1 to R8, questions D to F: a generator over raylib's API
+description, module ABI version 2, slices 2 to 7) is proposed and awaits the user's acceptance.
 Earlier status: `v0.8.0-rc1` was published as a prerelease. The codebase review
 (roadmap item 10) has reported and been triaged in [`review/triage.md`](review/triage.md), with
 every decision accepted. Fix batches 1, 2 and 3 are merged (PRs #57–#66; the journal has each).
@@ -481,7 +485,8 @@ compiler), or the compiler depends on it.
    decided before the compiler work, after Odin's `vendor:` collection (raylib, SDL). Built-in
    libraries are the one channel for native code: they ship inside Emerald and its release, while
    copied-in libraries (item 5) stay pure Emerald. The recommendation the user accepted: curated,
-   Emerald-shaped `Graphics`, `Game`, and `Audio` (15.6's parked family) built on raylib (no
+   Emerald-shaped `Graphics`, `Game`, and `Audio` (15.6's parked family; superseded 2026-11-06 by
+   the plan's Revision 1: one `Raylib` library with raylib's whole surface) built on raylib (no
    dependencies, Zig builds it, windows, 2D, 3D, audio, and input in one), not thin C bindings,
    which would put C names, null returns, and C-shaped errors in student code against principles
    1 and 8. SDL is heavier and lower-level, so not the engine. The plan settles: interpreter or
