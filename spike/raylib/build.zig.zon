@@ -1,0 +1,13 @@
+.{
+    .name = .emerald_raylib_spike,
+    .version = "0.0.0",
+    .minimum_zig_version = "0.17.0",
+    .fingerprint = 0x21c36f70fc580b48,
+    .dependencies = .{
+        .raylib = .{
+            .url = "git+https://github.com/raysan5/raylib#02566453880e06bec97f5b8160fa6fe1e98397ca",
+            .hash = "raylib-6.0.0-whq8uDpYOAVcH_KyOZ0--nYF1dEsjdQ5r4e9R24UkQOi",
+        },
+    },
+    .paths = .{ "build.zig", "build.zig.zon", "module.zig" },
+}

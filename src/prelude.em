@@ -203,6 +203,19 @@ class Path {
     func Path.absolute(path: String): String { return "" }
 }
 
+# SPIKE ONLY: natives of the raylib module (slice 0).
+class Gfx {
+    const _id: Int
+    func Gfx.open(width: Int, height: Int, vsync: Bool): Bool { return false }
+    func Gfx.close() {}
+    func Gfx.should_close(): Bool { return false }
+    func Gfx.begin() {}
+    func Gfx.end() {}
+    func Gfx.circle(x: Int, y: Int, radius: Float, rgba: Int) {}
+    func Gfx.rect(x: Int, y: Int, w: Int, h: Int, rgba: Int) {}
+    func Gfx.fps(): Int { return 0 }
+}
+
 # Terminal styling is written in Emerald so it keeps normal named/defaulted
 # arguments and composes through ordinary String interpolation.
 class Console {

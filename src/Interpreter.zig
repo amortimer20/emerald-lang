@@ -35,6 +35,7 @@ const FloatMath = @import("FloatMath.zig");
 const Diagnostic = @import("Diagnostic.zig");
 const Heap = @import("Heap.zig");
 const Http = @import("Http.zig");
+const SpikeGfx = @import("SpikeGfx.zig");
 const Json = @import("Json.zig");
 const Project = @import("Project.zig");
 const Range = @import("Range.zig").Range;
@@ -4051,6 +4052,7 @@ fn evaluateCallInner(
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::table")) {
             if (self.json_encodes.get(call.callee)) |record_type| return self.callConsoleStructTable(expression.span, call, record_type);
         }
+        if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Gfx::")) return self.callGfx(key[(Resolver.prelude_namespace ++ ".Gfx::").len..], call);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Instant::_now")) return .initInt(clockNanoseconds(self.io, .real));
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Stopwatch::_ticks")) return .initInt(clockNanoseconds(self.io, .awake));
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_local_name")) return self.heap.copyText(self.local_zone.name);
@@ -4878,6 +4880,39 @@ fn callConsoleStructTable(self: *Interpreter, span: Source.Span, call: Ast.Expre
     try self.reach(key, span);
     transferred = true;
     return self.invoke(span, self.namedCallable(key), &.{ row_value, header_value, numeric_value });
+}
+
+/// SPIKE ONLY: the raylib module's natives (slice 0).
+fn callGfx(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Error!Value {
+    const f = SpikeGfx.loaded() orelse blk: {
+        var variables = std.process.Environ.createMap(self.environment, self.gpa) catch return error.OutOfMemory;
+        defer variables.deinit();
+        const path = variables.get("EMERALD_SPIKE_LIB") orelse "emerald-raylib.dll";
+        break :blk SpikeGfx.load(path) catch |err| return self.raiseFmt(call.callee.span, "cannot load the raylib module: {s}", .{@errorName(err)}, "Set EMERALD_SPIKE_LIB to the module.");
+    };
+    SpikeGfx.calls += 1;
+    var ints: [5]i64 = .{ 0, 0, 0, 0, 0 };
+    var radius: f64 = 0;
+    const is_circle = std.mem.eql(u8, name, "circle");
+    for (call.arguments, 0..) |argument, index| {
+        const value = try self.evaluate(argument);
+        defer self.heap.release(value);
+        switch (value.data) {
+            .int => |number| ints[index] = number,
+            .float => |number| radius = number,
+            .bool => |flag| ints[index] = @intFromBool(flag),
+            else => {},
+        }
+    }
+    if (std.mem.eql(u8, name, "open")) return .initBool(f.open(ints[0], ints[1], ints[2] != 0));
+    if (std.mem.eql(u8, name, "close")) { f.close(); return .nothing; }
+    if (std.mem.eql(u8, name, "should_close")) return .initBool(f.should_close());
+    if (std.mem.eql(u8, name, "begin")) { f.begin(); return .nothing; }
+    if (std.mem.eql(u8, name, "end")) { f.end(); return .nothing; }
+    if (is_circle) { f.circle(ints[0], ints[1], radius, ints[3]); return .nothing; }
+    if (std.mem.eql(u8, name, "rect")) { f.rect(ints[0], ints[1], ints[2], ints[3], ints[4]); return .nothing; }
+    if (std.mem.eql(u8, name, "fps")) return .initInt(f.fps());
+    return .nothing;
 }
 
 /// One of the prelude's functions (`Resolver.prelude`), reached bare or as

@@ -12,3 +12,8 @@ zig-out/
 _scratch/
 .unicode/
 .jsontestsuite/
+spike/raylib/zig-out/
+spike/raylib/.zig-cache/
+/emerald-raylib.dll
+zig-pkg/
+spike/raylib/zig-pkg/

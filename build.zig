@@ -7,10 +7,13 @@ pub fn build(b: *std.Build) void {
     // shipped. Release automation overrides this from its vX.Y.Z tag.
     const version = b.option([]const u8, "version", "Version string printed by `emerald --version`") orelse "0.7.0-dev";
 
+    // SPIKE: link the C library, so the system's dlopen can load a module.
+    const spike_libc = b.option(bool, "spike-libc", "SPIKE: link libc") orelse false;
     const emerald_module = b.createModule(.{
         .root_source_file = b.path("src/emerald.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = spike_libc,
     });
 
     // The prelude's syntax tree is parsed when Emerald is built and compiled
@@ -67,6 +70,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = spike_libc,
         .imports = &.{.{ .name = "emerald", .module = emerald_module }},
     });
     const exe = b.addExecutable(.{

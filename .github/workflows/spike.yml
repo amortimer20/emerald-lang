@@ -1,0 +1,80 @@
+name: Raylib spike
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["claude/raylib-spike"]
+
+jobs:
+  spike:
+    name: Spike ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+
+      - name: Linux display and GL development libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev libgl1-mesa-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev xvfb libgl1-mesa-dri
+
+      - name: Build the module (GLFW)
+        shell: bash
+        working-directory: spike/raylib
+        run: time zig build -Doptimize=ReleaseSafe
+
+      - name: Build emerald (no libc)
+        shell: bash
+        run: zig build -Doptimize=ReleaseSafe --prefix zig-nolibc
+
+      - name: Build emerald (libc)
+        shell: bash
+        run: zig build -Doptimize=ReleaseSafe -Dspike-libc=true --prefix zig-libc
+
+      - name: Sizes and dependencies
+        shell: bash
+        run: |
+          ls -l spike/raylib/zig-out/lib spike/raylib/zig-out/bin zig-nolibc/bin zig-libc/bin 2>/dev/null || true
+          if [ "$RUNNER_OS" = Linux ]; then
+            echo "--- emerald (no libc)"; ldd zig-nolibc/bin/emerald || true
+            echo "--- emerald (libc)"; ldd zig-libc/bin/emerald || true
+            echo "--- module"; ldd spike/raylib/zig-out/lib/libemerald-raylib.so || true
+          fi
+          if [ "$RUNNER_OS" = macOS ]; then
+            otool -L zig-libc/bin/emerald; otool -L spike/raylib/zig-out/lib/libemerald-raylib.dylib
+          fi
+
+      - name: Base emerald in a bare container (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm -v "$PWD/zig-nolibc/bin:/e" ubuntu:24.04 /e/emerald --version
+          docker run --rm -v "$PWD/zig-libc/bin:/e" ubuntu:24.04 /e/emerald --version
+          docker run --rm -v "$PWD/zig-libc/bin:/e" -v "$PWD/spike/bench:/b" ubuntu:24.04 /e/emerald run /b/frames.em -- update 30 0 50
+
+      - name: Load the module and draw frames
+        shell: bash
+        run: |
+          set +e
+          case "$RUNNER_OS" in
+            Linux) lib="$PWD/spike/raylib/zig-out/lib/libemerald-raylib.so"; run="xvfb-run -a" ;;
+            macOS) lib="$PWD/spike/raylib/zig-out/lib/libemerald-raylib.dylib"; run="" ;;
+            Windows) lib="$PWD/spike/raylib/zig-out/bin/emerald-raylib.dll"; run="" ;;
+          esac
+          exe=emerald; [ "$RUNNER_OS" = Windows ] && exe=emerald.exe
+          for variant in nolibc libc; do
+            echo "=== emerald ($variant) loading $lib"
+            EMERALD_SPIKE_LIB="$lib" $run ./zig-$variant/bin/$exe run spike/bench/frames.em -- calls 120 200 100
+            echo "exit $?"
+          done
+
+      - name: Software-renderer backend (memory), Linux
+        if: runner.os == 'Linux'
+        working-directory: spike/raylib
+        run: |
+          set +e
+          zig build -Doptimize=ReleaseSafe -Dplatform=memory -Dconfig="-std=gnu11" --prefix ../../zig-memory 2>&1 | tail -20
+          echo "exit $?"
+          ls -l ../../zig-memory/lib || true
