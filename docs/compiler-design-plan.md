@@ -213,6 +213,19 @@ would be too large to review.
   such as `Regex::Match`. Natives that run blocks, change their receiver in place, decode to a
   type the checker named, or start tasks stay in the interpreter until the slices that compile
   those features (3, 5 and 6).
+  1b part 2 done on `claude/prelude-natives`: `RegexNatives`, `EncodingNatives` (Base64, hex,
+  the digests), `TimeNatives`, `JsonNatives` and `CsvNatives` (without a target type),
+  `MathNatives` and `SystemNatives` (Console's width and plain text, the clocks, the
+  environment). `Native.State` holds the regex cache, the machine's zone, the zone database and
+  its cache; the context carries `io`; `Engine.prelude_struct` gives the prelude's struct types;
+  a native can raise an error value it built itself (`raiseValue`, for `CsvError`'s `line`).
+  `Interpreter.zig` is 9,600 lines. *Settled while building:* files and Http stay in the
+  interpreter for now, as do `print`, `input`, `exit`, `sleep` and `Console.clear`. They release
+  the task baton around blocking I/O, check for cancellation, lock file handles shared between
+  tasks, and `File.with_open` runs a block, so they need an engine interface for blocking and
+  cancellation that belongs with slice 6 (the library and tasks), which moves them. A builder that
+  holds a native's context must not outlive the call: `JsonNatives.buildValue` builds a whole
+  value inside one call for that reason.
 - **1c, the remaining messages.** The runtime errors the interpreter raises for operators,
   indexing, overflow, optionals and conversions get their text from runtime functions both
   engines call.

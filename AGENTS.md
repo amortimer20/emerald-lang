@@ -143,8 +143,11 @@ implemented and Claude reviewed.
   instead of raising with a span; the interpreter calls it through `runNative`, which raises the
   failure at the call's span. Methods on strings, bytes, numbers, ranges, lists and dictionaries
   are ids in `runtime/Natives.zig`; a new one gets a member in its family's `Method` enum.
-- **Native routing** for the prelude's natives is still a chain of string-key comparisons in
-  `Interpreter.evaluateCall`, and the order matters.
+- **Prelude natives** (Regex, encodings, time zones, Json and Csv without a target type, Math,
+  Console text, clocks, the environment) are in `src/runtime/*Natives.zig`; what they keep
+  between calls is `Native.State`. Routing to them is still a chain of string-key comparisons in
+  `Interpreter.evaluateCall`, and the order matters. A value that holds a `Native.Context` must
+  not outlive the `runNative` call that made it.
 - **Generated files** are never edited by hand: `src/runtime/unicode/tables.zig` (from
   `tools/unicode/`), `src/runtime/tzdata/` (from `tools/update-tzdata.py`), and the prelude's syntax
   tree (from `tools/prelude_ast.zig`).

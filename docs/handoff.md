@@ -29,7 +29,8 @@ compiler** (decision 10's fallback; question C will not be measured). Next: the 
 `compiler-design-plan.md` is accepted as recommended (route, build tools, IR, shared runtime,
 slices 0 to 7; slice 1 is split into 1a, 1b, 1c, and 1a, the `src/runtime/` module, is on
 `claude/runtime-layer`, merged as PR #71; 1b part 1, value methods as runtime natives with ids,
-is on `claude/runtime-natives`). Slice 0 ran (branch `claude/compiler-spike`, not for merge): emitted C is 34x
+merged as PR #72; 1b part 2, the prelude's natives, is on `claude/prelude-natives`, with files
+and Http left for slice 6). Slice 0 ran (branch `claude/compiler-spike`, not for merge): emitted C is 34x
 (`fib`), 52x (`nbody`) and 9x (`words`) faster than the interpreter, rebuilds in 0.35 s against
 Zig source's 11.5 s, and reaches WebAssembly, a Cortex-M0+ and a host-loaded shared library; the
 build-tools archive is 52 MB (`.tar.xz`) to 85 MB (zip). Next: slice 1, the shared runtime layer.
