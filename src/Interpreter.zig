@@ -53,6 +53,7 @@ const Scheduler = @import("runtime").Scheduler;
 const Native = @import("runtime").Native;
 const Natives = @import("runtime").Natives;
 const RegexNatives = @import("runtime").RegexNatives;
+const EncodingNatives = @import("runtime").EncodingNatives;
 const MapMethods = @import("runtime").MapMethods;
 const ListMethods = @import("runtime").ListMethods;
 const RangeMethods = @import("runtime").RangeMethods;
@@ -4137,7 +4138,7 @@ fn evaluateCallInner(
             return self.callBase64(expression.span, key[(Resolver.prelude_namespace ++ ".Base64::").len..], call);
         }
         if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Digest::")) {
-            return self.callDigest(key[(Resolver.prelude_namespace ++ ".Digest::").len..], call);
+            return self.callDigest(expression.span, key[(Resolver.prelude_namespace ++ ".Digest::").len..], call);
         }
         if (isFilesystemKey(key)) return self.callFilesystem(expression.span, key, call);
         if (Resolver.mathFunction(key)) |function| {
@@ -5063,7 +5064,7 @@ fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: 
         return .{ .data = .{ .bytes = try self.heap.createText(bytes) } };
     }
     if (std.mem.eql(u8, suffix, "Bytes::from_hex") or std.mem.eql(u8, suffix, "Bytes::from_hex_maybe")) {
-        return self.bytesFromHex(span, values[0].data.string.bytes, std.mem.eql(u8, suffix, "Bytes::from_hex_maybe"));
+        return self.runNative(span, EncodingNatives.bytesFromHex, .{ values[0].data.string.bytes, std.mem.eql(u8, suffix, "Bytes::from_hex_maybe") });
     }
     if (std.mem.eql(u8, suffix, "File::open")) return self.openFileHandle(span, cwd, io, values[0].data.string.bytes);
     if (std.mem.eql(u8, suffix, "File::with_open")) {
@@ -5489,17 +5490,11 @@ fn callBase64(self: *Interpreter, span: Source.Span, name: []const u8, call: Ast
         if (bound.omitted) |omitted| self.gpa.free(omitted);
     }
     const url_safe = if (bound.omitted != null and bound.omitted.?[1]) false else bound.values[1].data.bool;
-    if (encode) {
-        const source = bound.values[0].data.bytes.bytes;
-        const codec = if (url_safe) std.base64.url_safe_no_pad.Encoder else std.base64.standard.Encoder;
-        const out = try self.gpa.alloc(u8, codec.calcSize(source.len));
-        _ = codec.encode(out, source);
-        return .{ .data = .{ .string = try self.heap.createText(out) } };
-    }
-    return self.base64Decode(span, bound.values[0].data.string.bytes, url_safe, maybe);
+    if (encode) return self.runNative(span, EncodingNatives.base64Encode, .{ bound.values[0].data.bytes.bytes, url_safe });
+    return self.runNative(span, EncodingNatives.base64Decode, .{ bound.values[0].data.string.bytes, url_safe, maybe });
 }
 
-fn callDigest(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Error!Value {
+fn callDigest(self: *Interpreter, span: Source.Span, name: []const u8, call: Ast.Expression.Call) Error!Value {
     const hmac = std.mem.eql(u8, name, "hmac_sha256");
     const bound = try self.evaluateBound(call, if (hmac) &.{ "bytes", "key" } else &.{"bytes"}, if (hmac) &.{ false, false } else &.{false});
     defer {
@@ -5507,106 +5502,7 @@ fn callDigest(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) E
         self.gpa.free(bound.values);
         if (bound.omitted) |omitted| self.gpa.free(omitted);
     }
-    var out: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
-    if (!hmac) {
-        std.crypto.hash.sha2.Sha256.hash(bound.values[0].data.bytes.bytes, &out, .{});
-    } else {
-        std.crypto.auth.hmac.sha2.HmacSha256.create(&out, bound.values[0].data.bytes.bytes, bound.values[1].data.bytes.bytes);
-    }
-    return self.heap.copyBytes(&out);
-}
-
-fn base64Decode(self: *Interpreter, span: Source.Span, text: []const u8, url_safe: bool, maybe: bool) Error!Value {
-    // Walk characters, not bytes, so an index matches string indexing and a
-    // non-ASCII character is quoted whole rather than as a broken byte.
-    const characters = try strings.characters(self.gpa, text);
-    defer self.gpa.free(characters);
-    // The Base64 characters kept, each with its index in the original text.
-    var clean: std.ArrayList(u8) = .empty;
-    defer clean.deinit(self.gpa);
-    var positions: std.ArrayList(usize) = .empty;
-    defer positions.deinit(self.gpa);
-    const alphabet = if (url_safe) std.base64.url_safe_alphabet_chars else std.base64.standard_alphabet_chars;
-    var first_padding: ?usize = null;
-    for (characters, 0..) |character, index| {
-        // Wrapped Base64 (email, PEM files, copied output) breaks lines; a
-        // Windows line ending is one character, "\r\n".
-        if (isBase64Space(character)) continue;
-        if (character.len == 1 and character[0] == '=') {
-            first_padding = first_padding orelse index;
-            try clean.append(self.gpa, '=');
-            try positions.append(self.gpa, index);
-            continue;
-        }
-        if (first_padding) |padding_index| {
-            if (maybe) return Value.nothing;
-            return self.runNative(span, BytesMethods.raiseEncodingMessage, .{try std.fmt.allocPrint(self.arena, "Base64 text has `=` at index {d}, before its end", .{padding_index})});
-        }
-        const known = character.len == 1 and base64Index(alphabet, character[0]) != null;
-        if (!known) {
-            if (maybe) return Value.nothing;
-            const other_alphabet = character.len == 1 and if (url_safe)
-                character[0] == '+' or character[0] == '/'
-            else
-                character[0] == '-' or character[0] == '_';
-            if (other_alphabet) {
-                const mode = if (url_safe) "standard" else "URL-safe";
-                const help = if (url_safe) "Decode it without `url_safe: true`." else "Decode it with `url_safe: true`.";
-                const message = try std.fmt.allocPrint(self.arena, "Base64 text has `{s}` at index {d}, which belongs to {s} Base64", .{ character, index, mode });
-                self.task.state.raised_value = self.makeError(Resolver.preludeKey("EncodingError"), message) catch return error.OutOfMemory;
-                return self.raiseTyped(span, "EncodingError", message, help);
-            }
-            return self.runNative(span, BytesMethods.raiseEncodingMessage, .{try std.fmt.allocPrint(self.arena, "Base64 text has `{s}` at index {d}, which is not a Base64 character", .{ character, index })});
-        }
-        try clean.append(self.gpa, character[0]);
-        try positions.append(self.gpa, index);
-    }
-    var padding: usize = 0;
-    while (padding < clean.items.len and clean.items[clean.items.len - 1 - padding] == '=') : (padding += 1) {}
-    const encoded = clean.items[0 .. clean.items.len - padding];
-    if (encoded.len % 4 == 1) {
-        if (maybe) return Value.nothing;
-        return self.runNative(span, BytesMethods.raiseEncodingMessage, .{"Base64 text ends partway through a group: it has 1 character too many, or is missing some"});
-    }
-    // Four characters make a group; a last group of two or three is padded
-    // with two or one `=`, and a complete group with none.
-    const needed: usize = (4 - encoded.len % 4) % 4;
-    if (padding > 0 and padding != needed) {
-        if (maybe) return Value.nothing;
-        const message = if (needed == 0)
-            try std.fmt.allocPrint(self.arena, "Base64 text ends with {d} `=`, but its last group is already complete and needs none", .{padding})
-        else
-            try std.fmt.allocPrint(self.arena, "Base64 text ends with {d} `=`, but its last group needs {d}", .{ padding, needed });
-        return self.runNative(span, BytesMethods.raiseEncodingMessage, .{message});
-    }
-    if (encoded.len % 4 != 0) {
-        const last = encoded[encoded.len - 1];
-        const value = base64Index(alphabet, last).?;
-        const mask: u8 = if (encoded.len % 4 == 2) 0x0f else 0x03;
-        if ((value & mask) != 0) {
-            if (maybe) return Value.nothing;
-            const canonical = alphabet[value & ~mask];
-            return self.runNative(span, BytesMethods.raiseEncodingMessage, .{try std.fmt.allocPrint(self.arena, "Base64 text's last character, `{c}` at index {d}, is not a possible final character; write `{c}` instead", .{ last, positions.items[encoded.len - 1], canonical })});
-        }
-    }
-    const decoder = if (url_safe) std.base64.url_safe_no_pad.Decoder else std.base64.standard_no_pad.Decoder;
-    const size = decoder.calcSizeForSlice(encoded) catch unreachable;
-    const out = try self.gpa.alloc(u8, size);
-    decoder.decode(out, encoded) catch unreachable;
-    return .{ .data = .{ .bytes = try self.heap.createText(out) } };
-}
-
-fn isBase64Space(character: []const u8) bool {
-    for (character) |byte| switch (byte) {
-        ' ', '\t', '\r', '\n' => {},
-        else => return false,
-    };
-    return character.len > 0;
-}
-
-fn base64Index(alphabet: [64]u8, character: u8) ?u8 {
-    for (alphabet, 0..) |candidate, index| if (candidate == character) return @intCast(index);
-    return null;
+    return self.runNative(span, EncodingNatives.digest, .{ bound.values[0].data.bytes.bytes, if (hmac) bound.values[1].data.bytes.bytes else null });
 }
 
 fn evaluateRangeCall(self: *Interpreter, expression: *const Ast.Expression, call: Ast.Expression.Call) Error!Value {
@@ -9987,40 +9883,6 @@ fn groupFloatText(self: *Interpreter, text: []u8) Error![]u8 {
     @memcpy(result[index + grouped_digits.len ..][0..fraction.len], fraction);
     self.gpa.free(text);
     return result;
-}
-
-fn bytesFromHex(self: *Interpreter, span: Source.Span, text: []const u8, maybe: bool) Error!Value {
-    const characters = try strings.characters(self.gpa, text);
-    defer self.gpa.free(characters);
-    if (characters.len % 2 != 0) {
-        if (maybe) return Value.nothing;
-        return self.runNative(span, BytesMethods.raiseEncodingMessage, .{try std.fmt.allocPrint(self.arena, "hex text has {d} digits, but every byte takes two", .{characters.len})});
-    }
-
-    const bytes = try self.gpa.alloc(u8, characters.len / 2);
-    for (characters, 0..) |character, index| {
-        const digit = hexValue(character) orelse {
-            self.gpa.free(bytes);
-            if (maybe) return Value.nothing;
-            return self.runNative(span, BytesMethods.raiseEncodingMessage, .{try std.fmt.allocPrint(self.arena, "hex text has `{s}` at index {d}, which is not a hex digit", .{ character, index })});
-        };
-        if (index % 2 == 0) {
-            bytes[index / 2] = digit << 4;
-        } else {
-            bytes[index / 2] |= digit;
-        }
-    }
-    return .{ .data = .{ .bytes = try self.heap.createText(bytes) } };
-}
-
-fn hexValue(character: []const u8) ?u8 {
-    if (character.len != 1) return null;
-    return switch (character[0]) {
-        '0'...'9' => character[0] - '0',
-        'a'...'f' => character[0] - 'a' + 10,
-        'A'...'F' => character[0] - 'A' + 10,
-        else => null,
-    };
 }
 
 fn ownedText(self: *Interpreter, bytes: []u8) Error!Value {
