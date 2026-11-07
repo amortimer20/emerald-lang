@@ -28,6 +28,9 @@ pub const Failure = struct {
     type_name: []const u8 = "",
     message: []const u8,
     help: []const u8,
+    /// The error value, when the native built it because its type has fields
+    /// besides `message`; otherwise the engine builds one from `message`.
+    value: ?Value = null,
 };
 
 /// Callbacks into the engine running the program.
@@ -85,6 +88,13 @@ pub const Context = struct {
 
     pub fn raiseTyped(ctx: *Context, type_name: []const u8, message: []const u8, help: []const u8) Error {
         ctx.failure = .{ .type_name = type_name, .message = message, .help = help };
+        return error.Raised;
+    }
+
+    /// Raises `value`, an instance of the prelude error type `type_name` the
+    /// native built itself. The failure owns it.
+    pub fn raiseValue(ctx: *Context, type_name: []const u8, value: Value, message: []const u8, help: []const u8) Error {
+        ctx.failure = .{ .type_name = type_name, .message = message, .help = help, .value = value };
         return error.Raised;
     }
 

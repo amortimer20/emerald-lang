@@ -56,6 +56,7 @@ const RegexNatives = @import("runtime").RegexNatives;
 const EncodingNatives = @import("runtime").EncodingNatives;
 const TimeNatives = @import("runtime").TimeNatives;
 const JsonNatives = @import("runtime").JsonNatives;
+const CsvNatives = @import("runtime").CsvNatives;
 const MapMethods = @import("runtime").MapMethods;
 const ListMethods = @import("runtime").ListMethods;
 const RangeMethods = @import("runtime").RangeMethods;
@@ -3486,8 +3487,12 @@ fn nativeFailure(self: *Interpreter, span: Source.Span, ctx: *const Native.Conte
 
 fn raiseFailure(self: *Interpreter, span: Source.Span, failure: Native.Failure) Error {
     if (failure.type_name.len == 0) return self.raise(span, failure.message, failure.help);
-    const key = try std.fmt.allocPrint(self.arena, Resolver.prelude_namespace ++ ".{s}", .{failure.type_name});
-    self.task.state.raised_value = try self.makeError(key, failure.message);
+    if (failure.value) |value| {
+        self.task.state.raised_value = value;
+    } else {
+        const key = try std.fmt.allocPrint(self.arena, Resolver.prelude_namespace ++ ".{s}", .{failure.type_name});
+        self.task.state.raised_value = try self.makeError(key, failure.message);
+    }
     return self.raiseTyped(span, failure.type_name, failure.message, failure.help);
 }
 
@@ -5671,9 +5676,9 @@ fn callCsv(self: *Interpreter, span: Source.Span, name: []const u8, call: Ast.Ex
         if (bound.omitted) |omitted| self.gpa.free(omitted);
     }
     return switch (native) {
-        ._parse => @as(?Value, try self.csvRows(span, bound.values[0].data.string.bytes, bound.values[1].data.string.bytes)),
-        ._parse_records => @as(?Value, try self.csvRecords(span, bound.values[0].data.string.bytes, bound.values[1].data.string.bytes)),
-        ._format => @as(?Value, try self.csvFormat(span, bound.values[0].data.list, bound.values[1].data.string.bytes)),
+        ._parse => @as(?Value, try self.runNative(span, CsvNatives.csvRows, .{ bound.values[0].data.string.bytes, bound.values[1].data.string.bytes })),
+        ._parse_records => @as(?Value, try self.runNative(span, CsvNatives.csvRecords, .{ bound.values[0].data.string.bytes, bound.values[1].data.string.bytes })),
+        ._format => @as(?Value, try self.runNative(span, CsvNatives.csvFormat, .{ bound.values[0].data.list, bound.values[1].data.string.bytes })),
         .encode, .decode => unreachable,
     };
 }
@@ -5702,7 +5707,7 @@ fn csvEncodeRecords(self: *Interpreter, span: Source.Span, value: Value, value_t
     var out: std.Io.Writer.Allocating = .init(self.gpa);
     defer out.deinit();
     Csv.write(rows, separator, &out.writer) catch |err| switch (err) {
-        error.InvalidSeparator => return self.raiseCsvSeparator(span, separator),
+        error.InvalidSeparator => return self.runNative(span, CsvNatives.raiseCsvSeparator, .{separator}),
         error.WriteFailed => return error.OutOfMemory,
     };
     return .{ .data = .{ .string = try self.heap.createText(try out.toOwnedSlice()) } };
@@ -5795,7 +5800,7 @@ fn csvDecodeText(self: *Interpreter, span: Source.Span, text: []const u8, separa
     var problem: Csv.Problem = .{};
     var document = Csv.parse(self.gpa, text, separator, &problem) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
-        error.InvalidCsv => return self.raiseCsvProblem(span, problem),
+        error.InvalidCsv => return self.runNative(span, CsvNatives.raiseCsvProblem, .{problem}),
     };
     defer document.deinit();
     var arena_state: std.heap.ArenaAllocator = .init(self.gpa);
@@ -5809,10 +5814,10 @@ fn csvJsonRoot(self: *Interpreter, span: Source.Span, arena: std.mem.Allocator, 
     if (rows.len == 0) return .initList(items);
     const header = rows[0];
     for (header.fields, 0..) |name, index| {
-        if (name.len == 0) return self.raiseCsv(span, "the header has an empty column name", header.line);
+        if (name.len == 0) return self.runNative(span, CsvNatives.raiseCsv, .{ "the header has an empty column name", header.line });
         for (header.fields[0..index]) |earlier| if (std.mem.eql(u8, name, earlier)) {
             const message = try std.fmt.allocPrint(self.arena, "the header names the column \"{s}\" twice", .{name});
-            return self.raiseCsv(span, message, header.line);
+            return self.runNative(span, CsvNatives.raiseCsv, .{ message, header.line });
         };
     }
     const element = target.element.?.*;
@@ -5821,7 +5826,7 @@ fn csvJsonRoot(self: *Interpreter, span: Source.Span, arena: std.mem.Allocator, 
     for (rows[1..], items) |row, *item| {
         if (row.fields.len != header.fields.len) {
             const message = try std.fmt.allocPrint(self.arena, "line {d} has {d} fields, but the header has {d}", .{ row.line, row.fields.len, header.fields.len });
-            return self.raiseCsv(span, message, row.line);
+            return self.runNative(span, CsvNatives.raiseCsv, .{ message, row.line });
         }
         const entries = try arena.alloc(Json.Entry, user.fields.len);
         var entry_count: usize = 0;
@@ -5833,7 +5838,7 @@ fn csvJsonRoot(self: *Interpreter, span: Source.Span, arena: std.mem.Allocator, 
                 const columns = try self.csvColumns(header.fields);
                 defer self.gpa.free(columns);
                 const message = try std.fmt.allocPrint(self.arena, "there is no column \"{s}\"; the columns are {s}", .{ field.name, columns });
-                return self.raiseCsv(span, message, null);
+                return self.runNative(span, CsvNatives.raiseCsv, .{ message, null });
             }
             const cell = row.fields[header_index.?];
             if (cell.len == 0 and written.default != null) continue;
@@ -5857,25 +5862,25 @@ fn csvCellJson(self: *Interpreter, span: Source.Span, arena: std.mem.Allocator, 
     }
     if (cell.len == 0) {
         if (target.kind == .string) return .initString(try arena.dupe(u8, cell));
-        return self.raiseCsvCell(span, line, column, "this cell is empty");
+        return self.runNative(span, CsvNatives.raiseCsvCell, .{ line, column, "this cell is empty" });
     }
     return switch (target.kind) {
         .string => .initString(try arena.dupe(u8, cell)),
         .int => switch (strings.parseInt(cell)) {
             .value => |value| Json.Value.initInt(value),
-            else => self.raiseCsvCell(span, line, column, try std.fmt.allocPrint(self.arena, "expected a whole number, found \"{s}\"", .{cell})),
+            else => self.runNative(span, CsvNatives.raiseCsvCell, .{ line, column, try std.fmt.allocPrint(self.arena, "expected a whole number, found \"{s}\"", .{cell}) }),
         },
         .float => switch (strings.parseFloat(cell)) {
             .value => |value| Json.Value.initFloat(value),
-            else => self.raiseCsvCell(span, line, column, try std.fmt.allocPrint(self.arena, "expected a number, found \"{s}\"", .{cell})),
+            else => self.runNative(span, CsvNatives.raiseCsvCell, .{ line, column, try std.fmt.allocPrint(self.arena, "expected a number, found \"{s}\"", .{cell}) }),
         },
-        .bool => if (std.ascii.eqlIgnoreCase(cell, "true")) Json.Value.initBool(true) else if (std.ascii.eqlIgnoreCase(cell, "false")) Json.Value.initBool(false) else self.raiseCsvCell(span, line, column, try std.fmt.allocPrint(self.arena, "expected true or false, found \"{s}\"", .{cell})),
+        .bool => if (std.ascii.eqlIgnoreCase(cell, "true")) Json.Value.initBool(true) else if (std.ascii.eqlIgnoreCase(cell, "false")) Json.Value.initBool(false) else self.runNative(span, CsvNatives.raiseCsvCell, .{ line, column, try std.fmt.allocPrint(self.arena, "expected true or false, found \"{s}\"", .{cell}) }),
         .struct_value => {
             const user = target.user.?;
             if (user.enumeration) {
                 const descriptor = self.structs.get(user.name).?;
                 for (descriptor.values) |value| if (std.mem.eql(u8, value, cell)) return .initString(try arena.dupe(u8, cell));
-                return self.raiseCsvCell(span, line, column, try std.fmt.allocPrint(self.arena, "expected a value of `{s}`, found \"{s}\"", .{ user.display_name, cell }));
+                return self.runNative(span, CsvNatives.raiseCsvCell, .{ line, column, try std.fmt.allocPrint(self.arena, "expected a value of `{s}`, found \"{s}\"", .{ user.display_name, cell }) });
             }
             if (jsonTextualType(user.name)) {
                 const key = try Resolver.methodKey(self.arena, user.name, "parse_maybe");
@@ -5884,17 +5889,12 @@ fn csvCellJson(self: *Interpreter, span: Source.Span, arena: std.mem.Allocator, 
                 const valid = parsed.data != .nothing;
                 self.heap.release(parsed);
                 if (valid) return .initString(try arena.dupe(u8, cell));
-                return self.raiseCsvCell(span, line, column, try std.fmt.allocPrint(self.arena, "expected valid `{s}`, found \"{s}\"", .{ user.display_name, cell }));
+                return self.runNative(span, CsvNatives.raiseCsvCell, .{ line, column, try std.fmt.allocPrint(self.arena, "expected valid `{s}`, found \"{s}\"", .{ user.display_name, cell }) });
             }
             unreachable;
         },
         else => unreachable,
     };
-}
-
-fn raiseCsvCell(self: *Interpreter, span: Source.Span, line: u32, column: []const u8, detail: []const u8) Error {
-    const message = std.fmt.allocPrint(self.arena, "line {d}, column \"{s}\": {s}", .{ line, column, detail }) catch return error.OutOfMemory;
-    return self.raiseCsv(span, message, line);
 }
 
 fn csvColumns(self: *Interpreter, headers: []const []const u8) Error![]u8 {
@@ -5905,132 +5905,6 @@ fn csvColumns(self: *Interpreter, headers: []const []const u8) Error![]u8 {
         try out.writer.print("\"{s}\"", .{header});
     }
     return try out.toOwnedSlice();
-}
-
-fn csvRows(self: *Interpreter, span: Source.Span, text: []const u8, separator: []const u8) Error!Value {
-    var problem: Csv.Problem = .{};
-    var document = Csv.parse(self.gpa, text, separator, &problem) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.InvalidCsv => return self.raiseCsvProblem(span, problem),
-    };
-    defer document.deinit();
-
-    const rows = try self.heap.createList(.list, document.rows.len);
-    const result: Value = .{ .data = .{ .list = rows } };
-    errdefer self.heap.release(result);
-    for (document.rows) |row| {
-        const fields = try self.heap.createList(.string, row.fields.len);
-        const value: Value = .{ .data = .{ .list = fields } };
-        errdefer self.heap.release(value);
-        for (row.fields) |field| fields.items.appendAssumeCapacity(try self.heap.copyText(field));
-        rows.items.appendAssumeCapacity(value);
-    }
-    return result;
-}
-
-fn csvRecords(self: *Interpreter, span: Source.Span, text: []const u8, separator: []const u8) Error!Value {
-    var problem: Csv.Problem = .{};
-    var document = Csv.parse(self.gpa, text, separator, &problem) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.InvalidCsv => return self.raiseCsvProblem(span, problem),
-    };
-    defer document.deinit();
-    if (document.rows.len == 0) {
-        return .{ .data = .{ .list = try self.heap.createList(.map, 0) } };
-    }
-
-    const header = document.rows[0];
-    for (header.fields, 0..) |name, index| {
-        if (name.len == 0) return self.raiseCsv(span, "the header has an empty column name", header.line);
-        for (header.fields[0..index]) |earlier| {
-            if (std.mem.eql(u8, name, earlier)) {
-                const message = try std.fmt.allocPrint(self.arena, "the header names the column \"{s}\" twice", .{name});
-                return self.raiseCsv(span, message, header.line);
-            }
-        }
-    }
-
-    const records = try self.heap.createList(.map, document.rows.len - 1);
-    const result: Value = .{ .data = .{ .list = records } };
-    errdefer self.heap.release(result);
-    for (document.rows[1..]) |row| {
-        if (row.fields.len != header.fields.len) {
-            const message = try std.fmt.allocPrint(self.arena, "line {d} has {d} fields, but the header has {d}", .{ row.line, row.fields.len, header.fields.len });
-            return self.raiseCsv(span, message, row.line);
-        }
-        const record = try self.heap.createMap(.string, .string, false);
-        const value: Value = .{ .data = .{ .map = record } };
-        errdefer self.heap.release(value);
-        for (header.fields, row.fields) |name, field| {
-            const key = try self.heap.copyText(name);
-            const field_value = try self.heap.copyText(field);
-            const hash = try self.runNative(span, MapMethods.hashKey, .{key});
-            try self.heap.put(record, hash, key, field_value, self.equatable(span));
-        }
-        records.items.appendAssumeCapacity(value);
-    }
-    return result;
-}
-
-fn csvFormat(self: *Interpreter, span: Source.Span, rows: *const Heap.List, separator: []const u8) Error!Value {
-    const row_slices = try self.gpa.alloc([]const []const u8, rows.items.items.len);
-    defer self.gpa.free(row_slices);
-    var field_count: usize = 0;
-    for (rows.items.items) |row| field_count += row.data.list.items.items.len;
-    const fields = try self.gpa.alloc([]const u8, field_count);
-    defer self.gpa.free(fields);
-    var at: usize = 0;
-    for (rows.items.items, row_slices) |row, *out| {
-        const items = row.data.list.items.items;
-        out.* = fields[at .. at + items.len];
-        for (items) |item| {
-            fields[at] = item.data.string.bytes;
-            at += 1;
-        }
-    }
-    var out: std.Io.Writer.Allocating = .init(self.gpa);
-    defer out.deinit();
-    Csv.write(row_slices, separator, &out.writer) catch |err| switch (err) {
-        error.InvalidSeparator => return self.raiseCsvSeparator(span, separator),
-        error.WriteFailed => return error.OutOfMemory,
-    };
-    return .{ .data = .{ .string = try self.heap.createText(try out.toOwnedSlice()) } };
-}
-
-fn raiseCsvProblem(self: *Interpreter, span: Source.Span, problem: Csv.Problem) Error {
-    const message = if (problem.line) |line|
-        std.fmt.allocPrint(self.arena, "line {d}: {s}", .{ line, problem.message() }) catch return error.OutOfMemory
-    else
-        problem.message();
-    return self.raiseCsv(span, message, problem.line);
-}
-
-fn raiseCsvSeparator(self: *Interpreter, span: Source.Span, separator: []const u8) Error {
-    const message = std.fmt.allocPrint(self.arena, "a separator must be one character, not \"{s}\"", .{separator}) catch return error.OutOfMemory;
-    return self.raiseCsv(span, message, null);
-}
-
-fn raiseCsv(self: *Interpreter, span: Source.Span, message: []const u8, line: ?u32) Error {
-    self.task.state.raised_value = self.makeCsvError(message, line) catch return error.OutOfMemory;
-    return self.raiseTyped(span, "CsvError", message, "Correct the CSV text or use a one-character separator.");
-}
-
-fn makeCsvError(self: *Interpreter, message: []const u8, line: ?u32) RunError!Value {
-    const descriptor = self.structs.get(Resolver.preludeKey("CsvError")).?;
-    const fields = try self.gpa.alloc(Value, descriptor.fields.len);
-    @memset(fields, Value.nothing);
-    var owned = true;
-    errdefer if (owned) {
-        for (fields) |field| self.heap.release(field);
-        self.gpa.free(fields);
-    };
-    for (descriptor.fields, fields) |field, *value| {
-        if (std.mem.eql(u8, field.name, "message")) value.* = try self.heap.copyText(message);
-        if (std.mem.eql(u8, field.name, "line")) value.* = if (line) |number| .initInt(number) else .nothing;
-    }
-    // `createStruct` takes the fields over, even when it fails.
-    owned = false;
-    return .{ .data = .{ .struct_value = try self.heap.createStruct(descriptor, fields) } };
 }
 
 /// Section 15.10's HTTP boundary. The public functions in the prelude bind
