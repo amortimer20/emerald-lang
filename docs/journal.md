@@ -6525,4 +6525,4 @@ Files and Http stay in the interpreter, with `print`, `input`, `exit`, `sleep` a
 `Console.clear`: they release the task baton around blocking I/O, check for cancellation, lock file
 handles shared between tasks, and `File.with_open` runs a block. Slice 6 (the library and tasks)
 moves them with an engine interface for blocking and cancellation. `Interpreter.zig` is down to
-about 9,600 lines from 11,800 before slice 1b; benchmarks are 0.91 to 1.02 of part 1's.
+about 9,700 lines from 11,800 before slice 1b; benchmarks are 0.91 to 1.02 of part 1's.

@@ -219,7 +219,7 @@ would be too large to review.
   environment). `Native.State` holds the regex cache, the machine's zone, the zone database and
   its cache; the context carries `io`; `Engine.prelude_struct` gives the prelude's struct types;
   a native can raise an error value it built itself (`raiseValue`, for `CsvError`'s `line`).
-  `Interpreter.zig` is 9,600 lines. *Settled while building:* files and Http stay in the
+  `Interpreter.zig` is 9,700 lines. *Settled while building:* files and Http stay in the
   interpreter for now, as do `print`, `input`, `exit`, `sleep` and `Console.clear`. They release
   the task baton around blocking I/O, check for cancellation, lock file handles shared between
   tasks, and `File.with_open` runs a block, so they need an engine interface for blocking and
