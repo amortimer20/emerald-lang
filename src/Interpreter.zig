@@ -50,6 +50,11 @@ const strings = @import("runtime").strings;
 const unicode = @import("runtime").unicode;
 const call_arguments = @import("arguments.zig");
 const Scheduler = @import("runtime").Scheduler;
+const Native = @import("runtime").Native;
+const StringMethods = @import("runtime").StringMethods;
+const widen = Native.widen;
+const holdsNan = Native.holdsNan;
+const toFloat = Native.toFloat;
 
 const Interpreter = @This();
 
@@ -2510,16 +2515,6 @@ fn condition(self: *Interpreter, expression: *const Ast.Expression) Error!bool {
     };
 }
 
-/// Applies section 4.4's widening, which is the only implicit conversion in the
-/// language. Anything else is already a type error the checker reported.
-fn widen(value: Value, kind: Value.Kind) Value {
-    if (kind != .float) return value;
-    return switch (value.data) {
-        .int => |number| .initFloat(@floatFromInt(number)),
-        else => value,
-    };
-}
-
 fn declaredKind(annotation: Ast.TypeExpression) Value.Kind {
     if (annotation.key != null or annotation.set) return .map;
     if (annotation.task or annotation.channel) return .struct_value;
@@ -3414,6 +3409,90 @@ const EquatableDispatch = struct {
     }
 };
 
+/// The engine's side of a native call (`runtime/Native.zig`): callbacks that
+/// run the program's own `equals()`, `hash()` and `compare()`, reporting any
+/// failure of theirs at `span`, and the interpreter's source of randomness.
+const NativeEngine = struct {
+    interpreter: *Interpreter,
+    span: Source.Span,
+
+    const vtable: Native.Engine.VTable = .{
+        .custom_equals = engineEquals,
+        .custom_hash = engineHash,
+        .compare = engineCompare,
+        .random = engineRandom,
+    };
+
+    fn of(ptr: *anyopaque) *NativeEngine {
+        return @ptrCast(@alignCast(ptr));
+    }
+
+    fn engineEquals(ptr: *anyopaque, left: Value, right: Value) Native.Error!?bool {
+        const self = of(ptr);
+        return self.interpreter.equatable(self.span).customEquals(left, right);
+    }
+
+    fn engineHash(ptr: *anyopaque, value: Value) Native.Error!?u64 {
+        const self = of(ptr);
+        return self.interpreter.equatable(self.span).customHash(value);
+    }
+
+    fn engineCompare(ptr: *anyopaque, left: Value, right: Value) Native.Error!Value {
+        const self = of(ptr);
+        return self.interpreter.callOperator(self.span, "compare", left, right);
+    }
+
+    fn engineRandom(ptr: *anyopaque) std.Random {
+        return of(ptr).interpreter.random();
+    }
+};
+
+/// A context for one native call. `engine` must outlive it.
+fn nativeContext(self: *Interpreter, engine: *NativeEngine) Native.Context {
+    return .{
+        .gpa = self.gpa,
+        .arena = self.arena,
+        .heap = &self.heap,
+        .engine = .{ .ptr = engine, .vtable = &NativeEngine.vtable },
+    };
+}
+
+/// A native's result, with a failure it recorded raised at `span`. A
+/// `Raised` with no recorded failure came from the program's own code, which
+/// a callback ran and which has already reported.
+fn nativeResult(self: *Interpreter, span: Source.Span, ctx: *const Native.Context, result: Native.Error!Value) Error!Value {
+    return result catch |err| {
+        if (err == error.Raised) {
+            if (ctx.failure) |failure| return self.raiseFailure(span, failure);
+        }
+        return err;
+    };
+}
+
+/// Runs a runtime native, `function(ctx, arguments...)`, raising any failure
+/// it records at `span`.
+fn runNative(self: *Interpreter, span: Source.Span, comptime function: anytype, arguments: anytype) Error!NativePayload(@TypeOf(function)) {
+    var engine: NativeEngine = .{ .interpreter = self, .span = span };
+    var ctx = self.nativeContext(&engine);
+    return @call(.auto, function, .{&ctx} ++ arguments) catch |err| {
+        if (err == error.Raised) {
+            if (ctx.failure) |failure| return self.raiseFailure(span, failure);
+        }
+        return err;
+    };
+}
+
+fn NativePayload(comptime Function: type) type {
+    return @typeInfo(@typeInfo(Function).@"fn".return_type.?).error_union.payload;
+}
+
+fn raiseFailure(self: *Interpreter, span: Source.Span, failure: Native.Failure) Error {
+    if (failure.type_name.len == 0) return self.raise(span, failure.message, failure.help);
+    const key = try std.fmt.allocPrint(self.arena, Resolver.prelude_namespace ++ ".{s}", .{failure.type_name});
+    self.task.state.raised_value = try self.makeError(key, failure.message);
+    return self.raiseTyped(span, failure.type_name, failure.message, failure.help);
+}
+
 /// The `EquatableDispatch` for `span`, built fresh at each call site rather
 /// than threaded as a field: every place `Value.equals`/`Value.hash` is
 /// reached from already has its own most-relevant span in scope.
@@ -3484,25 +3563,6 @@ fn hashKey(self: *Interpreter, span: Source.Span, key: Value) Error!u64 {
         "`nan?` is never equal to anything, including itself, so nothing stored under it could be found again.",
     );
     return Value.hash(self.gpa, key, self.equatable(span));
-}
-
-fn holdsNan(value: Value) bool {
-    return switch (value.data) {
-        .float => |number| std.math.isNan(number),
-        .tuple => |tuple| blk: {
-            for (tuple.items) |item| {
-                if (holdsNan(item)) break :blk true;
-            }
-            break :blk false;
-        },
-        .struct_value => |instance| blk: {
-            for (instance.fields) |field| {
-                if (holdsNan(field)) break :blk true;
-            }
-            break :blk false;
-        },
-        else => false,
-    };
 }
 
 fn evaluateList(self: *Interpreter, expression: *const Ast.Expression, elements: []const *const Ast.Expression) Error!Value {
@@ -5725,8 +5785,8 @@ const CompiledRegex = struct {
 /// and its options first. Null for a name that is not one of them, such as a
 /// method the prelude writes in Emerald.
 fn callRegex(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Error!?Value {
-    const Native = enum { escape, _problem, @"_whole?", _find, _replace, _split, _splice };
-    const native = std.meta.stringToEnum(Native, name) orelse return null;
+    const Entry = enum { escape, _problem, @"_whole?", _find, _replace, _split, _splice };
+    const native = std.meta.stringToEnum(Entry, name) orelse return null;
     const values = try self.evaluateArguments(call.arguments);
     defer {
         for (values) |value| self.heap.release(value);
@@ -5762,8 +5822,8 @@ fn callRegex(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Er
 }
 
 fn callJson(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Error!?Value {
-    const Native = enum { _parse, _problem, _write, _key_path, encode, decode };
-    const native = std.meta.stringToEnum(Native, name) orelse return null;
+    const Entry = enum { _parse, _problem, _write, _key_path, encode, decode };
+    const native = std.meta.stringToEnum(Entry, name) orelse return null;
     if (native == .encode) {
         const bound = try self.evaluateBound(call, &.{ "value", "pretty" }, &.{ false, true });
         defer self.gpa.free(bound.values);
@@ -5827,8 +5887,8 @@ fn callJson(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Err
 /// turns parser failures into the ordinary, typed `CsvError` values programs
 /// can catch.
 fn callCsv(self: *Interpreter, span: Source.Span, name: []const u8, call: Ast.Expression.Call) Error!?Value {
-    const Native = enum { _parse, _parse_records, _format, encode, decode };
-    const native = std.meta.stringToEnum(Native, name) orelse return null;
+    const Entry = enum { _parse, _parse_records, _format, encode, decode };
+    const native = std.meta.stringToEnum(Entry, name) orelse return null;
     if (native == .encode) return @as(?Value, try self.csvEncode(span, call));
     if (native == .decode) return @as(?Value, try self.csvDecode(span, call));
     const parameter_names: []const []const u8 = switch (native) {
@@ -6209,8 +6269,8 @@ fn makeCsvError(self: *Interpreter, message: []const u8, line: ?u32) RunError!Va
 /// their beginner-facing defaults; these few private helpers own transport,
 /// conversion to Emerald values, and the error vocabulary.
 fn callHttp(self: *Interpreter, span: Source.Span, name: []const u8, call: Ast.Expression.Call) Error!?Value {
-    const Native = enum { _request, _body_request, _header, _text, _json, encode_component };
-    const native = std.meta.stringToEnum(Native, name) orelse return null;
+    const Entry = enum { _request, _body_request, _header, _text, _json, encode_component };
+    const native = std.meta.stringToEnum(Entry, name) orelse return null;
     switch (native) {
         .encode_component => {
             const values = try self.evaluateArguments(call.arguments);
@@ -9624,7 +9684,7 @@ fn callReadingMethod(
 
     // `empty?` and `contains?` belong to strings, lists, and sets alike.
     if (receiver.data == .string) {
-        return self.stringMethod(expression.span, receiver.data.string.bytes, member.name, arguments);
+        return self.runNative(expression.span, StringMethods.stringMethod, .{ receiver.data.string.bytes, member.name, arguments });
     }
     if (receiver.data == .range) {
         return self.rangeMethod(expression.span, receiver.data.range, member.name, arguments);
@@ -10557,7 +10617,7 @@ fn callValueMethod(self: *Interpreter, span: Source.Span, call: Ast.Expression.C
     }
 
     if (receiver.data == .range) return self.rangeMethod(span, receiver.data.range, member.name, arguments);
-    if (receiver.data == .string) return self.stringMethod(span, receiver.data.string.bytes, member.name, arguments);
+    if (receiver.data == .string) return self.runNative(span, StringMethods.stringMethod, .{ receiver.data.string.bytes, member.name, arguments });
     if (receiver.data == .bytes) return self.bytesMethod(span, receiver.data.bytes.bytes, member.name);
     if (receiver.data == .int and !std.mem.eql(u8, member.name, "to_string")) {
         return self.intMethod(span, receiver.data.int, member.name, arguments);
@@ -11136,198 +11196,6 @@ fn groupFloatText(self: *Interpreter, text: []u8) Error![]u8 {
     return result;
 }
 
-/// Section 9.2's string methods, on the receiver's bytes. The checker has
-/// proved the method exists and the arguments fit it.
-fn stringMethod(self: *Interpreter, span: Source.Span, bytes: []const u8, name: []const u8, arguments: []const Value) Error!Value {
-    const Method = enum {
-        @"empty?",
-        @"blank?",
-        @"contains?",
-        @"starts_with?",
-        @"ends_with?",
-        trim,
-        trim_start,
-        trim_end,
-        upper,
-        lower,
-        capitalize,
-        reverse,
-        repeat,
-        replace,
-        insert_at,
-        substring,
-        remove_prefix,
-        remove_suffix,
-        collapse_repeats,
-        pad_start,
-        pad_end,
-        pad_center,
-        split,
-        partition,
-        lines,
-        words,
-        @"letter?",
-        @"digit?",
-        @"whitespace?",
-        @"upper?",
-        @"lower?",
-        chars,
-        code_points,
-        bytes,
-        index_of,
-        to_int,
-        to_int_or,
-        to_int_maybe,
-        to_float,
-        to_float_or,
-        to_float_maybe,
-    };
-    const gpa = self.gpa;
-    if (std.mem.eql(u8, name, "to_bytes")) return self.heap.copyBytes(bytes);
-    return switch (std.meta.stringToEnum(Method, name).?) {
-        .@"empty?" => .initBool(bytes.len == 0),
-        .@"blank?" => .initBool(strings.isBlank(bytes)),
-        .@"letter?" => .initBool(strings.everyCharacter(bytes, .letter)),
-        .@"digit?" => .initBool(strings.everyCharacter(bytes, .digit)),
-        .@"whitespace?" => .initBool(strings.everyCharacter(bytes, .whitespace)),
-        .@"upper?" => .initBool(strings.everyCharacter(bytes, .upper)),
-        .@"lower?" => .initBool(strings.everyCharacter(bytes, .lower)),
-        .@"contains?" => .initBool(try strings.contains(gpa, bytes, arguments[0].data.string.bytes)),
-        .@"starts_with?" => .initBool(try strings.startsWith(gpa, bytes, arguments[0].data.string.bytes)),
-        .@"ends_with?" => .initBool(try strings.endsWith(gpa, bytes, arguments[0].data.string.bytes)),
-        .trim => self.heap.copyText(strings.trim(bytes, .both)),
-        .trim_start => self.heap.copyText(strings.trim(bytes, .start)),
-        .trim_end => self.heap.copyText(strings.trim(bytes, .end)),
-        .upper => self.ownedText(try unicode.mapCase(gpa, bytes, .upper)),
-        .lower => self.ownedText(try unicode.mapCase(gpa, bytes, .lower)),
-        .capitalize => self.ownedText(try strings.capitalize(gpa, bytes)),
-        .reverse => self.ownedText(try strings.reverse(gpa, bytes)),
-        .repeat => blk: {
-            const times = arguments[0].data.int;
-            if (times < 0) return self.raiseFmt(
-                span,
-                "a String cannot be repeated {d} times",
-                .{times},
-                "Repeat it 0 or more times; 0 gives an empty String.",
-            );
-            // A result too large to address is as unrepresentable as one too
-            // large to allocate.
-            const size = std.math.mul(usize, bytes.len, @intCast(times)) catch return error.OutOfMemory;
-            const result = try gpa.alloc(u8, size);
-            for (0..@intCast(times)) |copy| @memcpy(result[copy * bytes.len ..][0..bytes.len], bytes);
-            break :blk self.ownedText(result);
-        },
-        .replace => blk: {
-            const old = arguments[0].data.string.bytes;
-            if (old.len == 0) return self.raise(
-                span,
-                "`replace` needs something to replace, but this is an empty String",
-                "Pass the text to find as the first argument.",
-            );
-            break :blk self.ownedText(try strings.replace(gpa, bytes, old, arguments[1].data.string.bytes));
-        },
-        .insert_at => blk: {
-            const index = arguments[0].data.int;
-            const result = strings.insertAt(gpa, bytes, index, arguments[1].data.string.bytes) catch |err| {
-                if (err == error.NegativeIndex or err == error.IndexPastEnd) return self.raiseInsert(span, bytes, index, @errorCast(err));
-                return error.OutOfMemory;
-            };
-            break :blk self.ownedText(result);
-        },
-        .substring => blk: {
-            const start = arguments[0].data.int;
-            const count: ?i64 = if (arguments.len == 2) arguments[1].data.int else null;
-            const slice = strings.substring(bytes, start, count) catch |err| return self.raiseSubstring(span, bytes, start, count, err);
-            break :blk self.heap.copyText(slice);
-        },
-        .remove_prefix => self.heap.copyText(try strings.removePrefix(gpa, bytes, arguments[0].data.string.bytes)),
-        .remove_suffix => self.heap.copyText(try strings.removeSuffix(gpa, bytes, arguments[0].data.string.bytes)),
-        .collapse_repeats => self.ownedText(try strings.collapseRepeats(gpa, bytes)),
-        .pad_start, .pad_end, .pad_center => blk: {
-            const width = arguments[0].data.int;
-            const fill = if (arguments.len == 2) arguments[1].data.string.bytes else " ";
-            const side: strings.PadSide = switch (std.meta.stringToEnum(Method, name).?) {
-                .pad_start => .start,
-                .pad_end => .end,
-                .pad_center => .center,
-                else => unreachable,
-            };
-            const result = strings.pad(gpa, bytes, width, fill, side) catch |err| {
-                if (err == error.NegativeWidth or err == error.EmptyFill or err == error.MultipleCharacterFill) return self.raisePadding(span, width, fill, @errorCast(err));
-                return error.OutOfMemory;
-            };
-            break :blk self.ownedText(result);
-        },
-        .split => blk: {
-            const separator = arguments[0].data.string.bytes;
-            if (separator.len == 0) return self.raise(
-                span,
-                "`split` needs a separator, but this is an empty String",
-                "Use `chars()` to split a String into its characters.",
-            );
-            break :blk self.stringList(try strings.split(gpa, bytes, separator));
-        },
-        .partition => blk: {
-            const separator = arguments[0].data.string.bytes;
-            if (separator.len == 0) return self.raise(
-                span,
-                "`partition` needs a separator, but this is an empty String",
-                "Pass the text to find as the separator.",
-            );
-            const parts = try strings.partition(gpa, bytes, separator);
-            break :blk self.stringTuple(parts);
-        },
-        .lines => self.stringList(try strings.lines(gpa, bytes)),
-        .words => self.stringList(try strings.words(gpa, bytes)),
-        .chars => blk: {
-            const pieces = try strings.characters(gpa, bytes);
-            defer gpa.free(pieces);
-            const list = try self.heap.createList(.string, pieces.len);
-            const result: Value = .{ .data = .{ .list = list } };
-            errdefer self.heap.release(result);
-            for (pieces) |piece| list.items.appendAssumeCapacity(try self.heap.copyText(piece));
-            break :blk result;
-        },
-        // These deliberately expose the exact stored representation rather
-        // than graphemes. `chars()` remains the beginner-facing operation.
-        .code_points => self.stringCodePoints(bytes),
-        .bytes => self.stringBytes(bytes),
-        // Section 9.2: the answer counts characters, so it indexes directly.
-        .index_of => blk: {
-            const found = try strings.indexOf(gpa, bytes, arguments[0].data.string.bytes);
-            break :blk if (found) |index| Value.initInt(index) else Value.nothing;
-        },
-        // Section 4.4's three forms differ only in what they do when the text
-        // does not parse: raise, use the fallback, or report absence.
-        .to_int => blk: {
-            const parsed = strings.parseInt(bytes);
-            if (parsed == .value) break :blk .initInt(parsed.value);
-            break :blk self.raiseConversion(span, bytes, "Int", parsed == .out_of_range);
-        },
-        .to_int_or => blk: {
-            const parsed = strings.parseInt(bytes);
-            break :blk if (parsed == .value) Value.initInt(parsed.value) else arguments[0];
-        },
-        .to_int_maybe => blk: {
-            const parsed = strings.parseInt(bytes);
-            break :blk if (parsed == .value) Value.initInt(parsed.value) else Value.nothing;
-        },
-        .to_float => blk: {
-            const parsed = strings.parseFloat(bytes);
-            if (parsed == .value) break :blk .initFloat(parsed.value);
-            break :blk self.raiseConversion(span, bytes, "Float", parsed == .out_of_range);
-        },
-        .to_float_or => blk: {
-            const parsed = strings.parseFloat(bytes);
-            break :blk if (parsed == .value) Value.initFloat(parsed.value) else widen(arguments[0], .float);
-        },
-        .to_float_maybe => blk: {
-            const parsed = strings.parseFloat(bytes);
-            break :blk if (parsed == .value) Value.initFloat(parsed.value) else Value.nothing;
-        },
-    };
-}
-
 fn bytesMethod(self: *Interpreter, span: Source.Span, bytes: []const u8, name: []const u8) Error!Value {
     if (std.mem.eql(u8, name, "to_string_maybe")) {
         return if (std.unicode.utf8ValidateSlice(bytes)) self.heap.copyText(bytes) else Value.nothing;
@@ -11382,144 +11250,8 @@ fn hexValue(character: []const u8) ?u8 {
     };
 }
 
-/// Section 9.1's advanced conversions. A String is always valid UTF-8, so
-/// each call to `unicode.decode` is safe. Code points retain the original
-/// spelling: a decomposed character therefore gives its separate scalars.
-fn stringCodePoints(self: *Interpreter, bytes: []const u8) Error!Value {
-    const list = try self.heap.createList(.int, bytes.len);
-    const result: Value = .{ .data = .{ .list = list } };
-    errdefer self.heap.release(result);
-
-    var index: usize = 0;
-    while (index < bytes.len) {
-        const point, const length = unicode.decode(bytes, index);
-        list.items.appendAssumeCapacity(.initInt(point));
-        index += length;
-    }
-    return result;
-}
-
-/// UTF-8 bytes are represented as non-negative Ints until Emerald gains a
-/// purpose-built binary-data type. This keeps `bytes()` honest without making
-/// beginners learn an implementation-only `Byte` type.
-fn stringBytes(self: *Interpreter, bytes: []const u8) Error!Value {
-    const list = try self.heap.createList(.int, bytes.len);
-    const result: Value = .{ .data = .{ .list = list } };
-    errdefer self.heap.release(result);
-    for (bytes) |byte| list.items.appendAssumeCapacity(.initInt(byte));
-    return result;
-}
-
 fn ownedText(self: *Interpreter, bytes: []u8) Error!Value {
     return .{ .data = .{ .string = try self.heap.createText(bytes) } };
-}
-
-/// A list of strings from pieces the caller allocated, which the strings take.
-fn stringList(self: *Interpreter, pieces: [][]u8) Error!Value {
-    defer self.gpa.free(pieces);
-    var taken: usize = 0;
-    errdefer for (pieces[taken..]) |piece| self.gpa.free(piece);
-
-    const list = try self.heap.createList(.string, pieces.len);
-    const result: Value = .{ .data = .{ .list = list } };
-    errdefer self.heap.release(result);
-    for (pieces) |piece| {
-        taken += 1;
-        list.items.appendAssumeCapacity(.{ .data = .{ .string = try self.heap.createText(piece) } });
-    }
-    return result;
-}
-
-/// A three-part String tuple. The pieces borrow their receiver until copied.
-fn stringTuple(self: *Interpreter, parts: struct { []const u8, []const u8, []const u8 }) Error!Value {
-    const items = try self.gpa.alloc(Value, 3);
-    const kinds = self.gpa.alloc(Value.Kind, 3) catch |err| {
-        self.gpa.free(items);
-        return err;
-    };
-    kinds[0] = .string;
-    kinds[1] = .string;
-    kinds[2] = .string;
-    var built: usize = 0;
-    var owned = true;
-    errdefer if (owned) {
-        for (items[0..built]) |item| self.heap.release(item);
-        self.gpa.free(items);
-        self.gpa.free(kinds);
-    };
-    inline for (parts) |part| {
-        items[built] = try self.heap.copyText(part);
-        built += 1;
-    }
-    // `createTuple` takes everything over, even when it fails.
-    owned = false;
-    return .{ .data = .{ .tuple = try self.heap.createTuple(items, kinds) } };
-}
-
-/// Section 9.4's strict parsing, which raises a conversion error. Catching it
-/// arrives with section 13; until then `to_int_or` is the way to recover.
-fn raiseConversion(self: *Interpreter, span: Source.Span, bytes: []const u8, comptime type_name: []const u8, out_of_range: bool) Error {
-    const excerpt = if (bytes.len > 40) "the text" else try std.fmt.allocPrint(self.arena, "\"{s}\"", .{bytes});
-    if (out_of_range) return self.raiseFmt(
-        span,
-        "{s} is outside the range of " ++ type_name,
-        .{excerpt},
-        if (std.mem.eql(u8, type_name, "Int"))
-            "`Int` holds whole numbers from -9223372036854775808 through 9223372036854775807. `to_int_or(0)` gives a fallback instead of an error."
-        else
-            "The number is too large for a Float. `to_float_or(0.0)` gives a fallback instead of an error.",
-    );
-    return self.raiseFmt(
-        span,
-        "{s} is not " ++ (if (std.mem.eql(u8, type_name, "Int")) "a whole number" else "a number"),
-        .{excerpt},
-        if (std.mem.eql(u8, type_name, "Int"))
-            "Only digits, with an optional sign and surrounding spaces, convert to an Int. `to_int_or(0)` gives a fallback instead of an error."
-        else
-            "Only a number such as `2.5` or `3`, with an optional sign and surrounding spaces, converts to a Float. `to_float_or(0.0)` gives a fallback instead of an error.",
-    );
-}
-
-/// Section 9.1: substring bounds are errors rather than being clamped.
-fn raiseSubstring(self: *Interpreter, span: Source.Span, bytes: []const u8, start: i64, count: ?i64, err: strings.SubstringError) Error {
-    const total = unicode.graphemeCount(bytes);
-    return switch (err) {
-        error.NegativeStart => self.raiseFmt(span, "a substring cannot start at {d}", .{start}, "Start at 0 or later."),
-        error.NegativeCount => self.raiseFmt(span, "a substring cannot have {d} characters", .{count.?}, "Ask for 0 or more characters."),
-        error.StartPastEnd => self.raiseFmt(
-            span,
-            "a substring cannot start at {d} in a String of {d} character{s}",
-            .{ start, total, if (total == 1) "" else "s" },
-            "Start at most at the String's `count`, which gives an empty String.",
-        ),
-        error.CountPastEnd => self.raiseFmt(
-            span,
-            "a substring of {d} character{s} from {d} runs past the end of a String of {d}",
-            .{ count.?, if (count.? == 1) "" else "s", start, total },
-            "Ask for fewer characters, or leave the count out to take the rest of the String.",
-        ),
-    };
-}
-
-fn raiseInsert(self: *Interpreter, span: Source.Span, bytes: []const u8, index: i64, err: strings.InsertError) Error {
-    const total = unicode.graphemeCount(bytes);
-    return switch (err) {
-        error.NegativeIndex => self.raiseFmt(span, "a String insertion cannot use index {d}", .{index}, "Insert at 0 or later."),
-        error.IndexPastEnd => self.raiseFmt(
-            span,
-            "cannot insert at index {d} in a String of {d} character{s}",
-            .{ index, total, if (total == 1) "" else "s" },
-            "Insert at 0 through the String's `count`; inserting at `count` adds to the end.",
-        ),
-    };
-}
-
-fn raisePadding(self: *Interpreter, span: Source.Span, width: i64, fill: []const u8, err: strings.PadError) Error {
-    return switch (err) {
-        error.NegativeWidth => self.raiseFmt(span, "a padded String cannot have width {d}", .{width}, "Choose a width of 0 or more characters."),
-        error.EmptyFill => self.raise(span, "padding needs a fill character, but this is an empty String", "Pass one character, such as `\"-\"` or `\" \"`."),
-        error.MultipleCharacterFill => self.raiseFmt(span, "padding needs one fill character, but \"{s}\" has {d}", .{ fill, unicode.graphemeCount(fill) }, "Pass exactly one character, such as `\"-\"` or `\" \"`."),
-    };
 }
 
 /// Runs one mutating list method. Arguments are owned: one that is stored is
@@ -11744,16 +11476,6 @@ fn raiseTooMuchRecursion(self: *Interpreter, span: Source.Span, name: []const u8
         else
             "These calls nest too deeply for the stack available. Check that the recursion has a case that stops it.",
     );
-}
-
-/// Callers check `isNumber` first, so a `Bool` never reaches here.
-fn toFloat(value: Value) f64 {
-    return switch (value.data) {
-        .int => |number| @floatFromInt(number),
-        .float => |number| number,
-        .range => unreachable,
-        .nothing, .bool, .string, .bytes, .list, .tuple, .map, .closure, .struct_value => unreachable,
-    };
 }
 
 test "session origin lookup finds ordered entries and excludes gaps and other files" {

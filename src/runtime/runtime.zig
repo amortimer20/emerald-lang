@@ -17,6 +17,8 @@ pub const Http = @import("Http.zig");
 pub const TimeZone = @import("TimeZone.zig");
 pub const Scheduler = @import("Scheduler.zig");
 pub const Module = @import("Module.zig");
+pub const Native = @import("Native.zig");
+pub const StringMethods = @import("StringMethods.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());
