@@ -6595,3 +6595,21 @@ expected kind.
 
 `compiled.txt` grows from 27 cases to 43, and still none that builds behaves differently. Most of
 the rest stop at lists, which 3b compiles.
+
+## 2026-11-07: Compiler slice 3b: lists
+
+Slice 3a merged as PR #76. 3b compiles lists. First, the methods that change a list moved from
+`Interpreter.mutateList` into `ListMethods.mutate` with `compactList`, so a compiled program
+changes a list with the interpreter's code and messages; the suite passed on the move alone.
+
+A compiled list is the runtime's `Heap.List`, held as strings are. A change, whether `append` or
+`items[i] = v`, goes through the slot that holds the list, and the runtime makes that slot the
+list's only holder first, copying it if anything else shares it, exactly as `Heap.unique` does for
+the interpreter. A test program checked the value semantics against `emerald run`: a copy taken
+before a change, a list passed to a function that changes its own, a loop that appends to the list
+it walks. The same temporary count of live heap objects after 1,000 iterations of building,
+copying, changing and passing lists showed only the global list and one literal left.
+
+`compiled.txt` grows from 43 cases to 55, and still none that builds behaves differently. One
+small surprise: the command-line test from slice 2 that shows the build refusing a program used a
+list, which now compiles, so it uses a dictionary until 3c.
