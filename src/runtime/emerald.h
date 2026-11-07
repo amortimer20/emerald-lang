@@ -91,8 +91,9 @@ void em_builder_bool(em_builder *builder, bool value);
 em_text *em_builder_finish(em_builder *builder);
 
 /* A value crossing to a native, tagged in the runtime's `Value.Kind` order. */
-enum { EM_KIND_NOTHING, EM_KIND_BOOL, EM_KIND_INT, EM_KIND_FLOAT, EM_KIND_STRING, EM_KIND_BYTES, EM_KIND_RANGE, EM_KIND_LIST };
+enum { EM_KIND_NOTHING, EM_KIND_BOOL, EM_KIND_INT, EM_KIND_FLOAT, EM_KIND_STRING, EM_KIND_BYTES, EM_KIND_RANGE, EM_KIND_LIST, EM_KIND_TUPLE };
 typedef struct em_list em_list;
+typedef struct em_tuple em_tuple;
 typedef struct {
     uint8_t kind;
     union {
@@ -101,6 +102,7 @@ typedef struct {
         bool boolean;
         em_text *text;
         em_list *list;
+        em_tuple *tuple;
     } as;
 } em_value;
 
@@ -118,5 +120,14 @@ int em_list_mutate(em_list **slot, int method, const em_value *arguments, size_t
 void em_write_value(em_value value);
 void em_builder_value(em_builder *builder, em_value value);
 bool em_equal_values(em_value left, em_value right);
+
+/* Optionals and tuples. An optional is an `em_value` whose kind is
+ * EM_KIND_NOTHING when it is absent; a zeroed one is absent. */
+void em_retain_value(em_value value);
+void em_release_value(em_value value);
+void em_retain_tuple(em_tuple *tuple);
+void em_release_tuple(em_tuple *tuple);
+em_tuple *em_tuple_new(const em_value *items, size_t count);
+em_value em_tuple_get(em_tuple *tuple, size_t position);
 
 #endif
