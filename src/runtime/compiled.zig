@@ -393,7 +393,7 @@ export fn em_native(family: c_int, method: c_int, receiver: EmValue, arguments: 
     for (arguments[0..count], values[0..count]) |argument, *value| value.* = fromC(argument);
     var answer: Value = undefined;
     const status = call(site, Natives.call, .{ id, fromC(receiver), values[0..count] }, &answer);
-    if (status == 0) result.* = toC(Native.widen(answer, @enumFromInt(expected)));
+    if (status == 0) result.* = toC(Native.widen(answer, @fromBackingInt(@intCast(expected))));
     return status;
 }
 
