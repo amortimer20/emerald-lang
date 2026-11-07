@@ -138,8 +138,13 @@ implemented and Claude reviewed.
   may be too high, an error unwinding can skip a release (`deinit` frees what is left), and
   closures make cycles, which the collector handles. A native pairs `evaluateBound` with
   `releaseBound`. Debug tests run under the testing allocator, so a leak fails them.
-- **Native routing** in `Interpreter.evaluateCall` is a chain of string-key comparisons, and the
-  order matters.
+- **Natives in the runtime:** a native that runs on values lives in `src/runtime/`, takes a
+  `Native.Context` and records a failure there (`ctx.raise`, `ctx.raiseFmt`, `ctx.raiseTyped`)
+  instead of raising with a span; the interpreter calls it through `runNative`, which raises the
+  failure at the call's span. Methods on strings, bytes, numbers, ranges, lists and dictionaries
+  are ids in `runtime/Natives.zig`; a new one gets a member in its family's `Method` enum.
+- **Native routing** for the prelude's natives is still a chain of string-key comparisons in
+  `Interpreter.evaluateCall`, and the order matters.
 - **Generated files** are never edited by hand: `src/runtime/unicode/tables.zig` (from
   `tools/unicode/`), `src/runtime/tzdata/` (from `tools/update-tzdata.py`), and the prelude's syntax
   tree (from `tools/prelude_ast.zig`).

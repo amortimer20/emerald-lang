@@ -196,6 +196,20 @@ would be too large to review.
   `session_entry` fields). Slice 3, which gives compiled programs closures and structs on this
   heap, replaces the opaque `lambda` with a variant per engine so no engine reads another's
   code pointer, and decides what of the rest a compiled program needs.
+  1b is two PRs. **1b part 1** (`claude/runtime-natives`): `runtime/Native.zig` (the
+  `Context` a native runs in, its recorded `Failure`, and `Engine` callbacks for a type's own
+  `equals()`, `hash()` and `compare()` and for randomness), the methods on strings, bytes,
+  `Int`, `Float`, ranges, lists and dictionaries with their messages (about 1,300 lines out of
+  `Interpreter.zig`), and `runtime/Natives.zig`, the table of ids (`Natives.Id`, `lookup`,
+  `call`). A failure that names an argument keeps its location: the interpreter passes the span
+  the old code reported at. Benchmarks 0.87 to 1.05 of 1a's (noise, slightly faster).
+  **1b part 2** moves the prelude's natives (Regex, Json and Csv without a target type, Base64,
+  Digest, Math, time zones, Console, files, Http, the clocks and the environment). They need
+  runtime state the interpreter owns today, so it adds a `Native.State` (the regex cache, the
+  I/O handle, the terminal's settings) and an `Engine` callback for the prelude's struct types,
+  such as `Regex::Match`. Natives that run blocks, change their receiver in place, decode to a
+  type the checker named, or start tasks stay in the interpreter until the slices that compile
+  those features (3, 5 and 6).
 - **1c, the remaining messages.** The runtime errors the interpreter raises for operators,
   indexing, overflow, optionals and conversions get their text from runtime functions both
   engines call.

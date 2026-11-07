@@ -6482,3 +6482,25 @@ a module's own directory, so a runtime file that reached for the front end would
 long as `runtime_module` is given no imports; `build.zig` says so where it is made. `runtime-test` runs the moved files' 149 tests; paths were updated in tools, CI, the
 generators and the living docs (not in the journal or the review's snapshots). No behaviour
 change: the whole suite passes and the benchmarks are within noise.
+
+## 2026-11-06: Compiler slice 1b, part 1: value methods as runtime natives
+
+1a merged as PR #71 (the user gave standing permission to merge Claude's PRs once CI is green).
+1b began with the methods that already took evaluated values: those on strings, bytes, `Int`,
+`Float`, ranges, lists, and dictionaries and sets. They and their helpers and messages moved to
+`src/runtime/` (`StringMethods`, `BytesMethods`, `NumberMethods`, `RangeMethods`, `ListMethods`,
+`MapMethods`), about 1,300 lines out of `Interpreter.zig`, by a script that rewrote `self.raise(span,
+...)` into `ctx.raise(...)` and the interpreter's calls into `runNative(span, f, .{...})`.
+
+`runtime/Native.zig` is the contract: a `Context` with the allocators and heap, a recorded
+`Failure` (type, message, help) that the engine raises at the call's location, and `Engine`
+callbacks for what only the engine can do (run a struct's own `equals()`, `hash()` or `compare()`,
+give the program's random source). `runNative` builds the context, calls the native, and raises
+its failure; a `Raised` with no recorded failure came from the program's own code in a callback
+and has already reported. `runtime/Natives.zig` gives every method an id (`Natives.Id`, a family
+and that family's `Method` enum) with `lookup` and `call`; the dictionary and `Bytes` methods,
+which compared names as strings, now switch on the enum.
+
+The prelude's natives (Regex, Json, Csv, Http, files, Console, time zones) are 1b part 2: they
+need runtime state the interpreter holds (the regex cache, I/O, terminal settings) and the
+prelude's struct types. Benchmarks are unchanged or slightly faster.
