@@ -311,6 +311,18 @@ type; lowering records each list variable's from its declaration, for element as
 instructions that read elements carry theirs. Ranges outside a `for`, and `for` over a string,
 are left for 3c. `compiled.txt` grows to 55 cases, still with none that builds and behaves
 differently; most of the rest wait on dictionaries, optionals, tuples and structs.
+*Re-split:* optionals came first, since dictionary lookups and many methods give them, so 3c is
+optionals and tuples, **3d** dictionaries, sets and ranges, **3e** structs and classes, and **3f**
+closures. 3c done on `claude/compiler-optionals`: an optional is the runtime's tagged `em_value`,
+absent when its kind is `nothing`, counted for whatever heap value it holds; a tuple is the
+runtime's `Heap.Tuple`. Reading a variable the checker has narrowed (section 4.5) unwraps it.
+Wrapping a value into an optional needs the payload's type, since an `Int` stored in a `Float?`
+is widened; lowering records it from declarations, parameters and results, and the checker's
+types for list and tuple items, and refuses to guess where it is unknown. `or` evaluates its
+default only when the value is absent. Tuples get literals, `.0` members, destructuring
+declarations and assignment, and `for` over a list of tuples. `==` on optionals, lists and tuples
+compares them as values. `compiled.txt` grows to 63 cases, still none that builds and behaves
+differently.
 
 **Slice 4: errors.** `raise`, `try`, `catch`, error types, and the runtime errors with the
 shared messages; the `runtime-errors/` cases join the list.
