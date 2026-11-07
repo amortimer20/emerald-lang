@@ -202,7 +202,10 @@ would be too large to review.
   `Int`, `Float`, ranges, lists and dictionaries with their messages (about 1,300 lines out of
   `Interpreter.zig`), and `runtime/Natives.zig`, the table of ids (`Natives.Id`, `lookup`,
   `call`). A failure that names an argument keeps its location: the interpreter passes the span
-  the old code reported at. Benchmarks 0.87 to 1.05 of 1a's (noise, slightly faster).
+  the old code reported at (for a dictionary method, its first argument's). That choice lives at
+  the interpreter's call site, so before a compiled program calls these natives (slice 3) a
+  `Failure` should say which argument it is about, and both engines report there. Benchmarks
+  0.87 to 1.05 of 1a's (noise, slightly faster).
   **1b part 2** moves the prelude's natives (Regex, Json and Csv without a target type, Base64,
   Digest, Math, time zones, Console, files, Http, the clocks and the environment). They need
   runtime state the interpreter owns today, so it adds a `Native.State` (the regex cache, the
