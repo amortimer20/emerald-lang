@@ -34,6 +34,23 @@ enum {
     EM_POWER
 };
 
+/* Section 5.3's `//` and `%` for a divisor the caller has checked is not
+ * zero: the quotient rounds toward negative infinity, and the remainder takes
+ * the divisor's sign. Every value is divisible by -1, and `%` by it is zero,
+ * which C's `%` leaves undefined for the minimum. */
+static inline int64_t em_floor_divide(int64_t left, int64_t right) {
+    int64_t quotient = left / right;
+    if (left % right != 0 && ((left < 0) != (right < 0))) quotient -= 1;
+    return quotient;
+}
+
+static inline int64_t em_remainder(int64_t left, int64_t right) {
+    if (right == -1) return 0;
+    int64_t remainder = left % right;
+    if (remainder != 0 && ((remainder < 0) != (right < 0))) remainder += right;
+    return remainder;
+}
+
 void em_start(void);
 int em_finish(int status);
 void em_trace(const em_frame *frame);
