@@ -6526,3 +6526,27 @@ Files and Http stay in the interpreter, with `print`, `input`, `exit`, `sleep` a
 handles shared between tasks, and `File.with_open` runs a block. Slice 6 (the library and tasks)
 moves them with an engine interface for blocking and cancellation. `Interpreter.zig` is down to
 about 9,700 lines from 11,800 before slice 1b; benchmarks are 0.91 to 1.02 of part 1's.
+
+## 2026-11-07: Compiler slice 1c: the operators' messages in the runtime
+
+1b part 2 merged as PR #73. It was merged with `gh pr merge --auto` while its checks were still
+running: `main` requires no checks, so GitHub merged at once. CI on `main` then passed every job,
+and auto-merge is no longer used here.
+
+1c moved the last messages the interpreter wrote for itself into `runtime/Operations.zig`: `Int`
+arithmetic with its overflow and power rules, `Float` arithmetic, division by zero, negation,
+`not`, comparison, indexing and slicing a list, String or Bytes, a missing dictionary entry, a
+Range too large to count, an unassigned name, and too much recursion. `Bytes.from_list`'s check
+went to `BytesMethods`. The front end's `Ast.BinaryOperator` became the runtime's
+`Operations.Arithmetic`, which removed a second copy of the operator names. Optionals and
+conversions had nothing left to move: the checker rules out a missing value, and `to_int` and the
+other conversions already raise from the natives 1b moved. The first version called the runtime for every operation and index, and
+`sieve` and `nbody` ran 6 to 15 percent slower. Bisecting the hunks showed the cost was not the
+calls but inlining: `runNative` builds the native's context on its caller's stack, and inlined
+into `evaluate`, `execute` and `applyBinary` it changed those hot functions even where nothing
+failed (making `runNative` itself never inline cost as much, since other natives lost their
+inlining). The fix keeps `Int` `+`, `-` and `*`, float `/` and an index in range inline, as a
+compiled program will, and calls the runtime for the rest through `runNativeCold`, which is never
+inlined. Inlining `//` and `%` too measured slower again, since `applyBinary` grew; a loop of
+`%` and `//` runs at 0.99 of main without it. The benchmarks are 0.96 to 1.00 of main. Slice 1 is done; `Interpreter.zig` is about
+9,400 lines, from 11,800 before 1b.

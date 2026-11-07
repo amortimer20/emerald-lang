@@ -749,46 +749,9 @@ pub const ComparisonOperator = enum {
     }
 };
 
-/// The arithmetic set from section 5.3. Comparison and the word operators arrive
-/// with the statement slice, which is the first place a `Bool` is useful.
-pub const BinaryOperator = enum {
-    add,
-    subtract,
-    multiply,
-    /// `/`, which always produces a `Float`.
-    divide,
-    /// `//`, which rounds toward negative infinity.
-    floor_divide,
-    /// `%`, paired with floor division by the law `a == (a // b) * b + (a % b)`.
-    remainder,
-    /// `**`, which gives an `Int` for two `Int`s and associates right to left.
-    power,
-
-    pub fn lexeme(self: BinaryOperator) []const u8 {
-        return switch (self) {
-            .add => "+",
-            .subtract => "-",
-            .multiply => "*",
-            .divide => "/",
-            .floor_divide => "//",
-            .remainder => "%",
-            .power => "**",
-        };
-    }
-
-    /// How the operator reads in a diagnostic, in the user's vocabulary.
-    pub fn describe(self: BinaryOperator) []const u8 {
-        return switch (self) {
-            .add => "addition",
-            .subtract => "subtraction",
-            .multiply => "multiplication",
-            .divide => "division",
-            .floor_divide => "floor division",
-            .remainder => "remainder",
-            .power => "exponentiation",
-        };
-    }
-};
+/// The arithmetic set from section 5.3, which the runtime defines because it
+/// names the operator in its own messages (`runtime/Operations.zig`).
+pub const BinaryOperator = @import("runtime").Operations.Arithmetic;
 
 /// A prelude trait and the method of it that an operator runs (11.5).
 pub const OperatorContract = struct {
