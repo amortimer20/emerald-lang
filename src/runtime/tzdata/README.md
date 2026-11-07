@@ -6,7 +6,7 @@ included (rewrite-context 15.8). Both files here are generated; do not edit them
 
 | File | Contents |
 | --- | --- |
-| `zones.zlib` | Every IANA zone's compiled TZif file, stored once per distinct file behind a sorted name index, zlib-compressed. `src/TimeZone.zig` decompresses it the first time a program names a zone. |
+| `zones.zlib` | Every IANA zone's compiled TZif file, stored once per distinct file behind a sorted name index, zlib-compressed. `src/runtime/TimeZone.zig` decompresses it the first time a program names a zone. |
 | `tzdata.zig` | The IANA release number, and CLDR's IANA name for each Windows zone key name, which the local zone uses on Windows. |
 
 ## Updating

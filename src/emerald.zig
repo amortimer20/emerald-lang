@@ -26,22 +26,22 @@ pub const Parser = @import("Parser.zig");
 pub const Resolver = @import("Resolver.zig");
 pub const Type = @import("Type.zig");
 pub const Checker = @import("Checker.zig");
-pub const Value = @import("Value.zig");
+pub const Value = @import("runtime").Value;
 pub const Interpreter = @import("Interpreter.zig");
-pub const Heap = @import("Heap.zig");
+pub const Heap = @import("runtime").Heap;
 pub const Formatter = @import("Formatter.zig");
-pub const unicode = @import("unicode.zig");
-pub const strings = @import("strings.zig");
+pub const unicode = @import("runtime").unicode;
+pub const strings = @import("runtime").strings;
 pub const ColorPolicy = @import("ColorPolicy.zig");
-pub const Csv = @import("Csv.zig");
-pub const FloatMath = @import("FloatMath.zig");
-pub const TimeZone = @import("TimeZone.zig");
-pub const Regex = @import("Regex.zig");
-pub const Json = @import("Json.zig");
-pub const Http = @import("Http.zig");
-pub const Scheduler = @import("Scheduler.zig");
+pub const Csv = @import("runtime").Csv;
+pub const FloatMath = @import("runtime").FloatMath;
+pub const TimeZone = @import("runtime").TimeZone;
+pub const Regex = @import("runtime").Regex;
+pub const Json = @import("runtime").Json;
+pub const Http = @import("runtime").Http;
+pub const Scheduler = @import("runtime").Scheduler;
 pub const Builtins = @import("Builtins.zig");
-pub const Module = @import("Module.zig");
+pub const Module = @import("runtime").Module;
 pub const Vendor = @import("Vendor.zig");
 
 /// Declarations every program sees, such as section 11.5's `Ordered`.
@@ -1154,7 +1154,7 @@ test {
     _ = Json;
     _ = Formatter;
     _ = Project;
-    _ = @import("Range.zig");
+    _ = @import("runtime").Range;
 }
 
 /// Runs a program and returns what it printed. The caller owns the result.

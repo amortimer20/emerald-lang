@@ -1746,7 +1746,7 @@ class Stopwatch with Textual {
     }
 }
 
-# Regular expressions (15.4). The matching engine is native (src/Regex.zig):
+# Regular expressions (15.4). The matching engine is native (src/runtime/Regex.zig):
 # a pattern takes time in proportion to the text, whatever it is. What is here
 # gives it named options, validation, and display, over positional natives that
 # take the pattern and options each time; the runtime caches each compiled
@@ -1961,7 +1961,7 @@ struct Regex with Textual {
     }
 }
 
-# CSV (15.11). Its parser and writer are native (src/Csv.zig). The public
+# CSV (15.11). Its parser and writer are native (src/runtime/Csv.zig). The public
 # functions keep the small API ordinary Emerald code; their private helpers
 # are the only native boundary.
 class CsvError extends RuntimeError {
@@ -2001,7 +2001,7 @@ class Csv {
     func Csv._format(rows: List[List[String]], separator: String): String { return "" }
 }
 
-# JSON (15.9). The parser and writer are native (src/Json.zig); a parsed
+# JSON (15.9). The parser and writer are native (src/runtime/Json.zig); a parsed
 # document is a tree of these values, and navigating and converting it is
 # Emerald over their fields. A value knows its path in the document, so a
 # mistake found deep inside it says where.

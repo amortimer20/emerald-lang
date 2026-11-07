@@ -20,7 +20,7 @@ const std = @import("std");
 const Source = @import("Source.zig");
 const Diagnostic = @import("Diagnostic.zig");
 const Token = @import("Token.zig");
-const unicode = @import("unicode.zig");
+const unicode = @import("runtime").unicode;
 
 const Lexer = @This();
 

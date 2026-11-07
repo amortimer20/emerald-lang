@@ -30,26 +30,26 @@ const std = @import("std");
 const version_options = @import("version_options");
 const Ast = @import("Ast.zig");
 const Checker = @import("Checker.zig");
-const Csv = @import("Csv.zig");
-const FloatMath = @import("FloatMath.zig");
+const Csv = @import("runtime").Csv;
+const FloatMath = @import("runtime").FloatMath;
 const Diagnostic = @import("Diagnostic.zig");
-const Heap = @import("Heap.zig");
-const Http = @import("Http.zig");
-const Module = @import("Module.zig");
+const Heap = @import("runtime").Heap;
+const Http = @import("runtime").Http;
+const Module = @import("runtime").Module;
 const Vendor = @import("Vendor.zig");
-const Json = @import("Json.zig");
+const Json = @import("runtime").Json;
 const Project = @import("Project.zig");
-const Range = @import("Range.zig").Range;
-const Regex = @import("Regex.zig");
+const Range = @import("runtime").Range.Range;
+const Regex = @import("runtime").Regex;
 const Resolver = @import("Resolver.zig");
-const TimeZone = @import("TimeZone.zig");
+const TimeZone = @import("runtime").TimeZone;
 const Source = @import("Source.zig");
 const Type = @import("Type.zig");
-const Value = @import("Value.zig");
-const strings = @import("strings.zig");
-const unicode = @import("unicode.zig");
+const Value = @import("runtime").Value;
+const strings = @import("runtime").strings;
+const unicode = @import("runtime").unicode;
 const call_arguments = @import("arguments.zig");
-const Scheduler = @import("Scheduler.zig");
+const Scheduler = @import("runtime").Scheduler;
 
 const Interpreter = @This();
 
@@ -8359,20 +8359,23 @@ fn closureCallable(self: *Interpreter, closure: *Heap.Closure) Callable {
             break :blk callable;
         },
         .method => |name| self.namedCallable(name),
-        .lambda => |expression| .{
-            .session_entry = closure.session_entry,
-            .name = "a block",
-            .named = false,
-            .file = closure.file,
-            .parameters = expression.data.lambda.parameters,
-            // The checker recorded the lambda's type where it is written, which
-            // is the only place its parameter and result types were known.
-            .signature = self.literal_types.get(expression).?.signature.?.*,
-            .body = switch (expression.data.lambda.body) {
-                .expression => |body| .{ .expression = body },
-                .block => |body| .{ .statements = body.statements },
-            },
-            .captured = closure.captured,
+        .lambda => |code| blk: {
+            const expression: *const Ast.Expression = @ptrCast(@alignCast(code));
+            break :blk .{
+                .session_entry = closure.session_entry,
+                .name = "a block",
+                .named = false,
+                .file = closure.file,
+                .parameters = expression.data.lambda.parameters,
+                // The checker recorded the lambda's type where it is written, which
+                // is the only place its parameter and result types were known.
+                .signature = self.literal_types.get(expression).?.signature.?.*,
+                .body = switch (expression.data.lambda.body) {
+                    .expression => |body| .{ .expression = body },
+                    .block => |body| .{ .statements = body.statements },
+                },
+                .captured = closure.captured,
+            };
         },
     };
 }
