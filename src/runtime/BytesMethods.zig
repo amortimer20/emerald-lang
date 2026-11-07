@@ -38,6 +38,19 @@ fn bytesToHex(heap: *Heap, bytes: []const u8) std.mem.Allocator.Error!Value {
     return .{ .data = .{ .string = try heap.createText(out) } };
 }
 
+/// Section 15.3's `Bytes.from_list`: each `Int` must be a byte.
+pub fn fromList(ctx: *Context, numbers: []const Value) Error!Value {
+    const bytes = try ctx.gpa.alloc(u8, numbers.len);
+    for (numbers, bytes) |number, *byte| {
+        if (number.data.int < 0 or number.data.int > 255) {
+            ctx.gpa.free(bytes);
+            return ctx.raiseFmt("a byte must be from 0 to 255, but this is {d}", .{number.data.int}, "Pass whole numbers from 0 through 255.");
+        }
+        byte.* = @intCast(number.data.int);
+    }
+    return .{ .data = .{ .bytes = try ctx.heap.createText(bytes) } };
+}
+
 pub fn raiseEncodingMessage(ctx: *Context, message: []const u8) Error {
     return ctx.raiseTyped("EncodingError", message, "Check that this text uses the expected encoding.");
 }

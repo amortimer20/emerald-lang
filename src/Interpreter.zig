@@ -58,6 +58,7 @@ const TimeNatives = @import("runtime").TimeNatives;
 const JsonNatives = @import("runtime").JsonNatives;
 const CsvNatives = @import("runtime").CsvNatives;
 const MathNatives = @import("runtime").MathNatives;
+const Operations = @import("runtime").Operations;
 const SystemNatives = @import("runtime").SystemNatives;
 const MapMethods = @import("runtime").MapMethods;
 const ListMethods = @import("runtime").ListMethods;
@@ -1249,12 +1250,8 @@ fn guardStack(self: *Interpreter, span: Source.Span) Error!void {
     const innermost = if (self.task.state.call_stack.items.len > 0)
         self.task.state.call_stack.items[self.task.state.call_stack.items.len - 1].function
     else
-        return self.raise(
-            span,
-            "this is nested too deeply to run",
-            "Break the expression or block into smaller named pieces.",
-        );
-    return self.raiseTooMuchRecursion(span, innermost, false);
+        return self.runNativeCold(span, Operations.nestedTooDeeply, .{});
+    return self.runNativeCold(span, Operations.tooMuchRecursion, .{ innermost, false });
 }
 
 /// Stops a bounded run before it can consume unbounded CPU or output. This is
@@ -1478,10 +1475,7 @@ fn execute(self: *Interpreter, statement: Ast.Statement) Error!void {
                 // operation as its binary form. The current value is read once.
                 // Held while the right side runs, which could reassign the
                 // same name through a function and release the old value.
-                const current = Heap.retain(found.value orelse return self.raiseUnassigned(
-                    assignment.name_span,
-                    assignment.name,
-                ));
+                const current = Heap.retain(found.value orelse return self.runNativeCold(assignment.name_span, Operations.unassigned, .{assignment.name}));
                 defer self.heap.release(current);
                 const right = try self.evaluate(assignment.value);
                 defer self.heap.release(right);
@@ -2085,12 +2079,12 @@ fn elementValue(self: *Interpreter, span: Source.Span, root: *Value, steps: []co
                 defer self.heap.release(key);
                 const hash = try self.runNative(index.span, MapMethods.hashKey, .{key});
                 const entry = try Heap.lookupIn(self.gpa, map, hash, key, self.equatable(index.span)) orelse
-                    return self.raiseMissingKey(index.span, key);
+                    return self.runNativeCold(index.span, Operations.missingKey, .{key});
                 at = entry.value;
                 continue;
             }
             const list = at.data.list;
-            const position = try self.checkIndex(list, index.value.data.int, index.span);
+            const position = try self.checkIndex(index.span, .list, list.items.items.len, index.value.data.int);
             at = list.items.items[position];
         },
     };
@@ -2148,14 +2142,14 @@ fn storeElement(self: *Interpreter, span: Source.Span, root: *Value, steps: []co
                     }
                     const found = switch (try self.heap.locate(map, hash, key, self.equatable(index.span))) {
                         .entry => |found| found,
-                        .vacancy => return self.raiseMissingKey(index.span, key),
+                        .vacancy => return self.runNativeCold(index.span, Operations.missingKey, .{key}),
                     };
                     slot = &map.entries.items[found].value;
                     continue;
                 }
 
                 const list = try self.heap.unique(slot);
-                const position = try self.checkIndex(list, index.value.data.int, index.span);
+                const position = try self.checkIndex(index.span, .list, list.items.items.len, index.value.data.int);
                 if (last) {
                     self.heap.release(list.items.items[position]);
                     list.items.items[position] = widen(value, list.element);
@@ -2222,57 +2216,19 @@ fn containerSlotTracking(self: *Interpreter, span: Source.Span, root: *Value, st
                     const hash = try self.runNative(index.span, MapMethods.hashKey, .{key});
                     const found = switch (try self.heap.locate(map, hash, key, self.equatable(index.span))) {
                         .entry => |at| at,
-                        .vacancy => return self.raiseMissingKey(index.span, key),
+                        .vacancy => return self.runNativeCold(index.span, Operations.missingKey, .{key}),
                     };
                     slot = &map.entries.items[found].value;
                     continue;
                 }
                 const list = try self.heap.unique(slot);
-                const position = try self.checkIndex(list, index.value.data.int, index.span);
+                const position = try self.checkIndex(index.span, .list, list.items.items.len, index.value.data.int);
                 slot = &list.items.items[position];
             },
         }
     }
     try self.requireCallbackWrite(span, slot);
     return slot;
-}
-
-fn raiseMissingKey(self: *Interpreter, span: Source.Span, key: Value) Error {
-    var written: std.Io.Writer.Allocating = .init(self.arena);
-    key.write(&written.writer, true) catch return error.OutOfMemory;
-    return self.raiseFmt(
-        span,
-        "there is no entry for {s}",
-        .{written.written()},
-        "Put a value there first, as in `scores[key] = 0`, or check with `contains_key?(key)`.",
-    );
-}
-
-/// Section 5.4: an index outside the list is an error that names the index and
-/// the valid range.
-fn checkIndex(self: *Interpreter, list: *const Heap.List, index: i64, span: Source.Span) Error!usize {
-    const count = list.items.items.len;
-    if (index >= 0 and index < count) return @intCast(index);
-    if (count == 0) return self.raiseFmt(
-        span,
-        "index {d} is outside this list, which is empty",
-        .{index},
-        "Check `empty?()` before indexing, or add an element first.",
-    );
-    const help = try std.fmt.allocPrint(self.arena, "Valid indices are 0 through {d}.", .{count - 1});
-    return self.raiseFmt(
-        span,
-        "index {d} is outside this list, which has {d} element{s}",
-        .{ index, count, if (count == 1) "" else "s" },
-        help,
-    );
-}
-
-fn checkIndexCount(self: *Interpreter, count: usize, index: i64, span: Source.Span) Error!usize {
-    if (index >= 0 and index < count) return @intCast(index);
-    if (count == 0) return self.raiseFmt(span, "index {d} is outside this Bytes value, which is empty", .{index}, "Check `.count` before indexing, or add bytes first.");
-    const help = try std.fmt.allocPrint(self.arena, "Valid indices are 0 through {d}.", .{count - 1});
-    return self.raiseFmt(span, "index {d} is outside this Bytes value, which has {d} byte{s}", .{ index, count, if (count == 1) "" else "s" }, help);
 }
 
 /// Section 6.4. Each pass through the body is a block of its own, so its locals
@@ -3116,17 +3072,17 @@ fn evaluateName(
     if (self.find(written)) |slot| {
         if (slot.value) |value| return Heap.retain(value);
         if (slot.changing) |method| return self.raiseChanging(expression.span, written, method);
-        return self.raiseUnassigned(expression.span, written);
+        return self.runNativeCold(expression.span, Operations.unassigned, .{written});
     }
     if (self.module.getPtr(key)) |slot| {
         if (slot.value) |value| return Heap.retain(value);
-        return self.raiseUnassigned(expression.span, written);
+        return self.runNativeCold(expression.span, Operations.unassigned, .{written});
     }
     // Section 7.5: a bare function name is its callable value.
     if (self.functions.contains(key)) return self.evaluateFunctionValue(key);
     // The checker proves every name read here is bound and assigned, so this is
     // a safety net rather than a language rule.
-    return self.raiseUnassigned(expression.span, written);
+    return self.runNativeCold(expression.span, Operations.unassigned, .{written});
 }
 
 /// Section 7.5's captured named function, which captures nothing: a named
@@ -3307,12 +3263,7 @@ fn readMember(self: *Interpreter, base: Value, member: Ast.Expression.Member) Er
     if (base.data == .map) return .initInt(@intCast(base.data.map.count()));
     if (base.data == .range) {
         if (std.mem.eql(u8, member.name, "count")) {
-            const count = base.data.range.count() orelse return self.raise(
-                member.name_span,
-                "this Range has too many values for `count`",
-                "Use a narrower Range or a larger `step`; an Int count cannot represent every Int value.",
-            );
-            return .initInt(count);
+            return .initInt(try self.runNative(member.name_span, Operations.rangeCount, .{&base.data.range}));
         }
         if (std.mem.eql(u8, member.name, "empty?")) return .initBool(base.data.range.empty());
     }
@@ -3474,6 +3425,15 @@ fn runNative(self: *Interpreter, span: Source.Span, comptime function: anytype, 
         return self.nativeFailure(span, &ctx, @call(.auto, function, .{&ctx} ++ arguments));
     }
     return @call(.auto, function, .{&ctx} ++ arguments) catch |err| self.nativeFailure(span, &ctx, err);
+}
+
+/// `runNative` for a call on a path that rarely runs, such as an error
+/// message or an overflowing sum. Kept out of line so that the hot functions
+/// calling it, `evaluate` and `execute` among them, keep the code and stack
+/// frame they had: inlining the native's context into them measurably slowed
+/// the benchmarks (docs/journal.md, slice 1c).
+noinline fn runNativeCold(self: *Interpreter, span: Source.Span, comptime function: anytype, arguments: anytype) NativeReturn(@TypeOf(function)) {
+    return self.runNative(span, function, arguments);
 }
 
 fn NativeReturn(comptime Function: type) type {
@@ -3666,14 +3626,18 @@ fn readIndex(self: *Interpreter, expression: *const Ast.Expression, base: Value,
     }
 
     const position = (try self.evaluate(index.index)).data.int;
-    if (base.data == .string) return self.characterAt(expression.span, base.data.string.bytes, position);
+    if (base.data == .string) {
+        const text = base.data.string.bytes;
+        if (strings.characterAt(text, position)) |character| return self.heap.copyText(character);
+        return self.runNativeCold(expression.span, Operations.outsideIndex, .{ .string, unicode.graphemeCount(text), position });
+    }
     if (base.data == .bytes) {
         const bytes = base.data.bytes.bytes;
-        const at = try self.checkIndexCount(@intCast(bytes.len), position, expression.span);
+        const at = try self.checkIndex(expression.span, .bytes, bytes.len, position);
         return .initInt(bytes[at]);
     }
     const list = base.data.list;
-    const at = try self.checkIndex(list, position, expression.span);
+    const at = try self.checkIndex(expression.span, .list, list.items.items.len, position);
     return Heap.retain(list.items.items[at]);
 }
 
@@ -3688,16 +3652,16 @@ fn evaluateSlice(self: *Interpreter, expression: *const Ast.Expression, slice: A
 
     return switch (base.data) {
         .list => |list| blk: {
-            const bounds = try self.sliceBounds(expression.span, "list", @intCast(list.items.items.len), start, end, slice.inclusive);
+            const bounds = try self.runNative(expression.span, Operations.sliceBounds, .{ .list, @as(i64, @intCast(list.items.items.len)), start, end, slice.inclusive });
             break :blk ListMethods.copyList(&self.heap, list.element, list.items.items[bounds.start..bounds.end]);
         },
         .string => |text| blk: {
             const count: i64 = @intCast(unicode.graphemeCount(text.bytes));
-            const bounds = try self.sliceBounds(expression.span, "String", count, start, end, slice.inclusive);
+            const bounds = try self.runNative(expression.span, Operations.sliceBounds, .{ .string, count, start, end, slice.inclusive });
             break :blk self.heap.copyText(strings.substring(text.bytes, @intCast(bounds.start), @intCast(bounds.end - bounds.start)) catch unreachable);
         },
         .bytes => |bytes| blk: {
-            const bounds = try self.sliceBounds(expression.span, "Bytes", @intCast(bytes.bytes.len), start, end, slice.inclusive);
+            const bounds = try self.runNative(expression.span, Operations.sliceBounds, .{ .bytes, @as(i64, @intCast(bytes.bytes.len)), start, end, slice.inclusive });
             break :blk self.heap.copyBytes(bytes.bytes[bounds.start..bounds.end]);
         },
         else => unreachable, // The checker permits only the two cases above.
@@ -3709,65 +3673,6 @@ fn evaluateSliceBound(self: *Interpreter, expression: ?*const Ast.Expression) Er
     const value = try self.evaluate(bound);
     defer self.heap.release(value);
     return value.data.int;
-}
-
-const SliceBounds = struct { start: usize, end: usize };
-
-/// Validates the half-open interval used internally for both source spellings.
-/// `..` includes its written endpoint while `..<` excludes it; an omitted end
-/// always means the collection's end, so both `items[2..]` and `items[2..<]`
-/// run through the last item.
-fn sliceBounds(
-    self: *Interpreter,
-    span: Source.Span,
-    subject: []const u8,
-    count: i64,
-    written_start: ?i64,
-    written_end: ?i64,
-    inclusive: bool,
-) Error!SliceBounds {
-    const start = written_start orelse 0;
-    if (start < 0 or start > count) return self.raiseFmt(
-        span,
-        "slice start {d} is outside this {s}, which has {d} {s}",
-        .{ start, subject, count, if (std.mem.eql(u8, subject, "String")) "characters" else "elements" },
-        "A slice start may be from 0 through the collection's count.",
-    );
-    const end = if (written_end) |written| blk: {
-        if (written < 0 or written > count or (inclusive and written == count)) return self.raiseFmt(
-            span,
-            "slice end {d} is outside this {s}, which has {d} {s}",
-            .{ written, subject, count, if (std.mem.eql(u8, subject, "String")) "characters" else "elements" },
-            if (inclusive) "An inclusive end must name an existing position." else "An exclusive end may equal the collection's count.",
-        );
-        break :blk if (inclusive) written + 1 else written;
-    } else count;
-    if (start > end) return self.raiseFmt(
-        span,
-        "slice start {d} comes after its end {d}",
-        .{ start, if (written_end) |written| written else count },
-        "Write the start at or before the end.",
-    );
-    return .{ .start = @intCast(start), .end = @intCast(end) };
-}
-
-/// Section 9.1: indexing a string counts characters, from zero.
-fn characterAt(self: *Interpreter, span: Source.Span, bytes: []const u8, position: i64) Error!Value {
-    if (strings.characterAt(bytes, position)) |character| return self.heap.copyText(character);
-    const count = unicode.graphemeCount(bytes);
-    if (count == 0) return self.raiseFmt(
-        span,
-        "index {d} is outside this String, which is empty",
-        .{position},
-        "Check `empty?()` before indexing.",
-    );
-    const help = try std.fmt.allocPrint(self.arena, "Valid indices are 0 through {d}.", .{count - 1});
-    return self.raiseFmt(
-        span,
-        "index {d} is outside this String, which has {d} character{s}",
-        .{ position, count, if (count == 1) "" else "s" },
-        help,
-    );
 }
 
 /// Section 5.2's `and` and `or`, which short-circuit: the right side is not
@@ -3817,12 +3722,7 @@ fn evaluateComparison(
             // behavior, under which every comparison is false except `!=`.
             operator == .not_equal
         else
-            return self.raiseFmt(
-                expression.span,
-                "{s} and {s} cannot be compared",
-                .{ left.typeName(), right.typeName() },
-                "Comparison needs two values of the same kind.",
-            );
+            return self.runNativeCold(expression.span, Operations.notComparable, .{ left, right });
 
         self.heap.release(left);
         left = right;
@@ -3840,34 +3740,16 @@ fn evaluateUnary(
     const operand = try self.evaluate(unary.operand);
     switch (unary.operator) {
         .negate => switch (operand.data) {
-            // Negating the minimum `Int` overflows like any other operation,
-            // because the range is asymmetric.
             .int => |value| {
-                const result = @subWithOverflow(@as(i64, 0), value);
-                if (result[1] != 0) return self.raiseFmt(
-                    expression.span,
-                    "negating {d} overflows Int",
-                    .{value},
-                    integer_range_help,
-                );
-                return .initInt(result[0]);
+                if (value != std.math.minInt(i64)) return .initInt(-value);
+                return .initInt(try self.runNativeCold(expression.span, Operations.negate, .{value}));
             },
             .float => |value| return .initFloat(-value),
-            .nothing, .bool, .string, .bytes, .range, .list, .tuple, .map, .closure, .struct_value => return self.raiseFmt(
-                expression.span,
-                "`-` needs a number, but this is {s}",
-                .{operand.typeName()},
-                "Use `not` to invert a Bool.",
-            ),
+            .nothing, .bool, .string, .bytes, .range, .list, .tuple, .map, .closure, .struct_value => return self.runNativeCold(expression.span, Operations.negateNeedsNumber, .{operand}),
         },
         .not => switch (operand.data) {
             .bool => |value| return .initBool(!value),
-            else => return self.raiseFmt(
-                expression.span,
-                "`not` needs a Bool, but this is {s}",
-                .{operand.typeName()},
-                "Compare it to something first, as in `not (count > 0)`.",
-            ),
+            else => return self.runNativeCold(expression.span, Operations.notNeedsBool, .{operand}),
         },
     }
 }
@@ -3910,24 +3792,40 @@ fn applyBinary(
         return .{ .data = .{ .bytes = try self.heap.createText(joined) } };
     }
     if (annotated_method) |key| return self.callAnnotatedOperator(span, key, left, right);
-    if (!left.isNumber() or !right.isNumber()) return self.raiseFmt(
-        span,
-        "{s} needs numbers, but this is {s} and {s}",
-        .{ operator.describe(), left.typeName(), right.typeName() },
-        "Arithmetic works on Int and Float.",
-    );
-
-    // This one always produces a Float regardless of operand types.
-    if (operator == .divide) {
-        const divisor = toFloat(right);
-        if (divisor == 0) return self.raiseDivisionByZero(span, operator);
-        return .initFloat(toFloat(left) / divisor);
+    if (!left.isNumber() or !right.isNumber()) return self.runNativeCold(span, Operations.needsNumbers, .{ operator, left, right });
+    // Division always gives a Float, whatever its operands.
+    if (left.data == .int and right.data == .int and operator != .divide) {
+        const a = left.data.int;
+        const b = right.data.int;
+        // The commonest operations stay inline, as they will in compiled code;
+        // the runtime takes the rest, and any that overflows, to explain it.
+        // Inlining more here measured slower: this function is inlined into
+        // its callers, and a larger one slowed `sieve` (docs/journal.md).
+        const result = switch (operator) {
+            .add => @addWithOverflow(a, b),
+            .subtract => @subWithOverflow(a, b),
+            .multiply => @mulWithOverflow(a, b),
+            else => .{ 0, 1 },
+        };
+        if (result[1] == 0) return .initInt(result[0]);
+        return .initInt(try self.runNativeCold(span, Operations.intArithmetic, .{ operator, a, b }));
     }
+    const a = toFloat(left);
+    const b = toFloat(right);
+    return .initFloat(switch (operator) {
+        .add => a + b,
+        .subtract => a - b,
+        .multiply => a * b,
+        .divide => if (b != 0) a / b else try self.runNativeCold(span, Operations.floatArithmetic, .{ operator, a, b }),
+        .floor_divide, .remainder, .power => try self.runNativeCold(span, Operations.floatArithmetic, .{ operator, a, b }),
+    });
+}
 
-    const both_int = left.data == .int and right.data == .int;
-    if (!both_int) return self.evaluateFloatBinary(span, operator, toFloat(left), toFloat(right));
-
-    return self.evaluateIntBinary(span, operator, left.data.int, right.data.int);
+/// Section 5.4's index into `count` items, checked here so the common case
+/// costs a comparison; `Operations.outsideIndex` explains one outside the range.
+fn checkIndex(self: *Interpreter, span: Source.Span, comptime collection: Operations.Collection, count: usize, position: i64) Error!usize {
+    if (position >= 0 and position < count) return @intCast(position);
+    return self.runNativeCold(span, Operations.outsideIndex, .{ collection, count, position });
 }
 
 /// Runs an annotated arithmetic method selected by the checker. Structs use
@@ -3951,122 +3849,6 @@ fn callOperator(self: *Interpreter, span: Source.Span, name: []const u8, left: V
     var callable = self.methodCallable(method.key, left);
     callable.self_value = Heap.retain(left);
     return self.invoke(span, callable, &.{Heap.retain(right)});
-}
-
-fn evaluateIntBinary(
-    self: *Interpreter,
-    span: Source.Span,
-    operator: Ast.BinaryOperator,
-    left: i64,
-    right: i64,
-) Error!Value {
-    switch (operator) {
-        .add, .subtract, .multiply => {
-            const result = switch (operator) {
-                .add => @addWithOverflow(left, right),
-                .subtract => @subWithOverflow(left, right),
-                .multiply => @mulWithOverflow(left, right),
-                else => unreachable,
-            };
-            if (result[1] != 0) return self.raiseFmt(
-                span,
-                "{s} of {d} and {d} overflows Int",
-                .{ operator.describe(), left, right },
-                integer_range_help,
-            );
-            return .initInt(result[0]);
-        },
-        .floor_divide => {
-            if (right == 0) return self.raiseDivisionByZero(span, operator);
-            // The only overflowing quotient: the minimum Int divided by -1 has
-            // no positive counterpart in an asymmetric range.
-            if (left == std.math.minInt(i64) and right == -1) return self.raiseFmt(
-                span,
-                "{s} of {d} and {d} overflows Int",
-                .{ operator.describe(), left, right },
-                integer_range_help,
-            );
-            return .initInt(@divFloor(left, right));
-        },
-        .remainder => {
-            if (right == 0) return self.raiseDivisionByZero(span, operator);
-            // Every value is exactly divisible by -1, so the remainder is zero.
-            // Stating it avoids relying on host behavior at the range edge.
-            if (right == -1) return .initInt(0);
-            return .initInt(@mod(left, right));
-        },
-        .power => return self.evaluateIntPower(span, left, right),
-        .divide => unreachable, // handled before operand kinds matter
-    }
-}
-
-/// Section 5.3: two `Int`s give an `Int`, so `side ** 2` stays whole. An `Int`
-/// has no fraction to hold `2 ** -1`, so a negative exponent raises and points
-/// at the `Float` spelling.
-///
-/// Squaring by repeated halving takes as many steps as the exponent has bits,
-/// so `1 ** 1_000_000_000` is instant. The base is squared only while bits of
-/// the exponent remain, which means that when squaring overflows, the result it
-/// was headed for would have too, so no false overflow is reported.
-fn evaluateIntPower(self: *Interpreter, span: Source.Span, base: i64, exponent: i64) Error!Value {
-    if (exponent < 0) return self.raiseFmt(
-        span,
-        "an Int cannot be raised to the negative power {d}",
-        .{exponent},
-        "Make the base a Float, as in `2.0 ** -1`, for a fractional result.",
-    );
-
-    var result: i64 = 1;
-    var factor = base;
-    var remaining = exponent;
-    while (remaining > 0) {
-        if (remaining & 1 == 1) {
-            const product = @mulWithOverflow(result, factor);
-            if (product[1] != 0) return self.raisePowerOverflow(span, base, exponent);
-            result = product[0];
-        }
-        remaining >>= 1;
-        if (remaining > 0) {
-            const square = @mulWithOverflow(factor, factor);
-            if (square[1] != 0) return self.raisePowerOverflow(span, base, exponent);
-            factor = square[0];
-        }
-    }
-    return .initInt(result);
-}
-
-fn raisePowerOverflow(self: *Interpreter, span: Source.Span, base: i64, exponent: i64) Error {
-    return self.raiseFmt(
-        span,
-        "exponentiation of {d} and {d} overflows Int",
-        .{ base, exponent },
-        integer_range_help,
-    );
-}
-
-fn evaluateFloatBinary(
-    self: *Interpreter,
-    span: Source.Span,
-    operator: Ast.BinaryOperator,
-    left: f64,
-    right: f64,
-) Error!Value {
-    switch (operator) {
-        .add => return .initFloat(left + right),
-        .subtract => return .initFloat(left - right),
-        .multiply => return .initFloat(left * right),
-        .floor_divide => {
-            if (right == 0) return self.raiseDivisionByZero(span, operator);
-            return .initFloat(FloatMath.floorDivide(left, right));
-        },
-        .remainder => {
-            if (right == 0) return self.raiseDivisionByZero(span, operator);
-            // The result takes the divisor's sign; a NaN or infinite operand gives NaN.
-            return .initFloat(FloatMath.remainder(left, right));
-        },
-        .power => return .initFloat(FloatMath.power(left, right)),
-        .divide => unreachable,
-    }
 }
 
 // Calls.
@@ -5024,17 +4806,7 @@ fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: 
     const cwd = std.Io.Dir.cwd();
     const suffix = key[(Resolver.prelude_namespace ++ ".").len..];
     if (std.mem.eql(u8, suffix, "Bytes::from_list")) {
-        const list = values[0].data.list;
-        const bytes = try self.gpa.alloc(u8, list.items.items.len);
-        for (list.items.items, 0..) |value, index| {
-            const number = value.data.int;
-            if (number < 0 or number > 255) {
-                self.gpa.free(bytes);
-                return self.raiseFmt(span, "a byte must be from 0 to 255, but this is {d}", .{number}, "Pass whole numbers from 0 through 255.");
-            }
-            bytes[index] = @intCast(number);
-        }
-        return .{ .data = .{ .bytes = try self.heap.createText(bytes) } };
+        return self.runNative(span, BytesMethods.fromList, .{values[0].data.list.items.items});
     }
     if (std.mem.eql(u8, suffix, "Bytes::from_hex") or std.mem.eql(u8, suffix, "Bytes::from_hex_maybe")) {
         return self.runNative(span, EncodingNatives.bytesFromHex, .{ values[0].data.string.bytes, std.mem.eql(u8, suffix, "Bytes::from_hex_maybe") });
@@ -7591,7 +7363,7 @@ fn invoke(
         if (callable.self_value) |instance| {
             if (callable.self_out) |out| out.* = instance else self.heap.release(instance);
         }
-        return self.raiseTooMuchRecursion(call_span, callable.name, true);
+        return self.runNativeCold(call_span, Operations.tooMuchRecursion, .{ callable.name, true });
     }
 
     // The callee's own block scopes push onto and pop off this list, so by the
@@ -9464,7 +9236,7 @@ fn mutateList(self: *Interpreter, span: Source.Span, list: *Heap.List, name: []c
             self.compactList(list, keep);
         },
         .remove_at => {
-            const position = try self.checkIndex(list, arguments[0].data.int, span);
+            const position = try self.checkIndex(span, .list, list.items.items.len, arguments[0].data.int);
             return items.orderedRemove(position);
         },
         .remove_first, .remove_last => {
@@ -9535,8 +9307,6 @@ fn evaluateArguments(self: *Interpreter, expressions: []const *const Ast.Express
 
 // Raising.
 
-const integer_range_help = Native.integer_range_help;
-
 /// Every runtime error carries the calls active when it was raised, innermost
 /// first, which is section 13.2's stack trace.
 fn raise(self: *Interpreter, span: Source.Span, message: []const u8, help: []const u8) Error {
@@ -9593,45 +9363,6 @@ fn raiseFmt(
 ) Error {
     const message = try std.fmt.allocPrint(self.arena, message_format, message_args);
     return self.raise(span, message, help);
-}
-
-fn raiseUnassigned(self: *Interpreter, span: Source.Span, name: []const u8) Error {
-    const help = try std.fmt.allocPrint(self.arena, "Assign `{s}` before reading it.", .{name});
-    return self.raise(span, try std.fmt.allocPrint(self.arena, "`{s}` is not assigned yet", .{name}), help);
-}
-
-fn raiseDivisionByZero(
-    self: *Interpreter,
-    span: Source.Span,
-    operator: Ast.BinaryOperator,
-) Error {
-    return self.raiseFmt(
-        span,
-        "{s} by zero",
-        .{operator.describe()},
-        "Check the divisor before dividing. Division by zero has no result for either numeric type.",
-    );
-}
-
-/// Section 7.2: crossing the limit raises rather than exhausting the host
-/// stack, and the trace attached by `raise` summarizes the repeating frames.
-/// `at_limit` distinguishes reaching the 1,000-call guarantee from running out
-/// of stack before it, which only a pathologically nested body can do.
-fn raiseTooMuchRecursion(self: *Interpreter, span: Source.Span, name: []const u8, at_limit: bool) Error {
-    // A program's own names never hold a space; a description such as "the
-    // constructor of `Node`" or "a block" already reads as prose.
-    const quote = if (std.mem.indexOfScalar(u8, name, ' ') == null) "`" else "";
-    const message = try std.fmt.allocPrint(self.arena, "too much recursion calling {s}{s}{s}", .{ quote, name, quote });
-    self.task.state.raised_value = try self.makeError(Resolver.preludeKey("RecursionError"), message);
-    return self.raiseTyped(
-        span,
-        "RecursionError",
-        message,
-        if (at_limit)
-            "Emerald supports at least 1,000 active calls. Check that the recursion has a case that stops it."
-        else
-            "These calls nest too deeply for the stack available. Check that the recursion has a case that stops it.",
-    );
 }
 
 test "session origin lookup finds ordered entries and excludes gaps and other files" {

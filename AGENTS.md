@@ -150,6 +150,10 @@ implemented and Claude reviewed.
   gives an enum of them). Routing to them is still a chain of string-key comparisons in
   `Interpreter.evaluateCall`, and the order matters. A value that holds a `Native.Context` must
   not outlive the `runNative` call that made it.
+- **Operator and indexing errors** (overflow, division by zero, an index or slice outside its
+  collection, a missing dictionary entry, an unassigned name, too much recursion) come from
+  `src/runtime/Operations.zig`, so a compiled program reports them in the same words.
+  `Ast.BinaryOperator` is that file's `Arithmetic`.
 - **Generated files** are never edited by hand: `src/runtime/unicode/tables.zig` (from
   `tools/unicode/`), `src/runtime/tzdata/` (from `tools/update-tzdata.py`), and the prelude's syntax
   tree (from `tools/prelude_ast.zig`).

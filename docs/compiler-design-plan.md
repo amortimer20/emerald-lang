@@ -233,6 +233,18 @@ would be too large to review.
 - **1c, the remaining messages.** The runtime errors the interpreter raises for operators,
   indexing, overflow, optionals and conversions get their text from runtime functions both
   engines call.
+  1c done on `claude/runtime-messages`: `runtime/Operations.zig` holds `Int` and `Float`
+  arithmetic with overflow and division by zero, negation, `not`, comparison, indexing a list,
+  String or Bytes, slice bounds, a missing dictionary entry, a Range too large to count, a name
+  read before it is assigned, and too much recursion; `Bytes.from_list`'s byte check joined
+  `BytesMethods`. `Ast.BinaryOperator` is now the runtime's `Operations.Arithmetic`, so the
+  checker and both engines name an operator the same way. `Interpreter.zig` is 9,400 lines.
+  *Settled while building:* optionals raise nothing at run time (the checker forces `.or` or a
+  check), and the conversions (`to_int`, `to_float` and the rest) raise from the string and
+  number natives that 1b moved, so neither had messages left to move. Each engine does the common case inline (`Int` `+`, `-` and `*`, an index
+  in range) and calls these functions for the rest; the interpreter calls them through
+  `runNativeCold`, which is never inlined, because inlining a native's context into the hot
+  functions slowed `sieve` and `nbody` by up to 15 percent. Benchmarks 0.96 to 1.00 of main.
 
 **Slice 2: the IR and the smallest compiler.** IR, lowering, the C emitter and `emerald build`
 for `Int`, `Float`, `Bool`, functions, control flow, `print` and overflow; the build-tools
