@@ -50,7 +50,7 @@ fn generateHere(gpa: std.mem.Allocator, project: *const emerald.Project, out: *s
 
     const entry = project.entry;
     const source = &analysis.files[entry].source;
-    if (project.files.len != 1) return .{ .unsupported = try unsupported(gpa, .{ .start = 0, .end = 0 }, "a project of several files") };
+    if (project.files.len != 1) return .{ .unsupported = try unsupported(gpa, entry, .{ .start = 0, .end = 0 }, "a project of several files") };
 
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
     defer arena_state.deinit();
@@ -62,7 +62,7 @@ fn generateHere(gpa: std.mem.Allocator, project: *const emerald.Project, out: *s
         .facts = &analysis.resolved.facts,
     };
     const program = lower.lower(analysis.programs[entry]) catch |err| switch (err) {
-        error.Unsupported => return .{ .unsupported = try unsupported(gpa, lower.unsupported.?.span, lower.unsupported.?.what) },
+        error.Unsupported => return .{ .unsupported = try unsupported(gpa, entry, lower.unsupported.?.span, lower.unsupported.?.what) },
         error.OutOfMemory => return error.OutOfMemory,
     };
     try EmitC.emit(gpa, program, source, out);
@@ -70,8 +70,9 @@ fn generateHere(gpa: std.mem.Allocator, project: *const emerald.Project, out: *s
 }
 
 /// The caller frees the diagnostic's `message` with `gpa`.
-fn unsupported(gpa: std.mem.Allocator, span: Source.Span, what: []const u8) !Diagnostic {
+fn unsupported(gpa: std.mem.Allocator, file: u32, span: Source.Span, what: []const u8) !Diagnostic {
     return .{
+        .file = file,
         .span = span,
         .message = try std.fmt.allocPrint(gpa, "`emerald build` cannot compile {s} yet", .{what}),
         .help = "Run the program with `emerald run` instead. The compiler learns more of the language with each release.",
@@ -149,7 +150,9 @@ pub fn compileC(gpa: std.mem.Allocator, io: std.Io, tools: Tools, c_path: []cons
     const argv: []const []const u8 = &.{
         tools.zig,                          "cc",
         "-std=c11",                         if (options.debug) "-O0" else "-O2",
-        if (options.debug) "-g" else "-g0",
+        // Stripped unless debugging, which also keeps Windows from writing a
+        // `.pdb` beside every executable.
+        if (options.debug) "-g" else "-s",
         // The C is generated, so its warnings are Emerald's to fix, not the
         // programmer's to read.
         "-w",

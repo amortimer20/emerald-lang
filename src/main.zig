@@ -687,16 +687,25 @@ fn executeBuild(gpa: std.mem.Allocator, io: std.Io, args: []const []const u8, en
     };
 
     // `program.em` builds `program`, or `program.exe` on Windows, beside it.
+    // A file without the `.em` extension gets `.out` where a system adds
+    // nothing, so the executable never takes the program's own name.
     const output = output_flag orelse blk: {
-        const stem = if (std.mem.endsWith(u8, entry_path, ".em")) entry_path[0 .. entry_path.len - 3] else entry_path;
-        break :blk try std.fmt.allocPrint(arena, "{s}{s}", .{ stem, builtin.target.exeFileExt() });
+        const plain = std.mem.endsWith(u8, entry_path, ".em");
+        const stem = if (plain) entry_path[0 .. entry_path.len - 3] else entry_path;
+        const extension = builtin.target.exeFileExt();
+        break :blk try std.fmt.allocPrint(arena, "{s}{s}", .{ stem, if (extension.len == 0 and !plain) ".out" else extension });
     };
+    if (std.mem.eql(u8, output, entry_path)) return commandMisuse(io, .build, "cannot write the executable over the program it builds");
 
     // The generated C and the header sit in a folder of their own beside the
-    // output while the C compiler runs, and are removed afterwards.
-    const work = try std.fmt.allocPrint(arena, "{s}.emerald-build", .{output});
+    // output while the C compiler runs, and are removed afterwards. Its name
+    // is random, and it must not exist yet, so the removal never touches a
+    // folder of anyone else's.
+    var nonce: [6]u8 = undefined;
+    io.random(&nonce);
+    const work = try std.fmt.allocPrint(arena, "{s}.emerald-build-{x}", .{ output, nonce });
     const cwd = std.Io.Dir.cwd();
-    cwd.createDirPath(io, work) catch |err| return cannotWrite(io, work, err);
+    cwd.createDir(io, work, .default_dir) catch |err| return cannotWrite(io, work, err);
     defer cwd.deleteTree(io, work) catch {};
     const c_path = try std.fs.path.join(arena, &.{ work, "program.c" });
     const header_path = try std.fs.path.join(arena, &.{ work, "emerald.h" });
