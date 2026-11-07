@@ -160,6 +160,10 @@ implemented and Claude reviewed.
   stops `emerald build` with `Lower.fail`, never with different behavior. When a change teaches it
   more, add the cases that now pass to `conformance/compiled.txt` and run
   `zig build test-compiler`.
+- **Heap values in compiled code** follow `Ir.zig`'s ownership rule: every slot of a heap type
+  owns one reference, a store retains the new value and releases the old, and a function
+  releases its locals at its single exit (`em_exit` in the C). A new heap instruction gives its
+  destination a new reference; never hand C a borrowed one to keep.
 - **Generated files** are never edited by hand: `src/runtime/unicode/tables.zig` (from
   `tools/unicode/`), `src/runtime/tzdata/` (from `tools/update-tzdata.py`), and the prelude's syntax
   tree (from `tools/prelude_ast.zig`).

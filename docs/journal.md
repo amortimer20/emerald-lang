@@ -6575,3 +6575,23 @@ before a later call can change it, and `print` evaluates every argument before i
 Windows note: `std.Io.File.Writer` in positional mode dropped the output of a program whose
 standard output was a pipe, without an error; the runtime writes in streaming mode, as `main.zig`
 does.
+
+## 2026-11-07: Compiler slice 3a: strings
+
+Slice 2 merged as PR #75, and CI built compiled programs on Linux and macOS for the first time
+without a change. Slice 3 is split like slice 1: 3a strings, 3b lists, 3c dictionaries, sets and
+tuples, 3d structs and classes, 3e closures.
+
+A compiled `String` is the runtime's own `Heap.Text`, so every string method the interpreter has
+works unchanged: `em_native` calls any method in `Natives.zig` by family and index, with values
+tagged in `Value.Kind`'s order. The ownership rule is the IR's, not each instruction's: every heap
+slot owns one reference, a store retains the new value and releases the old, and a function
+releases all its locals at one exit that both returns and failures pass. To check the counts, a
+temporary print of the heap's live objects after 1,000 iterations of joining, slicing and calling
+showed only the literals and the one global left. The review found one real gap: a native's
+result was read in the C as the checker's type without widening, so an `Int` result where a
+`Float` was expected would have been read as a double's bits; `em_native` now widens to the
+expected kind.
+
+`compiled.txt` grows from 27 cases to 43, and still none that builds behaves differently. Most of
+the rest stop at lists, which 3b compiles.
