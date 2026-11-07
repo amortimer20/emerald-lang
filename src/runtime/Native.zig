@@ -15,6 +15,7 @@
 const std = @import("std");
 const Heap = @import("Heap.zig");
 const Value = @import("Value.zig");
+const Regex = @import("Regex.zig");
 
 /// The errors a native can return: its own `Raised`, allocation failure, and
 /// whatever a callback into the program's code can unwind with.
@@ -42,14 +43,27 @@ pub const Engine = struct {
         compare: *const fn (ptr: *anyopaque, left: Value, right: Value) Error!Value,
         /// The program's unseeded source of randomness.
         random: *const fn (ptr: *anyopaque) std.Random,
+        /// The descriptor of the prelude's struct `name`, such as `Regex::Match`.
+        prelude_struct: *const fn (ptr: *anyopaque, name: []const u8) *const Value.StructType,
     };
+};
+
+/// What natives keep between calls for one running program, which the engine
+/// owns. Its contents live in the context's `arena`.
+pub const State = struct {
+    /// Section 15.4's compiled patterns, keyed by options and pattern, so a
+    /// `Regex` built again, as in a loop, is compiled once. Past
+    /// `regex_cache_limit` patterns, each is compiled for one call instead.
+    regex_cache: std.StringHashMapUnmanaged(Regex.Program) = .empty,
 };
 
 pub const Context = struct {
     gpa: std.mem.Allocator,
-    /// For failure text, which lives until the program ends.
+    /// For failure text and `state`, which live until the program ends.
     arena: std.mem.Allocator,
     heap: *Heap,
+    io: std.Io,
+    state: *State,
     engine: Engine,
     failure: ?Failure = null,
 
@@ -75,6 +89,10 @@ pub const Context = struct {
 
     pub fn random(ctx: *Context) std.Random {
         return ctx.engine.vtable.random(ctx.engine.ptr);
+    }
+
+    pub fn preludeStruct(ctx: *Context, name: []const u8) *const Value.StructType {
+        return ctx.engine.vtable.prelude_struct(ctx.engine.ptr, name);
     }
 
     pub fn compare(ctx: *Context, left: Value, right: Value) Error!Value {
