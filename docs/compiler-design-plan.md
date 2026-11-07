@@ -177,6 +177,24 @@ appended here, a go or no-go on decision 1's route, and a measured answer for qu
 runtime boundary of decision 4, and give natives numeric ids. No behaviour change: the whole
 suite passes untouched, and the benchmarks do not get slower.
 
+*Settled while building (2026-11-06):* slice 1 is three PRs, merged in order, because the
+interpreter's natives read their arguments from the syntax tree (about 150 dispatch sites
+compared by string) and 269 raise sites build their messages inside `Interpreter.zig`; one PR
+would be too large to review.
+- **1a, the boundary.** The runtime files move to `src/runtime/` and build as their own Zig
+  module, `runtime`, which imports nothing from the front end or the interpreter, so a compiled
+  program can link it alone. The one front-end tie, a closure's pointer to its lambda's syntax
+  tree, becomes an opaque pointer only the interpreter interprets.
+- **1b, natives.** Each native gets a numeric id in one table and an implementation that takes
+  evaluated values and gives a value, in the runtime; the interpreter resolves a call site's id
+  once and evaluates the arguments itself. Each native's messages move with it.
+  1a done on `claude/runtime-layer`: thirteen files and the Unicode and time-zone data moved;
+  `src/runtime/runtime.zig` is the module's root and `runtime-test` runs its 149 tests on its
+  own; benchmarks unchanged (0.95 to 1.04 of before, noise).
+- **1c, the remaining messages.** The runtime errors the interpreter raises for operators,
+  indexing, overflow, optionals and conversions get their text from runtime functions both
+  engines call.
+
 **Slice 2: the IR and the smallest compiler.** IR, lowering, the C emitter and `emerald build`
 for `Int`, `Float`, `Bool`, functions, control flow, `print` and overflow; the build-tools
 lookup and its message; `zig build test-compiler` with its first list of cases.
