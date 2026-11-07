@@ -30,12 +30,12 @@ compiler** (decision 10's fallback; question C will not be measured). Next: the 
 slices 0 to 7; slice 1 is split into 1a, 1b, 1c, and 1a, the `src/runtime/` module, is on
 `claude/runtime-layer`, merged as PR #71; 1b part 1, value methods as runtime natives with ids,
 merged as PR #72; 1b part 2, the prelude's natives, merged as PR #73, with files and Http left
-for slice 6; 1c, the operators' and indexing's messages in `runtime/Operations.zig`, is on
-`claude/runtime-messages`). Slice 0 ran (branch `claude/compiler-spike`, not for merge): emitted C is 34x
+for slice 6; 1c, the operators' and indexing's messages in `runtime/Operations.zig`, merged as
+PR #74; slice 2, the IR and `emerald build` for scalars, functions and control flow, is on
+`claude/compiler-smallest`). Slice 0 ran (branch `claude/compiler-spike`, not for merge): emitted C is 34x
 (`fib`), 52x (`nbody`) and 9x (`words`) faster than the interpreter, rebuilds in 0.35 s against
 Zig source's 11.5 s, and reaches WebAssembly, a Cortex-M0+ and a host-loaded shared library; the
-build-tools archive is 52 MB (`.tar.xz`) to 85 MB (zip). Next: slice 2, the IR and the smallest
-compiler.
+build-tools archive is 52 MB (`.tar.xz`) to 85 MB (zip). Next: slice 3, values on the heap.
 Earlier status: `v0.8.0-rc1` was published as a prerelease. The codebase review
 (roadmap item 10) has reported and been triaged in [`review/triage.md`](review/triage.md), with
 every decision accepted. Fix batches 1, 2 and 3 are merged (PRs #57–#66; the journal has each).

@@ -154,6 +154,12 @@ implemented and Claude reviewed.
   collection, a missing dictionary entry, an unassigned name, too much recursion) come from
   `src/runtime/Operations.zig`, so a compiled program reports them in the same words.
   `Ast.BinaryOperator` is that file's `Arithmetic`.
+- **The compiler** is `src/compiler/`: `Lower.zig` (checked tree to `Ir.zig`), `EmitC.zig` (IR to
+  C) and `Compiler.zig` (the build tools and `zig cc`). Compiled programs link
+  `src/runtime/compiled.zig` through `src/runtime/emerald.h`. A construct it cannot compile yet
+  stops `emerald build` with `Lower.fail`, never with different behavior. When a change teaches it
+  more, add the cases that now pass to `conformance/compiled.txt` and run
+  `zig build test-compiler`.
 - **Generated files** are never edited by hand: `src/runtime/unicode/tables.zig` (from
   `tools/unicode/`), `src/runtime/tzdata/` (from `tools/update-tzdata.py`), and the prelude's syntax
   tree (from `tools/prelude_ast.zig`).

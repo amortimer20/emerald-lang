@@ -6550,3 +6550,28 @@ compiled program will, and calls the runtime for the rest through `runNativeCold
 inlined. Inlining `//` and `%` too measured slower again, since `applyBinary` grew; a loop of
 `%` and `//` runs at 0.99 of main without it. The benchmarks are 0.96 to 1.00 of main. Slice 1 is done; `Interpreter.zig` is about
 9,400 lines, from 11,800 before 1b.
+
+## 2026-11-07: Compiler slice 2: the IR and `emerald build`
+
+Slice 1 finished with PR #74. Slice 2 is the first compiler that runs: `emerald build` checks a
+program, lowers the checked tree to the IR (`src/compiler/Ir.zig`: basic blocks, and a check
+instruction for every runtime check), emits C with `#line` back to the `.em` file, and compiles it
+with `zig cc` against the runtime library, which `zig build` now builds and installs under
+`zig-out/build-tools/runtime/<arch-os-abi>/`. It compiles the scalars, functions, `if`, `while`,
+`for` over a written range, `break` and `continue`, the logical operators and comparison chains,
+and `print` and `write`; anything else stops the build at the construct with "cannot compile ...
+yet", before the build tools are needed.
+
+A runtime error in a compiled program is byte for byte the interpreter's. The message comes from
+`Operations`; the location, quoted line and carets are rendered at build time by `Diagnostic`;
+and the trace is built as each failed call returns, so a call that succeeds costs one branch.
+Trying every single-file conformance case, 27 built, and all 27 matched their expectations
+exactly; none built and behaved differently. They are the first `conformance/compiled.txt`, which
+`zig build test-compiler` checks and CI runs on all three systems. Compiled `fib` takes 0.009 s
+against the interpreter's 0.58 s, 63 times faster, and builds in 0.6 s.
+
+Two orders had to match the interpreter's: a module variable read in an expression is copied
+before a later call can change it, and `print` evaluates every argument before it writes. And one
+Windows note: `std.Io.File.Writer` in positional mode dropped the output of a program whose
+standard output was a pipe, without an error; the runtime writes in streaming mode, as `main.zig`
+does.
