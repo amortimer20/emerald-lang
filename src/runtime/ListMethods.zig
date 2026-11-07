@@ -17,6 +17,7 @@ const Range = @import("Range.zig").Range;
 const toFloat = Native.toFloat;
 const holdsNan = Native.holdsNan;
 const integer_range_help = Native.integer_range_help;
+const Operations = @import("Operations.zig");
 
 /// Which operation could not order a NaN, which decides the message.
 pub const ExtremeKind = enum { ordinary, keyed, pair, sort, sort_by };
@@ -431,4 +432,111 @@ pub fn raiseExtremeNaN(ctx: *Context, kind: ExtremeKind) Error {
             .sort_by => "Return a key that is not NaN, checking it with `nan?()` when needed.",
         },
     );
+}
+
+/// Section 8's methods that change a list in place. The engine has made the
+/// list its own before calling (`Heap.unique`), and passes arguments it owns:
+/// one stored, as `append`'s is, is kept, and one only compared is released.
+pub const Mutation = enum { append, append_all, insert, remove, remove_all, remove_at, remove_first, remove_last, clear, @"reverse!", @"unique!", @"sort!", @"shuffle!" };
+
+pub fn mutate(ctx: *Context, list: *Heap.List, method: Mutation, arguments: []const Value) Error!Value {
+    const items = &list.items;
+    switch (method) {
+        .append => try items.append(ctx.gpa, widen(arguments[0], list.element)),
+        .append_all => {
+            // The argument was evaluated before the receiver was made unique,
+            // so `items.append_all(items)` reads what the list held before
+            // the call, never the items it is adding. Reading by position up
+            // to the count taken first keeps that true even if both were one
+            // list, whose storage growing would move.
+            defer ctx.heap.release(arguments[0]);
+            const added = arguments[0].data.list;
+            const count = added.items.items.len;
+            try items.ensureUnusedCapacity(ctx.gpa, count);
+            for (0..count) |position| items.appendAssumeCapacity(widen(Heap.retain(added.items.items[position]), list.element));
+        },
+        .insert => {
+            const index = arguments[0].data.int;
+            if (index < 0 or index > items.items.len) {
+                const count = items.items.len;
+                const help = try std.fmt.allocPrint(
+                    ctx.arena,
+                    "Insert at 0 through {d}. Inserting at {d} adds to the end.",
+                    .{ count, count },
+                );
+                return ctx.raiseFmt(
+                    "cannot insert at index {d} in a list of {d} element{s}",
+                    .{ index, count, if (count == 1) "" else "s" },
+                    help,
+                );
+            }
+            try items.insert(ctx.gpa, @intCast(index), widen(arguments[1], list.element));
+        },
+        .remove => {
+            defer ctx.heap.release(arguments[0]);
+            for (items.items, 0..) |item, position| {
+                if (!try Value.equals(ctx.gpa, item, arguments[0], ctx.equatable())) continue;
+                ctx.heap.release(items.orderedRemove(position));
+                break;
+            }
+        },
+        .remove_all => {
+            defer ctx.heap.release(arguments[0]);
+            const keep = try ctx.gpa.alloc(bool, items.items.len);
+            defer ctx.gpa.free(keep);
+            for (items.items, keep) |item, *kept| kept.* = !try Value.equals(ctx.gpa, item, arguments[0], ctx.equatable());
+            compactList(ctx.heap, list, keep);
+        },
+        .remove_at => {
+            const position = arguments[0].data.int;
+            if (position < 0 or position >= items.items.len) return Operations.outsideIndex(ctx, .list, items.items.len, position);
+            return items.orderedRemove(@intCast(position));
+        },
+        .remove_first, .remove_last => {
+            if (items.items.len == 0) return ctx.raise(
+                "cannot remove an element from an empty list",
+                "Check `empty?()` first.",
+            );
+            return if (method == .remove_first) items.orderedRemove(0) else items.pop().?;
+        },
+        .clear => {
+            for (items.items) |item| ctx.heap.release(item);
+            items.clearRetainingCapacity();
+        },
+        .@"reverse!" => std.mem.reverse(Value, items.items),
+        .@"unique!" => {
+            const keep = try ctx.gpa.alloc(bool, items.items.len);
+            defer ctx.gpa.free(keep);
+            outer: for (items.items, 0..) |item, position| {
+                keep[position] = true;
+                for (items.items[0..position], keep[0..position]) |previous, kept| {
+                    if (!kept) continue;
+                    if (try Value.equals(ctx.gpa, item, previous, ctx.equatable())) {
+                        keep[position] = false;
+                        continue :outer;
+                    }
+                }
+            }
+            compactList(ctx.heap, list, keep);
+        },
+        .@"sort!" => {
+            if (list.element == .float and items.items.len > 0 and std.math.isNan(items.items[0].data.float)) return raiseExtremeNaN(ctx, .sort);
+            try sortItemsByKeys(ctx, list.element, items.items, null, .sort);
+        },
+        .@"shuffle!" => ctx.random().shuffle(Value, items.items),
+    }
+    return Value.nothing;
+}
+
+/// No user code runs during publication: decisions are complete before any
+/// element is released or moved, so an error leaves scratch ownership valid.
+pub fn compactList(heap: *Heap, list: *Heap.List, keep: []const bool) void {
+    var count: usize = 0;
+    for (list.items.items, keep) |item, kept| {
+        if (kept) {
+            list.items.items[count] = item;
+            count += 1;
+        } else heap.release(item);
+    }
+    list.items.shrinkRetainingCapacity(count);
 }
