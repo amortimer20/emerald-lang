@@ -16,6 +16,7 @@ const Checker = @import("../Checker.zig");
 const Resolver = @import("../Resolver.zig");
 const Ir = @import("Ir.zig");
 const Arithmetic = @import("runtime").Operations.Arithmetic;
+const Natives = @import("runtime").Natives;
 
 const Lower = @This();
 
@@ -29,6 +30,7 @@ function_keys: std.StringHashMapUnmanaged(FunctionInfo) = .empty,
 globals: std.ArrayList(Ir.Global) = .empty,
 global_keys: std.StringHashMapUnmanaged(Ir.GlobalIndex) = .empty,
 sites: std.ArrayList(Source.Span) = .empty,
+literals: std.ArrayList([]const u8) = .empty,
 /// What stopped lowering, once something has.
 unsupported: ?Unsupported = null,
 
@@ -67,7 +69,7 @@ pub fn lower(self: *Lower, program: Ast.Program) Error!Ir.Program {
         try entry.statement(statement);
     }
     self.functions.items[0] = try entry.finish();
-    return .{ .functions = self.functions.items, .globals = self.globals.items, .sites = self.sites.items };
+    return .{ .functions = self.functions.items, .globals = self.globals.items, .sites = self.sites.items, .literals = self.literals.items };
 }
 
 fn fail(self: *Lower, span: Source.Span, what: []const u8) Error {
@@ -84,6 +86,11 @@ fn site(self: *Lower, span: Source.Span) Error!Ir.Site {
     return @intCast(self.sites.items.len - 1);
 }
 
+fn literal(self: *Lower, text: []const u8) Error!Ir.Operand {
+    try self.literals.append(self.arena, text);
+    return .{ .literal = @intCast(self.literals.items.len - 1) };
+}
+
 fn line(self: *Lower, span: Source.Span) u32 {
     return self.source.location(span.start).line;
 }
@@ -95,6 +102,7 @@ fn irType(checked: Type) ?Ir.Type {
         .int => .int,
         .float => .float,
         .bool => .bool,
+        .string => .string,
         .nothing => .nothing,
         else => null,
     };
@@ -108,6 +116,7 @@ fn annotationType(self: *Lower, annotation: Ast.TypeExpression) Error!Ir.Type {
         if (std.mem.eql(u8, annotation.name, "Int")) return .int;
         if (std.mem.eql(u8, annotation.name, "Float")) return .float;
         if (std.mem.eql(u8, annotation.name, "Bool")) return .bool;
+        if (std.mem.eql(u8, annotation.name, "String")) return .string;
     }
     return self.fail(annotation.span, "a value of this type");
 }
@@ -506,15 +515,17 @@ const Builder = struct {
             .comparison => |chain| self.comparison(expression_, chain),
             .if_expression => |choice| self.ifExpression(expression_, choice),
             .call => |call_| (try self.call(expression_, call_, false)) orelse self.owner.fail(expression_.span, "using the result of this call"),
-            .string_literal, .interpolation => self.owner.fail(expression_.span, "a String value"),
+            .string_literal => |text| .{ .operand = try self.owner.literal(text), .type = .string },
+            .interpolation => |pieces| self.interpolation(expression_, pieces),
             .nothing_literal => self.owner.fail(expression_.span, "`nothing`"),
             .list_literal => self.owner.fail(expression_.span, "a list"),
             .dictionary_literal => self.owner.fail(expression_.span, "a dictionary"),
             .tuple_literal => self.owner.fail(expression_.span, "a tuple"),
             .range => self.owner.fail(expression_.span, "a range outside a `for`"),
             .lambda => self.owner.fail(expression_.span, "a block"),
-            .member => self.owner.fail(expression_.span, "a member"),
-            .index, .slice => self.owner.fail(expression_.span, "indexing"),
+            .member => |accessed| self.memberAccess(expression_, accessed),
+            .index => |indexed| self.indexing(expression_, indexed),
+            .slice => |sliced| self.slicing(expression_, sliced),
             .case_expression => self.owner.fail(expression_.span, "`case`"),
             .enum_value, .type_literal => self.owner.fail(expression_.span, "a type's value"),
             .type_test => self.owner.fail(expression_.span, "`is`"),
@@ -544,6 +555,11 @@ const Builder = struct {
     /// Section 5.3: two `Int`s give an `Int`, except under `/`; any `Float`
     /// makes the operation a `Float` one.
     fn binary(self: *Builder, span: Source.Span, operator: Arithmetic, left: Value, right: Value) Error!Value {
+        if (left.type == .string and right.type == .string and operator == .add) {
+            const result = try self.temporary(.string);
+            try self.emit(span, .{ .concat = .{ .destination = .{ .local = result }, .left = left.operand, .right = right.operand } });
+            return .{ .operand = .{ .local = result }, .type = .string };
+        }
         if (!isNumber(left.type) or !isNumber(right.type)) return self.owner.fail(span, "this operation");
         if (left.type == .int and right.type == .int and operator != .divide) {
             const result = try self.temporary(.int);
@@ -597,6 +613,7 @@ const Builder = struct {
                     else => return self.owner.fail(expression_.span, "this comparison"),
                 },
                 .bool => if (right.type == .bool and operator.isEquality()) .bool else return self.owner.fail(expression_.span, "this comparison"),
+                .string => if (right.type == .string) .string else return self.owner.fail(expression_.span, "this comparison"),
                 .nothing => return self.owner.fail(expression_.span, "this comparison"),
             };
             try self.emit(expression_.span, .{ .compare = .{ .operator = operator, .kind = kind, .destination = .{ .local = result }, .left = left.operand, .right = right.operand } });
@@ -636,8 +653,9 @@ const Builder = struct {
     /// A call to `print`, `write` or a function of the program. Gives the
     /// result, or null when the call gives nothing.
     fn call(self: *Builder, expression_: *const Ast.Expression, call_: Ast.Expression.Call, discarded: bool) Error!?Value {
-        if (call_.callee.data != .name) return self.owner.fail(call_.callee.span, "calling this");
         if (call_.names.len != 0) return self.owner.fail(expression_.span, "named arguments");
+        if (call_.callee.data == .member) return self.method(expression_, call_, call_.callee.data.member, discarded);
+        if (call_.callee.data != .name) return self.owner.fail(call_.callee.span, "calling this");
         const name = call_.callee.data.name;
         if (self.find(name) == null) {
             if (self.owner.function_keys.get(self.owner.keyOf(name))) |info| {
@@ -695,8 +713,122 @@ const Builder = struct {
             .int => .{ .int = value.operand },
             .float => .{ .float = value.operand },
             .bool => .{ .bool = value.operand },
+            .string => .{ .string = value.operand },
             .nothing => .{ .text = "nothing" },
         };
+    }
+
+    /// Section 5.1's interpolation, as a value: a new string built from its
+    /// parts, each shown as `print` shows it.
+    fn interpolation(self: *Builder, expression_: *const Ast.Expression, pieces: []const Ast.Expression.Part) Error!Value {
+        var parts: std.ArrayList(Ir.Instruction.Write) = .empty;
+        for (pieces) |piece| switch (piece) {
+            .text => |text| try parts.append(self.arena(), .{ .text = text }),
+            .expression => |inner| try parts.append(self.arena(), try self.display(inner)),
+        };
+        const result = try self.temporary(.string);
+        try self.emit(expression_.span, .{ .format = .{ .destination = .{ .local = result }, .parts = parts.items } });
+        return .{ .operand = .{ .local = result }, .type = .string };
+    }
+
+    /// The type the checker gave `expression_`, if slice 3a can hold it.
+    fn checkedType(self: *Builder, expression_: *const Ast.Expression) ?Ir.Type {
+        const found = self.owner.checked.expression_types.get(expression_) orelse return null;
+        return irType(found.type);
+    }
+
+    /// A property: section 9.2's `count` of a string's characters.
+    fn memberAccess(self: *Builder, expression_: *const Ast.Expression, member_: Ast.Expression.Member) Error!Value {
+        if (member_.optional or member_.position != null) return self.owner.fail(expression_.span, "this member");
+        if (self.checkedType(member_.base) != .string or !std.mem.eql(u8, member_.name, "count")) return self.owner.fail(expression_.span, "this member");
+        const base = try self.expression(member_.base);
+        const result = try self.temporary(.int);
+        try self.emit(expression_.span, .{ .string_count = .{ .destination = .{ .local = result }, .operand = base.operand } });
+        return .{ .operand = .{ .local = result }, .type = .int };
+    }
+
+    fn indexing(self: *Builder, expression_: *const Ast.Expression, index_: Ast.Expression.Index) Error!Value {
+        if (self.checkedType(index_.base) != .string) return self.owner.fail(expression_.span, "indexing this");
+        const base = try self.expression(index_.base);
+        const position = try self.convert(try self.expression(index_.index), .int, index_.index.span);
+        const result = try self.temporary(.string);
+        try self.emit(expression_.span, .{ .string_index = .{ .destination = .{ .local = result }, .operand = base.operand, .position = position, .site = try self.owner.site(expression_.span) } });
+        return .{ .operand = .{ .local = result }, .type = .string };
+    }
+
+    fn slicing(self: *Builder, expression_: *const Ast.Expression, slice_: Ast.Expression.Slice) Error!Value {
+        if (self.checkedType(slice_.base) != .string) return self.owner.fail(expression_.span, "slicing this");
+        const base = try self.expression(slice_.base);
+        const start: ?Ir.Operand = if (slice_.start) |bound| try self.convert(try self.expression(bound), .int, bound.span) else null;
+        const end: ?Ir.Operand = if (slice_.end) |bound| try self.convert(try self.expression(bound), .int, bound.span) else null;
+        const result = try self.temporary(.string);
+        try self.emit(expression_.span, .{ .string_slice = .{
+            .destination = .{ .local = result },
+            .operand = base.operand,
+            .start = start,
+            .end = end,
+            .inclusive = slice_.inclusive,
+            .site = try self.owner.site(expression_.span),
+        } });
+        return .{ .operand = .{ .local = result }, .type = .string };
+    }
+
+    /// A method on a string or a number, which the runtime's `Natives.zig`
+    /// answers as it does for the interpreter, or `to_string` on a scalar,
+    /// which is its display.
+    fn method(self: *Builder, expression_: *const Ast.Expression, call_: Ast.Expression.Call, member_: Ast.Expression.Member, discarded: bool) Error!?Value {
+        if (member_.optional or member_.position != null) return self.owner.fail(expression_.span, "this call");
+        if (self.owner.checked.method_calls.contains(call_.callee)) return self.owner.fail(expression_.span, "a method of a type");
+        const receiver_type = self.checkedType(member_.base) orelse return self.owner.fail(expression_.span, "a method of this value");
+        const result_type = self.checkedType(expression_) orelse return self.owner.fail(expression_.span, "a method giving this value");
+        const name = member_.name;
+
+        // `to_string` with no arguments on an `Int`, a `Float` or a `Bool` is
+        // its display; `Int`'s with a base, and `format`, take named
+        // arguments the interpreter binds itself.
+        const scalar = receiver_type == .int or receiver_type == .float or receiver_type == .bool;
+        if (scalar and std.mem.eql(u8, name, "to_string")) {
+            if (call_.arguments.len != 0) return self.owner.fail(expression_.span, "`to_string` with a base");
+            const value = try self.expression(member_.base);
+            const result = try self.temporary(.string);
+            const part: Ir.Instruction.Write = switch (receiver_type) {
+                .int => .{ .int = value.operand },
+                .float => .{ .float = value.operand },
+                else => .{ .bool = value.operand },
+            };
+            try self.emit(expression_.span, .{ .format = .{ .destination = .{ .local = result }, .parts = try self.arena().dupe(Ir.Instruction.Write, &.{part}) } });
+            return .{ .operand = .{ .local = result }, .type = .string };
+        }
+        if (std.mem.eql(u8, name, "format")) return self.owner.fail(expression_.span, "`format`");
+
+        const id: Natives.Id = switch (receiver_type) {
+            .string => Natives.lookup(.string, name),
+            .int => Natives.lookup(.int, name),
+            .float => Natives.lookup(.float, name),
+            else => null,
+        } orelse return self.owner.fail(expression_.span, "this method");
+        if (call_.arguments.len > 8) return self.owner.fail(expression_.span, "this many arguments");
+
+        const receiver = try self.expression(member_.base);
+        const arguments = try self.arena().alloc(Ir.Typed, call_.arguments.len);
+        for (call_.arguments, arguments) |argument, *out| {
+            const value = try self.expression(argument);
+            if (value.type == .nothing) return self.owner.fail(argument.span, "this argument");
+            out.* = .{ .operand = value.operand, .type = value.type };
+        }
+        const destination: ?Ir.Local = if (discarded or result_type == .nothing) null else try self.temporary(result_type);
+        try self.emit(expression_.span, .{ .native = .{
+            .family = @backingInt(std.meta.activeTag(id)),
+            .method = switch (id) {
+                inline else => |which| @backingInt(which),
+            },
+            .receiver = .{ .operand = receiver.operand, .type = receiver.type },
+            .arguments = arguments,
+            .destination = if (destination) |local| .{ .local = local } else null,
+            .result = result_type,
+            .site = try self.owner.site(expression_.span),
+        } });
+        return if (destination) |local| .{ .operand = .{ .local = local }, .type = result_type } else null;
     }
 };
 

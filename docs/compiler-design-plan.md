@@ -285,6 +285,21 @@ single-file case tried, none built and behaved differently. Compiled `fib` runs 
 
 **Slice 3: values on the heap.** Strings, lists, dictionaries, sets, tuples, ranges, structs,
 classes and closures, with reference counting, copy-on-write and the cycle collector.
+*Settled while building:* slice 3 is several PRs, as slice 1 was: **3a** strings, **3b** lists,
+ranges and `for` over a collection, **3c** dictionaries, sets and tuples, **3d** structs and
+classes, **3e** closures and blocks, and projects of several files where the work reaches them.
+3a done on `claude/compiler-strings`: a `String` in generated C is the runtime's own
+`Heap.Text`. The ownership rule, which every later part keeps: each local and global of a heap
+type owns one reference or holds nothing; storing retains the new value and releases the old; a
+function retains its heap parameters on entry and releases all its locals at its one exit, which
+every return and every failure passes; an operation's result is a new reference its destination
+takes over. Literals are the runtime's uncounted literal texts, made once each. Lowering compiles
+literals and interpolations as values, `+`, the comparisons, `count`, indexing, slicing, every
+method `Natives.zig` answers on strings and numbers (through `em_native`, with values tagged in
+`Value.Kind`'s order and the result widened to the checker's type), and `to_string` on scalars.
+After 1,000 iterations of joining, slicing and calling, the live heap held only the literals and
+the global it should. `compiled.txt` grows from 27 to 43 cases, and of every single-file case
+tried, none builds and behaves differently.
 
 **Slice 4: errors.** `raise`, `try`, `catch`, error types, and the runtime errors with the
 shared messages; the `runtime-errors/` cases join the list.

@@ -8,8 +8,14 @@
 //! An emitter only translates; it decides nothing about the language.
 //!
 //! Slice 2 has the scalars (`Int`, `Float`, `Bool`), functions, control flow
-//! and `print`. Values on the heap, with explicit reference-count operations,
-//! join in slice 3.
+//! and `print`; slice 3a adds `String`, the first value on the heap.
+//!
+//! A heap value is owned by the slot that holds it. Every local and global of
+//! a heap type owns one reference, or holds nothing yet; storing into one
+//! retains the new value and releases the old, and a function releases all of
+//! its own when it returns. An operation's result is a new reference its
+//! destination takes over. An emitter applies those rules from the slots'
+//! types, so the IR spells out where values go rather than each count.
 
 const std = @import("std");
 const Source = @import("../Source.zig");
@@ -23,6 +29,8 @@ pub const Program = struct {
     globals: []const Global,
     /// The places a failure or a call can be reported at, by `Site`.
     sites: []const Source.Span,
+    /// The text of each string literal, by `Operand.literal`.
+    literals: []const []const u8,
 };
 
 pub const Type = enum {
@@ -30,6 +38,12 @@ pub const Type = enum {
     int,
     float,
     bool,
+    string,
+
+    /// Whether a slot of this type owns a reference on the heap.
+    pub fn counted(self: Type) bool {
+        return self == .string;
+    }
 };
 
 pub const Global = struct {
@@ -79,6 +93,14 @@ pub const Operand = union(enum) {
     int: i64,
     float: f64,
     bool: bool,
+    /// A string literal, by its index in `Program.literals`.
+    literal: u32,
+};
+
+/// An operand with its type, where an instruction takes values of several.
+pub const Typed = struct {
+    operand: Operand,
+    type: Type,
 };
 
 pub const Block = struct {
@@ -110,12 +132,28 @@ pub const Instruction = struct {
         call: struct { function: FunctionIndex, arguments: []const Operand, destination: ?Place, site: Site },
         /// Part of a line of output.
         write: Write,
+        /// Section 9's `+` on two strings.
+        concat: struct { destination: Place, left: Operand, right: Operand },
+        /// A string built from parts: an interpolation, or a `to_string`.
+        format: struct { destination: Place, parts: []const Write },
+        /// A method of the runtime's `Natives.zig`, by family and method
+        /// index, giving `result`, or nothing to keep when `destination` is
+        /// null.
+        native: struct { family: u32, method: u32, receiver: Typed, arguments: []const Typed, destination: ?Place, result: Type, site: Site },
+        /// Section 9.2's `count` of a string's characters.
+        string_count: struct { destination: Place, operand: Operand },
+        /// Section 9.1's `text[position]`.
+        string_index: struct { destination: Place, operand: Operand, position: Operand, site: Site },
+        /// Section 5.4's `text[start..end]`, with either bound left out.
+        string_slice: struct { destination: Place, operand: Operand, start: ?Operand, end: ?Operand, inclusive: bool, site: Site },
     };
 
     pub const Comparison = enum {
         int,
         float,
         bool,
+        /// Two strings, by their normalized forms.
+        string,
         /// An `Int` on the left and a `Float` on the right, compared exactly.
         int_float,
         float_int,
@@ -126,6 +164,7 @@ pub const Instruction = struct {
         int: Operand,
         float: Operand,
         bool: Operand,
+        string: Operand,
     };
 };
 

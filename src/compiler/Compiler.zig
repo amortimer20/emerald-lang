@@ -148,16 +148,16 @@ pub fn compileC(gpa: std.mem.Allocator, io: std.Io, tools: Tools, c_path: []cons
     const output_flag = try std.fmt.allocPrint(gpa, "-o{s}", .{output});
     defer gpa.free(output_flag);
     const argv: []const []const u8 = &.{
-        tools.zig,                          "cc",
-        "-std=c11",                         if (options.debug) "-O0" else "-O2",
+        tools.zig,                         "cc",
+        "-std=c11",                        if (options.debug) "-O0" else "-O2",
         // Stripped unless debugging, which also keeps Windows from writing a
         // `.pdb` beside every executable.
         if (options.debug) "-g" else "-s",
         // The C is generated, so its warnings are Emerald's to fix, not the
         // programmer's to read.
         "-w",
-        include,                            c_path,
-        tools.runtime_library,              output_flag,
+        include,                           c_path,
+        tools.runtime_library,             output_flag,
     };
     const result = try std.process.run(gpa, io, .{ .argv = argv });
     defer gpa.free(result.stdout);
