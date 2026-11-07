@@ -51,6 +51,7 @@ const unicode = @import("runtime").unicode;
 const call_arguments = @import("arguments.zig");
 const Scheduler = @import("runtime").Scheduler;
 const Native = @import("runtime").Native;
+const MapMethods = @import("runtime").MapMethods;
 const ListMethods = @import("runtime").ListMethods;
 const RangeMethods = @import("runtime").RangeMethods;
 const NumberMethods = @import("runtime").NumberMethods;
@@ -2078,7 +2079,7 @@ fn elementValue(self: *Interpreter, span: Source.Span, root: *Value, steps: []co
                 const map = at.data.map;
                 const key = widen(Heap.retain(index.value), map.key_kind);
                 defer self.heap.release(key);
-                const hash = try self.hashKey(index.span, key);
+                const hash = try self.runNative(index.span, MapMethods.hashKey, .{key});
                 const entry = try Heap.lookupIn(self.gpa, map, hash, key, self.equatable(index.span)) orelse
                     return self.raiseMissingKey(index.span, key);
                 at = entry.value;
@@ -2133,7 +2134,7 @@ fn storeElement(self: *Interpreter, span: Source.Span, root: *Value, steps: []co
                     // dictionary whose keys are `Float`.
                     const key = widen(Heap.retain(index.value), map.key_kind);
                     defer self.heap.release(key);
-                    const hash = try self.hashKey(index.span, key);
+                    const hash = try self.runNative(index.span, MapMethods.hashKey, .{key});
                     if (last) {
                         // Section 8.3: this inserts or replaces. It can now
                         // fail where it could not before this key's type
@@ -2214,7 +2215,7 @@ fn containerSlotTracking(self: *Interpreter, span: Source.Span, root: *Value, st
                     const map = try self.heap.uniqueMap(slot);
                     const key = widen(Heap.retain(index.value), map.key_kind);
                     defer self.heap.release(key);
-                    const hash = try self.hashKey(index.span, key);
+                    const hash = try self.runNative(index.span, MapMethods.hashKey, .{key});
                     const found = switch (try self.heap.locate(map, hash, key, self.equatable(index.span))) {
                         .entry => |at| at,
                         .vacancy => return self.raiseMissingKey(index.span, key),
@@ -2369,7 +2370,7 @@ fn executeForList(self: *Interpreter, loop: Ast.For) Error!void {
             const entry = entries[pending];
             pending += 1;
             // A set's value is `nothing`, which holds nothing to release.
-            const item = if (map.is_set) entry.key else try self.entryTuple(map, entry);
+            const item = if (map.is_set) entry.key else try MapMethods.entryTuple(&self.heap, map, entry);
             if (!try self.executeIteration(loop, item)) return;
         }
         return;
@@ -2378,27 +2379,6 @@ fn executeForList(self: *Interpreter, loop: Ast.For) Error!void {
     for (iterable.data.list.items.items) |item| {
         if (!try self.executeIteration(loop, Heap.retain(item))) return;
     }
-}
-
-/// Section 8.6's `(key, value)`, which is the one item a dictionary's block and
-/// `for` loop receive. Takes over one holder of each half.
-fn entryTuple(self: *Interpreter, map: *const Heap.Map, entry: Heap.Map.Entry) Error!Value {
-    const items = self.gpa.alloc(Value, 2) catch |err| {
-        self.heap.release(entry.key);
-        self.heap.release(entry.value);
-        return err;
-    };
-    items[0] = entry.key;
-    items[1] = entry.value;
-    const kinds = self.gpa.alloc(Value.Kind, 2) catch |err| {
-        for (items) |item| self.heap.release(item);
-        self.gpa.free(items);
-        return err;
-    };
-    kinds[0] = map.key_kind;
-    kinds[1] = map.value_kind;
-    // `createTuple` takes over both halves even when it fails.
-    return .{ .data = .{ .tuple = try self.heap.createTuple(items, kinds) } };
 }
 
 /// One pass through a `for` body with the loop variable bound to `value`, in a
@@ -3552,22 +3532,11 @@ fn evaluateDictionary(
 
     for (entries) |entry| {
         const key = widen(try self.evaluate(entry.key), key_kind);
-        const hash = try self.hashKey(entry.key.span, key);
+        const hash = try self.runNative(entry.key.span, MapMethods.hashKey, .{key});
         const value = widen(try self.evaluate(entry.value), value_kind);
         try self.heap.put(map, hash, key, value, self.equatable(entry.key.span));
     }
     return result;
-}
-
-/// Section 8.3: NaN is rejected as a key, directly or inside a tuple, because
-/// it is not equal to itself and so could never be found again.
-fn hashKey(self: *Interpreter, span: Source.Span, key: Value) Error!u64 {
-    if (holdsNan(key)) return self.raise(
-        span,
-        "a not-a-number value cannot be a key",
-        "`nan?` is never equal to anything, including itself, so nothing stored under it could be found again.",
-    );
-    return Value.hash(self.gpa, key, self.equatable(span));
 }
 
 fn evaluateList(self: *Interpreter, expression: *const Ast.Expression, elements: []const *const Ast.Expression) Error!Value {
@@ -3641,7 +3610,7 @@ fn evaluateSet(
 
     for (elements) |element| {
         const member = widen(try self.evaluate(element), member_kind);
-        const hash = try self.hashKey(element.span, member);
+        const hash = try self.runNative(element.span, MapMethods.hashKey, .{member});
         try self.heap.put(map, hash, member, Value.nothing, self.equatable(element.span));
     }
     return result;
@@ -3661,7 +3630,7 @@ fn readIndex(self: *Interpreter, expression: *const Ast.Expression, base: Value,
         const map = base.data.map;
         const key = widen(try self.evaluate(index.index), map.key_kind);
         defer self.heap.release(key);
-        const hash = try self.hashKey(index.index.span, key);
+        const hash = try self.runNative(index.index.span, MapMethods.hashKey, .{key});
         const entry = try Heap.lookupIn(self.gpa, map, hash, key, self.equatable(index.index.span)) orelse return Value.nothing;
         return Heap.retain(entry.value);
     }
@@ -6196,7 +6165,7 @@ fn csvRecords(self: *Interpreter, span: Source.Span, text: []const u8, separator
         for (header.fields, row.fields) |name, field| {
             const key = try self.heap.copyText(name);
             const field_value = try self.heap.copyText(field);
-            const hash = try self.hashKey(span, key);
+            const hash = try self.runNative(span, MapMethods.hashKey, .{key});
             try self.heap.put(record, hash, key, field_value, self.equatable(span));
         }
         records.items.appendAssumeCapacity(value);
@@ -6713,7 +6682,7 @@ fn httpHeaders(self: *Interpreter, span: Source.Span, raw: []const Http.Header) 
         const lowered = try std.ascii.allocLowerString(self.gpa, header.name);
         defer self.gpa.free(lowered);
         const key = try self.heap.copyText(lowered);
-        const hash = try self.hashKey(span, key);
+        const hash = try self.runNative(span, MapMethods.hashKey, .{key});
         const existing = try Heap.lookupIn(self.gpa, headers, hash, key, self.equatable(span));
         const value: Value = if (existing) |old| blk: {
             const separator = if (std.mem.eql(u8, lowered, "set-cookie")) "\n" else ", ";
@@ -6730,7 +6699,7 @@ fn httpHeader(self: *Interpreter, span: Source.Span, headers: *const Heap.Map, n
     defer self.gpa.free(lowered);
     const key = try self.heap.copyText(lowered);
     defer self.heap.release(key);
-    const hash = try self.hashKey(span, key);
+    const hash = try self.runNative(span, MapMethods.hashKey, .{key});
     const found = try Heap.lookupIn(self.gpa, headers, hash, key, self.equatable(span)) orelse return .nothing;
     return Heap.retain(found.value);
 }
@@ -6888,7 +6857,7 @@ const JsonBuilder = struct {
             fields[at.entries] = .{ .data = .{ .map = map } };
             for (json.entries) |entry| {
                 const key = try heap.copyText(entry.key);
-                const hash = interpreter.hashKey(self.span, key) catch |err| {
+                const hash = interpreter.runNative(self.span, MapMethods.hashKey, .{key}) catch |err| {
                     heap.release(key);
                     return err;
                 };
@@ -6986,7 +6955,7 @@ fn jsonDecodeDictionary(self: *Interpreter, span: Source.Span, json: Json.Value,
         const entry_path = try self.jsonObjectPath(path, entry.key);
         defer self.gpa.free(entry_path);
         const key = try self.heap.copyText(entry.key);
-        const hash = self.hashKey(span, key) catch |err| {
+        const hash = self.runNative(span, MapMethods.hashKey, .{key}) catch |err| {
             self.heap.release(key);
             return err;
         };
@@ -8591,170 +8560,6 @@ fn callOr(
     return widen(try self.evaluate(call.arguments[0]), kindOf(present));
 }
 
-/// Section 8.5's `each` and section 8.6's callback collection methods.
-///
-/// The receiver is held for the whole traversal, so the list being visited
-/// cannot change underneath it: a block that changes the same variable finds
-/// the buffer shared and copies it first, which is section 8.1's value
-/// semantics doing exactly what it promises.
-/// One value per entry: the member for a set, a `(key, value)` tuple for a
-/// dictionary. The caller owns one holder of each.
-fn collectItems(self: *Interpreter, map: *const Heap.Map) Error![]Value {
-    const items = try self.gpa.alloc(Value, map.entries.items.len);
-    var built: usize = 0;
-    errdefer {
-        for (items[0..built]) |item| self.heap.release(item);
-        self.gpa.free(items);
-    }
-    while (built < items.len) : (built += 1) {
-        const entry = map.entries.items[built];
-        items[built] = if (map.is_set)
-            Heap.retain(entry.key)
-        else
-            try self.entryTuple(map, .{
-                .hash = entry.hash,
-                .key = Heap.retain(entry.key),
-                .value = Heap.retain(entry.value),
-            });
-    }
-    return items;
-}
-
-/// Section 8.5's dictionary and set methods that only look.
-fn readMap(
-    self: *Interpreter,
-    call: Ast.Expression.Call,
-    member: Ast.Expression.Member,
-    map: *const Heap.Map,
-    arguments: []const Value,
-) Error!Value {
-    const name = member.name;
-
-    if (std.mem.eql(u8, name, "empty?")) return .initBool(map.count() == 0);
-
-    if (map.is_set) {
-        if (std.mem.eql(u8, name, "union") or
-            std.mem.eql(u8, name, "intersection") or
-            std.mem.eql(u8, name, "difference") or
-            std.mem.eql(u8, name, "symmetric_difference"))
-        {
-            const other = arguments[0];
-            if (other.kind() != .map or !other.data.map.is_set) {
-                return self.raiseFmt(
-                    call.arguments[0].span,
-                    "`{s}` needs a Set",
-                    .{name},
-                    "Pass a set with the same element type.",
-                );
-            }
-            const result = try self.heap.createMap(map.key_kind, .nothing, true);
-            const value: Value = .{ .data = .{ .map = result } };
-            errdefer self.heap.release(value);
-            if (std.mem.eql(u8, name, "union")) {
-                for (map.entries.items) |entry| {
-                    const key = Heap.retain(entry.key);
-                    const hash = try self.hashKey(call.arguments[0].span, key);
-                    try self.heap.put(result, hash, key, Value.nothing, self.equatable(call.arguments[0].span));
-                }
-                for (other.data.map.entries.items) |entry| {
-                    const key = Heap.retain(entry.key);
-                    const hash = try self.hashKey(call.arguments[0].span, key);
-                    try self.heap.put(result, hash, key, Value.nothing, self.equatable(call.arguments[0].span));
-                }
-                return value;
-            }
-            if (std.mem.eql(u8, name, "intersection")) {
-                for (map.entries.items) |entry| {
-                    const key = Heap.retain(entry.key);
-                    const hash = try self.hashKey(call.arguments[0].span, key);
-                    if (try Heap.lookupIn(self.gpa, other.data.map, hash, key, self.equatable(call.arguments[0].span)) == null) continue;
-                    try self.heap.put(result, hash, key, Value.nothing, self.equatable(call.arguments[0].span));
-                }
-                return value;
-            }
-            if (std.mem.eql(u8, name, "difference")) {
-                for (map.entries.items) |entry| {
-                    const key = Heap.retain(entry.key);
-                    const hash = try self.hashKey(call.arguments[0].span, key);
-                    if (try Heap.lookupIn(self.gpa, other.data.map, hash, key, self.equatable(call.arguments[0].span)) != null) continue;
-                    try self.heap.put(result, hash, key, Value.nothing, self.equatable(call.arguments[0].span));
-                }
-                return value;
-            }
-            for (map.entries.items) |entry| {
-                const key = Heap.retain(entry.key);
-                const hash = try self.hashKey(call.arguments[0].span, key);
-                if (try Heap.lookupIn(self.gpa, other.data.map, hash, key, self.equatable(call.arguments[0].span)) == null) {
-                    try self.heap.put(result, hash, key, Value.nothing, self.equatable(call.arguments[0].span));
-                }
-            }
-            for (other.data.map.entries.items) |entry| {
-                const key = Heap.retain(entry.key);
-                const hash = try self.hashKey(call.arguments[0].span, key);
-                if (try Heap.lookupIn(self.gpa, map, hash, key, self.equatable(call.arguments[0].span)) == null) {
-                    try self.heap.put(result, hash, key, Value.nothing, self.equatable(call.arguments[0].span));
-                }
-            }
-            return value;
-        }
-
-        if (std.mem.eql(u8, name, "subset?") or std.mem.eql(u8, name, "superset?") or std.mem.eql(u8, name, "disjoint?")) {
-            const other = arguments[0];
-            if (other.kind() != .map or !other.data.map.is_set) {
-                return self.raiseFmt(
-                    call.arguments[0].span,
-                    "`{s}` needs a Set",
-                    .{name},
-                    "Pass a set with the same element type.",
-                );
-            }
-            if (std.mem.eql(u8, name, "subset?")) {
-                for (map.entries.items) |entry| {
-                    const hash = try self.hashKey(call.arguments[0].span, entry.key);
-                    if (try Heap.lookupIn(self.gpa, other.data.map, hash, entry.key, self.equatable(call.arguments[0].span)) == null) return .initBool(false);
-                }
-                return .initBool(true);
-            }
-            if (std.mem.eql(u8, name, "superset?")) {
-                for (other.data.map.entries.items) |entry| {
-                    const hash = try self.hashKey(call.arguments[0].span, entry.key);
-                    if (try Heap.lookupIn(self.gpa, map, hash, entry.key, self.equatable(call.arguments[0].span)) == null) return .initBool(false);
-                }
-                return .initBool(true);
-            }
-            for (map.entries.items) |entry| {
-                const hash = try self.hashKey(call.arguments[0].span, entry.key);
-                if (try Heap.lookupIn(self.gpa, other.data.map, hash, entry.key, self.equatable(call.arguments[0].span)) != null) return .initBool(false);
-            }
-            return .initBool(true);
-        }
-    }
-
-    if (std.mem.eql(u8, name, "contains_key?") or std.mem.eql(u8, name, "contains?")) {
-        const key = widen(Heap.retain(arguments[0]), map.key_kind);
-        defer self.heap.release(key);
-        const hash = try self.hashKey(call.arguments[0].span, key);
-        return .initBool(try Heap.lookupIn(self.gpa, map, hash, key, self.equatable(call.arguments[0].span)) != null);
-    }
-
-    if (std.mem.eql(u8, name, "contains_value?")) {
-        for (map.entries.items) |entry| {
-            if (try Value.equals(self.gpa, entry.value, arguments[0], self.equatable(call.arguments[0].span))) return .initBool(true);
-        }
-        return .initBool(false);
-    }
-
-    if (std.mem.eql(u8, name, "keys")) return self.mapHalf(map, .key);
-    if (std.mem.eql(u8, name, "values")) return self.mapHalf(map, .value);
-
-    // `entries`
-    const items = try self.collectItems(map);
-    defer self.gpa.free(items);
-    const list = try self.heap.createList(.tuple, items.len);
-    for (items) |item| list.items.appendAssumeCapacity(item);
-    return .{ .data = .{ .list = list } };
-}
-
 /// Section 8.5's dictionary and set methods that change what they are called
 /// on. `map` has already been made safe to change.
 fn changeMap(
@@ -8768,7 +8573,7 @@ fn changeMap(
 
     if (std.mem.eql(u8, name, "add")) {
         const held = widen(Heap.retain(arguments[0]), map.key_kind);
-        const hash = try self.hashKey(call.arguments[0].span, held);
+        const hash = try self.runNative(call.arguments[0].span, MapMethods.hashKey, .{held});
         try self.heap.put(map, hash, held, Value.nothing, self.equatable(call.arguments[0].span));
         return Value.nothing;
     }
@@ -8776,7 +8581,7 @@ fn changeMap(
     if (std.mem.eql(u8, name, "remove")) {
         const key = widen(Heap.retain(arguments[0]), map.key_kind);
         defer self.heap.release(key);
-        const hash = try self.hashKey(call.arguments[0].span, key);
+        const hash = try self.runNative(call.arguments[0].span, MapMethods.hashKey, .{key});
         const removed = try self.heap.removeKey(map, hash, key, self.equatable(call.arguments[0].span));
         // A set reports nothing; a dictionary answers with what was there, and
         // absence when the key was not (4.5).
@@ -8804,21 +8609,7 @@ fn changeMap(
     return Value.nothing;
 }
 
-const Half = enum { key, value };
-
-/// Section 8.5's `keys` and `values`, each a list in insertion order.
-fn mapHalf(self: *Interpreter, map: *const Heap.Map, half: Half) Error!Value {
-    const list = try self.heap.createList(
-        if (half == .key) map.key_kind else map.value_kind,
-        map.entries.items.len,
-    );
-    const result: Value = .{ .data = .{ .list = list } };
-    errdefer self.heap.release(result);
-    for (map.entries.items) |entry| {
-        list.items.appendAssumeCapacity(Heap.retain(if (half == .key) entry.key else entry.value));
-    }
-    return result;
-}
+const Half = MapMethods.Half;
 
 fn callHigherOrder(
     self: *Interpreter,
@@ -8844,7 +8635,7 @@ fn callHigherOrder(
         self.gpa.free(owned);
     };
     const items: []const Value = if (receiver.data == .map) blk: {
-        built = try self.collectItems(receiver.data.map);
+        built = try MapMethods.collectItems(&self.heap, receiver.data.map);
         break :blk built.?;
     } else receiver.data.list.items.items;
 
@@ -8881,13 +8672,13 @@ fn callHigherOrder(
             const accepted = produced.data.bool;
             if ((kind == .filter and accepted) or (kind == .reject and !accepted)) {
                 if (map.is_set) {
-                    const hash = try self.hashKey(expression.span, item);
+                    const hash = try self.runNative(expression.span, MapMethods.hashKey, .{item});
                     try self.heap.put(result, hash, Heap.retain(item), Value.nothing, self.equatable(expression.span));
                 } else {
                     const tuple = item.data.tuple;
                     const key = tuple.items[0];
                     const value_for_key = tuple.items[1];
-                    const hash = try self.hashKey(expression.span, key);
+                    const hash = try self.runNative(expression.span, MapMethods.hashKey, .{key});
                     try self.heap.put(result, hash, Heap.retain(key), Heap.retain(value_for_key), self.equatable(expression.span));
                 }
             }
@@ -9167,7 +8958,7 @@ fn callGroupBy(
     for (list.items.items) |item| {
         const argument = [_]Value{Heap.retain(item)};
         const key = try self.invokeClosure(expression.span, closure, callable, &argument);
-        const hash = try self.hashKey(expression.span, key);
+        const hash = try self.runNative(expression.span, MapMethods.hashKey, .{key});
         switch (try self.heap.locate(groups, hash, key, self.equatable(expression.span))) {
             .entry => |index| {
                 // A group grows past the one slot it was made with, so room
@@ -9202,7 +8993,7 @@ fn callFrequencies(
     errdefer self.heap.release(result);
 
     for (list.items.items) |item| {
-        const hash = try self.hashKey(expression.span, item);
+        const hash = try self.runNative(expression.span, MapMethods.hashKey, .{item});
         switch (try self.heap.locate(counts, hash, item, self.equatable(expression.span))) {
             .entry => |index| {
                 const current = counts.entries.items[index].value.data.int;
@@ -9359,7 +9150,7 @@ fn callUniqueBy(
     for (items) |item| {
         const argument = [_]Value{Heap.retain(item)};
         const key = try self.invokeClosure(expression.span, closure, callable, &argument);
-        const hash = try self.hashKey(expression.span, key);
+        const hash = try self.runNative(expression.span, MapMethods.hashKey, .{key});
         switch (try self.heap.locate(seen, hash, key, self.equatable(expression.span))) {
             .entry => self.heap.release(key),
             .vacancy => {
@@ -9409,14 +9200,14 @@ fn callAssociate(
         const produced_value = try self.invokeClosure(expression.span, closure, callable, &argument);
         if (by_key_only) {
             const key = widen(produced_value, key_kind);
-            const hash = try self.hashKey(expression.span, key);
+            const hash = try self.runNative(expression.span, MapMethods.hashKey, .{key});
             try self.heap.put(map, hash, key, Heap.retain(item), self.equatable(expression.span));
         } else {
             defer self.heap.release(produced_value);
             const tuple = produced_value.data.tuple;
             const key = widen(Heap.retain(tuple.items[0]), key_kind);
             const value = widen(Heap.retain(tuple.items[1]), value_kind);
-            const hash = try self.hashKey(expression.span, key);
+            const hash = try self.runNative(expression.span, MapMethods.hashKey, .{key});
             try self.heap.put(map, hash, key, value, self.equatable(expression.span));
         }
     }
@@ -9447,7 +9238,7 @@ fn callToDictionary(self: *Interpreter, expression: *const Ast.Expression, membe
         const tuple = item.data.tuple;
         const key = widen(Heap.retain(tuple.items[0]), key_kind);
         const value = widen(Heap.retain(tuple.items[1]), value_kind);
-        const hash = try self.hashKey(expression.span, key);
+        const hash = try self.runNative(expression.span, MapMethods.hashKey, .{key});
         try self.heap.put(map, hash, key, value, self.equatable(expression.span));
     }
     return result;
@@ -9690,7 +9481,7 @@ fn callReadingMethod(
         return self.runNative(expression.span, RangeMethods.rangeMethod, .{ receiver.data.range, member.name, arguments });
     }
     if (receiver.data == .map) {
-        return self.readMap(call, member, receiver.data.map, arguments);
+        return self.runNative(if (call.arguments.len > 0) call.arguments[0].span else member.name_span, MapMethods.readMap, .{ member.name, receiver.data.map, arguments });
     }
 
     self.beginCallback(&guard, member.name);
@@ -9732,7 +9523,7 @@ fn callMapTransform(
         errdefer self.heap.release(produced);
         const key = if (changing) widen(produced, key_kind) else widen(Heap.retain(entry.key), key_kind);
         const value = if (changing) widen(Heap.retain(entry.value), value_kind) else widen(produced, value_kind);
-        const hash = try self.hashKey(member.name_span, key);
+        const hash = try self.runNative(member.name_span, MapMethods.hashKey, .{key});
         if (changing) {
             // Two entries must not collapse into one: the result would be
             // smaller than the receiver and one value would vanish silently.
@@ -10166,7 +9957,7 @@ fn callToSet(self: *Interpreter, member: Ast.Expression.Member) Error!Value {
     errdefer self.heap.release(result);
 
     for (items) |item| {
-        const hash = try self.hashKey(member.base.span, item);
+        const hash = try self.runNative(member.base.span, MapMethods.hashKey, .{item});
         try self.heap.put(map, hash, Heap.retain(item), Value.nothing, self.equatable(member.base.span));
     }
     return result;
