@@ -3432,9 +3432,19 @@ const NativeEngine = struct {
     }
 
     fn enginePreludeStruct(ptr: *anyopaque, name: []const u8) *const Value.StructType {
+        const interpreter = of(ptr).interpreter;
+        const prefix = Resolver.prelude_namespace ++ ".";
         var buffer: [128]u8 = undefined;
-        const key = std.fmt.bufPrint(&buffer, Resolver.prelude_namespace ++ ".{s}", .{name}) catch unreachable;
-        return of(ptr).interpreter.structs.get(key).?;
+        if (prefix.len + name.len <= buffer.len) {
+            @memcpy(buffer[0..prefix.len], prefix);
+            @memcpy(buffer[prefix.len..][0..name.len], name);
+            return interpreter.structs.get(buffer[0 .. prefix.len + name.len]).?;
+        }
+        // A name too long for the buffer; prelude names are short, so this is
+        // a safety net rather than a path anything takes today.
+        const key = std.mem.concat(interpreter.gpa, u8, &.{ prefix, name }) catch @panic("out of memory");
+        defer interpreter.gpa.free(key);
+        return interpreter.structs.get(key).?;
     }
 
     fn engineRandom(ptr: *anyopaque) std.Random {
@@ -4114,8 +4124,8 @@ fn evaluateCallInner(
             return .nothing;
         }
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::_color")) return .initBool(self.color);
-        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::_width")) return self.callConsoleText(expression.span, call, SystemNatives.columnWidth);
-        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::plain")) return self.callConsoleText(expression.span, call, SystemNatives.plainOf);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::_width")) return self.callTextNative(expression.span, call, SystemNatives.columnWidth);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::plain")) return self.callTextNative(expression.span, call, SystemNatives.plainOf);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::clear")) return self.callConsoleClear();
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::table")) {
             if (self.json_encodes.get(call.callee)) |record_type| return self.callConsoleStructTable(expression.span, call, record_type);
@@ -4123,9 +4133,9 @@ fn evaluateCallInner(
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Instant::_now")) return self.runNative(expression.span, SystemNatives.clock, .{.real});
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Stopwatch::_ticks")) return self.runNative(expression.span, SystemNatives.clock, .{.awake});
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_local_name")) return self.heap.copyText(self.native_state.local_zone.name);
-        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_known?")) return self.callZoneKnown(expression.span, call);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_known?")) return self.callTextNative(expression.span, call, TimeNatives.zoneKnown);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_offset_seconds")) return self.callZoneOffset(expression.span, call);
-        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_suggestion")) return self.callZoneSuggestion(expression.span, call);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_suggestion")) return self.callTextNative(expression.span, call, TimeNatives.zoneSuggestion);
         if (std.mem.eql(u8, key, Resolver.program_sleep_key)) return self.callSleep(expression.span, call);
         if (std.mem.eql(u8, key, Resolver.program_environment_key)) return self.callEnvironment(expression.span, call);
         if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Regex::")) {
@@ -6611,9 +6621,9 @@ fn jsonTextualType(key: []const u8) bool {
         std.mem.eql(u8, short, ".Instant");
 }
 
-/// Section 14.3's `Console` natives that only measure or clean text
-/// (`runtime/SystemNatives.zig`).
-fn callConsoleText(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call, comptime native: anytype) Error!Value {
+/// A native that takes one evaluated `String` argument, such as Console's
+/// width or a time zone's lookup.
+fn callTextNative(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call, comptime native: anytype) Error!Value {
     const text = try self.evaluate(call.arguments[0]);
     defer self.heap.release(text);
     return self.runNative(span, native, .{text.data.string.bytes});
@@ -6638,23 +6648,11 @@ fn callRegex(self: *Interpreter, span: Source.Span, name: []const u8, call: Ast.
     return try self.runNative(span, RegexNatives.call, .{ native, values });
 }
 
-fn callZoneKnown(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call) Error!Value {
-    const name = try self.evaluate(call.arguments[0]);
-    defer self.heap.release(name);
-    return .initBool(try self.runNative(span, TimeNatives.zoneRules, .{name.data.string.bytes}) != null);
-}
-
 fn callZoneOffset(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call) Error!Value {
     const name = try self.evaluate(call.arguments[0]);
     defer self.heap.release(name);
     const at = (try self.evaluate(call.arguments[1])).data.int;
     return self.runNative(span, TimeNatives.zoneOffset, .{ name.data.string.bytes, at });
-}
-
-fn callZoneSuggestion(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call) Error!Value {
-    const name = try self.evaluate(call.arguments[0]);
-    defer self.heap.release(name);
-    return self.runNative(span, TimeNatives.zoneSuggestion, .{name.data.string.bytes});
 }
 
 /// Section 9.3's `Math` functions (`runtime/MathNatives.zig`).

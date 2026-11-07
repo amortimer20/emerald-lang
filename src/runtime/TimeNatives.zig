@@ -38,6 +38,11 @@ pub fn zoneDatabase(ctx: *Context) Error!TimeZone.Database {
     return database;
 }
 
+/// Whether this machine knows zone `name`.
+pub fn zoneKnown(ctx: *Context, name: []const u8) Error!Value {
+    return .initBool(try zoneRules(ctx, name) != null);
+}
+
 /// The offset in seconds from UTC of zone `name` at instant `at` (seconds
 /// since 1970), or 0 for a zone this machine does not know.
 pub fn zoneOffset(ctx: *Context, name: []const u8, at: i64) Error!Value {
