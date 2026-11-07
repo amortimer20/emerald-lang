@@ -2,7 +2,7 @@
 //! input line, `{"text": "...", "separator": ","}`, and either the parsed
 //! rows or an error. The Python tool compares accepted rows to `csv.reader`.
 //!
-//!   zig run --dep csv -Mroot=tools/csv/probe.zig -Mcsv=src/Csv.zig
+//!   zig run --dep csv -Mroot=tools/csv/probe.zig -Mcsv=src/runtime/Csv.zig
 
 const std = @import("std");
 const Csv = @import("csv");

@@ -3,7 +3,7 @@
 //! JSON line back, the first match's group spans in graphemes, `"match":
 //! null`, or the refusal's message.
 //!
-//!   zig run --dep regex -Mroot=tools/regex_probe.zig -Mregex=src/Regex.zig
+//!   zig run --dep regex -Mroot=tools/regex_probe.zig -Mregex=src/runtime/Regex.zig
 
 const std = @import("std");
 const Regex = @import("regex");

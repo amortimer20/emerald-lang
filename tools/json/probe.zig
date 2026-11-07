@@ -5,7 +5,7 @@
 //! inside the answer, so the caller need only parse the answer once to get
 //! back a native value built the way Emerald's parser understood it.
 //!
-//!   zig run --dep json -Mroot=tools/json/probe.zig -Mjson=src/Json.zig
+//!   zig run --dep json -Mroot=tools/json/probe.zig -Mjson=src/runtime/Json.zig
 
 const std = @import("std");
 const Json = @import("json");

@@ -49,8 +49,8 @@ These are starting points for implementation, not an exhaustive change list.
 - [Interpreter.zig](../src/Interpreter.zig): `registerStruct`,
   `evaluateEnumValue`, `chooseArm`, both case execution paths,
   `pushScope`/`popScope`, `methodCallable`, and typed serializers.
-- [Value.zig](../src/Value.zig): `StructType`, enum display, `equals`, `hashInto`.
-- [Heap.zig](../src/Heap.zig): `createStruct`, `uniqueStruct`, reference-counting
+- [Value.zig](../src/runtime/Value.zig): `StructType`, enum display, `equals`, `hashInto`.
+- [Heap.zig](../src/runtime/Heap.zig): `createStruct`, `uniqueStruct`, reference-counting
   and collector traversal of stored values.
 - [Formatter.zig](../src/Formatter.zig): `Member.end`, `printTypeField`,
   enum formatting runs, `printCase`.

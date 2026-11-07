@@ -5,14 +5,14 @@ MIT License in `LICENSE`.
 
 ## IANA time zone database
 
-The built-in time-zone data (`src/tzdata/zones.zlib`, rewrite-context 15.8) is compiled
+The built-in time-zone data (`src/runtime/tzdata/zones.zlib`, rewrite-context 15.8) is compiled
 from the IANA time zone database, which is in the public domain.
 <https://www.iana.org/time-zones>
 
 ## Unicode data
 
-Emerald's Unicode tables (`src/unicode/tables.zig`) are generated from the Unicode Character
-Database, and the Windows time-zone names (`src/tzdata/tzdata.zig`) from the Unicode Common
+Emerald's Unicode tables (`src/runtime/unicode/tables.zig`) are generated from the Unicode Character
+Database, and the Windows time-zone names (`src/runtime/tzdata/tzdata.zig`) from the Unicode Common
 Locale Data Repository (CLDR). Both are used under the Unicode License V3:
 
 ```text

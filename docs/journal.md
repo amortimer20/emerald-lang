@@ -6467,3 +6467,18 @@ WebAssembly (ran under Node's WASI), a bare Cortex-M0+ (linked, about 50 KB of f
 and a shared library a host loaded. A trimmed Zig toolchain compresses to 52 to 85 MB, which
 confirms keeping it out of the 2.4 MB `emerald` download. The plan's "Slice 0 report" has the
 tables and what was not settled.
+
+## 2026-11-06: Compiler slice 1a: the runtime module
+
+Slice 1 (the shared runtime) was split into three PRs after reading the interpreter: its natives
+read their arguments from the syntax tree at about 150 string-compared dispatch sites, and 269
+raise sites build their messages in `Interpreter.zig`. 1a is the boundary only. `Heap`, `Value`,
+`Range`, `strings`, `unicode` (with its tables and test data), `FloatMath`, `Json`, `Csv`, `Regex`,
+`Http`, `TimeZone` (with `tzdata/`), `Scheduler` and `Module` moved to `src/runtime/`, which
+`build.zig` builds as the module `runtime`; the front end and the interpreter import it through
+`@import("runtime")`. The one front-end tie was a closure holding its lambda's `Ast.Expression`;
+it is now an opaque pointer the interpreter casts back. Because a Zig file belongs to one module,
+a runtime file that imported the front end would now fail to build, which is the boundary's
+check. `runtime-test` runs the moved files' 149 tests; paths were updated in tools, CI, the
+generators and the living docs (not in the journal or the review's snapshots). No behaviour
+change: the whole suite passes and the benchmarks are within noise.
