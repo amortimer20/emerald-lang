@@ -300,6 +300,17 @@ method `Natives.zig` answers on strings and numbers (through `em_native`, with v
 After 1,000 iterations of joining, slicing and calling, the live heap held only the literals and
 the global it should. `compiled.txt` grows from 27 to 43 cases, and of every single-file case
 tried, none builds and behaves differently.
+3b done on `claude/compiler-lists`: a list is the runtime's own `Heap.List` under the same rule.
+The methods that change a list moved from the interpreter to `ListMethods.mutate`, so both
+engines run them. A change goes through the slot that holds the list, which the runtime makes
+its only holder first (`Heap.unique`), so a copy taken before the change keeps its values.
+Lowering compiles list literals, indexing, assignment into an element, `count`, the read-only and
+the mutating methods, display, equality, lists as parameters, results and globals, and `for` over
+a list, which visits the list as it was when the loop began. The IR's `.list` carries no element
+type; lowering records each list variable's from its declaration, for element assignment, and the
+instructions that read elements carry theirs. Ranges outside a `for`, and `for` over a string,
+are left for 3c. `compiled.txt` grows to 55 cases, still with none that builds and behaves
+differently; most of the rest wait on dictionaries, optionals, tuples and structs.
 
 **Slice 4: errors.** `raise`, `try`, `catch`, error types, and the runtime errors with the
 shared messages; the `runtime-errors/` cases join the list.

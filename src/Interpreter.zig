@@ -7849,7 +7849,7 @@ fn callPartition(
 }
 
 /// Section 8.5's `remove_if`: removes every element the block accepts,
-/// compacting in place the same way `mutateList`'s `remove_all` does for a
+/// compacting in place the same way `ListMethods.mutate`'s `remove_all` does for a
 /// single value, but deciding item by item with the block instead of `==`.
 fn callRemoveIf(
     self: *Interpreter,
@@ -7871,7 +7871,7 @@ fn callRemoveIf(
         defer self.heap.release(produced);
         kept.* = !produced.data.bool;
     }
-    self.compactList(list, keep);
+    ListMethods.compactList(&self.heap, list, keep);
     return Value.nothing;
 }
 
@@ -8697,7 +8697,7 @@ fn callChangingMethod(
         const result = if (std.mem.eql(u8, member.name, "remove_if"))
             self.callRemoveIf(expression, copy.data.list, arguments[0])
         else
-            self.mutateList(expression.span, copy.data.list, member.name, arguments);
+            self.runNative(expression.span, ListMethods.mutate, .{ copy.data.list, std.meta.stringToEnum(ListMethods.Mutation, member.name).?, arguments });
         self.endCallback(&guard);
         const value = try result;
         // Callbacks can grow the module's binding table. Re-find the place,
@@ -8715,7 +8715,7 @@ fn callChangingMethod(
     }
     const list = try self.heap.unique(slot);
     if (std.mem.eql(u8, member.name, "remove_if")) return self.callRemoveIf(expression, list, arguments[0]);
-    return self.mutateList(expression.span, list, member.name, arguments);
+    return self.runNative(expression.span, ListMethods.mutate, .{ list, std.meta.stringToEnum(ListMethods.Mutation, member.name).?, arguments });
 }
 
 /// Section 10's instance method on a struct.
@@ -9185,110 +9185,6 @@ fn ownedText(self: *Interpreter, bytes: []u8) Error!Value {
 
 /// Runs one mutating list method. Arguments are owned: one that is stored is
 /// taken by the list, and the rest are released here.
-fn mutateList(self: *Interpreter, span: Source.Span, list: *Heap.List, name: []const u8, arguments: []const Value) Error!Value {
-    const items = &list.items;
-    const Method = enum { append, append_all, insert, remove, remove_all, remove_at, remove_first, remove_last, clear, @"reverse!", @"unique!", @"sort!", @"shuffle!" };
-    switch (std.meta.stringToEnum(Method, name).?) {
-        .append => try items.append(self.gpa, widen(arguments[0], list.element)),
-        .append_all => {
-            // The argument was evaluated before the receiver was made unique,
-            // so `items.append_all(items)` reads what the list held before
-            // the call, never the items it is adding. Reading by position up
-            // to the count taken first keeps that true even if both were one
-            // list, whose storage growing would move.
-            defer self.heap.release(arguments[0]);
-            const added = arguments[0].data.list;
-            const count = added.items.items.len;
-            try items.ensureUnusedCapacity(self.gpa, count);
-            for (0..count) |position| items.appendAssumeCapacity(widen(Heap.retain(added.items.items[position]), list.element));
-        },
-        .insert => {
-            const index = arguments[0].data.int;
-            if (index < 0 or index > items.items.len) {
-                const count = items.items.len;
-                const help = try std.fmt.allocPrint(
-                    self.arena,
-                    "Insert at 0 through {d}. Inserting at {d} adds to the end.",
-                    .{ count, count },
-                );
-                return self.raiseFmt(
-                    span,
-                    "cannot insert at index {d} in a list of {d} element{s}",
-                    .{ index, count, if (count == 1) "" else "s" },
-                    help,
-                );
-            }
-            try items.insert(self.gpa, @intCast(index), widen(arguments[1], list.element));
-        },
-        .remove => {
-            defer self.heap.release(arguments[0]);
-            for (items.items, 0..) |item, position| {
-                if (!try Value.equals(self.gpa, item, arguments[0], self.equatable(span))) continue;
-                self.heap.release(items.orderedRemove(position));
-                break;
-            }
-        },
-        .remove_all => {
-            defer self.heap.release(arguments[0]);
-            const keep = try self.gpa.alloc(bool, items.items.len);
-            defer self.gpa.free(keep);
-            for (items.items, keep) |item, *kept| kept.* = !try Value.equals(self.gpa, item, arguments[0], self.equatable(span));
-            self.compactList(list, keep);
-        },
-        .remove_at => {
-            const position = try self.checkIndex(span, .list, list.items.items.len, arguments[0].data.int);
-            return items.orderedRemove(position);
-        },
-        .remove_first, .remove_last => {
-            if (items.items.len == 0) return self.raise(
-                span,
-                "cannot remove an element from an empty list",
-                "Check `empty?()` first.",
-            );
-            return if (std.mem.eql(u8, name, "remove_first")) items.orderedRemove(0) else items.pop().?;
-        },
-        .clear => {
-            for (items.items) |item| self.heap.release(item);
-            items.clearRetainingCapacity();
-        },
-        .@"reverse!" => std.mem.reverse(Value, items.items),
-        .@"unique!" => {
-            const keep = try self.gpa.alloc(bool, items.items.len);
-            defer self.gpa.free(keep);
-            outer: for (items.items, 0..) |item, position| {
-                keep[position] = true;
-                for (items.items[0..position], keep[0..position]) |previous, kept| {
-                    if (!kept) continue;
-                    if (try Value.equals(self.gpa, item, previous, self.equatable(span))) {
-                        keep[position] = false;
-                        continue :outer;
-                    }
-                }
-            }
-            self.compactList(list, keep);
-        },
-        .@"sort!" => {
-            if (list.element == .float and items.items.len > 0 and std.math.isNan(items.items[0].data.float)) return self.runNative(span, ListMethods.raiseExtremeNaN, .{.sort});
-            try self.runNative(span, ListMethods.sortItemsByKeys, .{ list.element, items.items, null, .sort });
-        },
-        .@"shuffle!" => self.random().shuffle(Value, items.items),
-    }
-    return Value.nothing;
-}
-
-/// No user code runs during publication: decisions are complete before any
-/// element is released or moved, so an error leaves scratch ownership valid.
-fn compactList(self: *Interpreter, list: *Heap.List, keep: []const bool) void {
-    var count: usize = 0;
-    for (list.items.items, keep) |item, kept| {
-        if (kept) {
-            list.items.items[count] = item;
-            count += 1;
-        } else self.heap.release(item);
-    }
-    list.items.shrinkRetainingCapacity(count);
-}
-
 /// Section 5.2: arguments evaluate left to right, every one of them before the
 /// call itself happens. The caller frees the result.
 fn evaluateArguments(self: *Interpreter, expressions: []const *const Ast.Expression) Error![]Value {
