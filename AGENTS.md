@@ -145,7 +145,9 @@ implemented and Claude reviewed.
   are ids in `runtime/Natives.zig`; a new one gets a member in its family's `Method` enum.
 - **Prelude natives** (Regex, encodings, time zones, Json and Csv without a target type, Math,
   Console text, clocks, the environment) are in `src/runtime/*Natives.zig`; what they keep
-  between calls is `Native.State`. Routing to them is still a chain of string-key comparisons in
+  between calls is `Native.State`. A method dispatched on its receiver's kind gets an id in
+  `Natives.Id`; a prelude native is a plain runtime function (a family with many entries also
+  gives an enum of them). Routing to them is still a chain of string-key comparisons in
   `Interpreter.evaluateCall`, and the order matters. A value that holds a `Native.Context` must
   not outlive the `runNative` call that made it.
 - **Generated files** are never edited by hand: `src/runtime/unicode/tables.zig` (from

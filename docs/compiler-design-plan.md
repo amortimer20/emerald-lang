@@ -175,7 +175,11 @@ appended here, a go or no-go on decision 1's route, and a measured answer for qu
 
 **Slice 1: the runtime layer.** Move the heap, values, library code and messages behind the
 runtime boundary of decision 4, and give natives numeric ids. No behaviour change: the whole
-suite passes untouched, and the benchmarks do not get slower.
+suite passes untouched, and the benchmarks do not get slower. *As built:* a method dispatched on
+its receiver's kind (strings, lists, dictionaries and the rest) has an id in `Natives.Id`; a
+prelude native is a runtime function a compiled program calls by name, and a family with many
+entries (Regex, Math) also gives an enum of them. Files, Http, `print`, `input`, `exit`,
+`sleep` and `Console.clear` move in slice 6 (see 1b part 2 below).
 
 *Settled while building (2026-11-06):* slice 1 is three PRs, merged in order, because the
 interpreter's natives read their arguments from the syntax tree (about 150 dispatch sites
