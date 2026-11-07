@@ -15,11 +15,14 @@ const Range = @import("Range.zig").Range;
 const toFloat = Native.toFloat;
 const holdsNan = Native.holdsNan;
 
-pub fn bytesMethod(ctx: *Context, bytes: []const u8, name: []const u8) Error!Value {
-    if (std.mem.eql(u8, name, "to_string_maybe")) {
+/// Every `Bytes` method these natives answer, by name.
+pub const Method = enum { to_string_maybe, to_hex, to_string };
+
+pub fn bytesMethod(ctx: *Context, bytes: []const u8, method: Method) Error!Value {
+    if (method == .to_string_maybe) {
         return if (std.unicode.utf8ValidateSlice(bytes)) ctx.heap.copyText(bytes) else Value.nothing;
     }
-    if (std.mem.eql(u8, name, "to_hex")) return bytesToHex(ctx.heap, bytes);
+    if (method == .to_hex) return bytesToHex(ctx.heap, bytes);
     if (!std.unicode.utf8ValidateSlice(bytes)) return raiseEncodingMessage(ctx, "these Bytes are not valid UTF-8 text");
     return ctx.heap.copyText(bytes);
 }

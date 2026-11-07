@@ -24,10 +24,12 @@ pub const ExtremeKind = enum { ordinary, keyed, pair, sort, sort_by };
 /// A list method that does not change its receiver. Value-producing methods
 /// retain their items into a fresh list, preserving list value semantics even
 /// when an item is itself a collection or object.
-pub fn readListMethod(ctx: *Context, list: *const Heap.List, name: []const u8, arguments: []const Value) Error!Value {
+/// Every list method these natives answer, by name.
+pub const Method = enum { @"empty?", @"contains?", index_of, chain, chunks, windows, pairs, take, drop, repeat, reverse, unique, zip, sum, average, min, max, sort, shuffle, random, join };
+
+pub fn readListMethod(ctx: *Context, list: *const Heap.List, method: Method, arguments: []const Value) Error!Value {
     const items = list.items.items;
-    const Method = enum { @"empty?", @"contains?", index_of, chain, chunks, windows, pairs, take, drop, repeat, reverse, unique, zip, sum, average, min, max, sort, shuffle, random, join };
-    return switch (std.meta.stringToEnum(Method, name).?) {
+    return switch (method) {
         .@"empty?" => .initBool(items.len == 0),
         .@"contains?" => blk: {
             for (items) |item| {
@@ -117,13 +119,13 @@ pub fn readListMethod(ctx: *Context, list: *const Heap.List, name: []const u8, a
             const requested = arguments[0].data.int;
             if (requested < 0) return ctx.raiseFmt(
                 "`{s}` cannot use count {d}",
-                .{ name, requested },
+                .{ @tagName(method), requested },
                 "Pass 0 or more items to take or drop.",
             );
             // A count larger than the machine can address still means "all"
             // here, so this stays independent of the interpreter's word size.
             const boundary = if (std.math.cast(usize, requested)) |count| @min(count, items.len) else items.len;
-            break :blk if (std.mem.eql(u8, name, "take"))
+            break :blk if (method == .take)
                 copyList(ctx.heap, list.element, items[0..boundary])
             else
                 copyList(ctx.heap, list.element, items[boundary..]);
@@ -209,7 +211,7 @@ pub fn readListMethod(ctx: *Context, list: *const Heap.List, name: []const u8, a
             break :blk ctx.ownedText(try joined.toOwnedSlice(ctx.gpa));
         },
         .average => averageList(list),
-        .min, .max => listExtreme(ctx, list, std.mem.eql(u8, name, "min")),
+        .min, .max => listExtreme(ctx, list, method == .min),
         .sort => blk: {
             if (list.element == .float and items.len > 0 and std.math.isNan(items[0].data.float)) return raiseExtremeNaN(ctx, .sort);
             const result = try ctx.heap.createList(list.element, items.len);

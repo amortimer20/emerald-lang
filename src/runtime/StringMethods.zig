@@ -14,53 +14,56 @@ const widen = Native.widen;
 
 /// Section 9.2's string methods, on the receiver's bytes. The checker has
 /// proved the method exists and the arguments fit it.
-pub fn stringMethod(ctx: *Context, bytes: []const u8, name: []const u8, arguments: []const Value) Error!Value {
-    const Method = enum {
-        @"empty?",
-        @"blank?",
-        @"contains?",
-        @"starts_with?",
-        @"ends_with?",
-        trim,
-        trim_start,
-        trim_end,
-        upper,
-        lower,
-        capitalize,
-        reverse,
-        repeat,
-        replace,
-        insert_at,
-        substring,
-        remove_prefix,
-        remove_suffix,
-        collapse_repeats,
-        pad_start,
-        pad_end,
-        pad_center,
-        split,
-        partition,
-        lines,
-        words,
-        @"letter?",
-        @"digit?",
-        @"whitespace?",
-        @"upper?",
-        @"lower?",
-        chars,
-        code_points,
-        bytes,
-        index_of,
-        to_int,
-        to_int_or,
-        to_int_maybe,
-        to_float,
-        to_float_or,
-        to_float_maybe,
-    };
+/// Every string method, by name; a `Natives.Id` names one.
+pub const Method = enum {
+    @"empty?",
+    @"blank?",
+    @"contains?",
+    @"starts_with?",
+    @"ends_with?",
+    trim,
+    trim_start,
+    trim_end,
+    upper,
+    lower,
+    capitalize,
+    reverse,
+    repeat,
+    replace,
+    insert_at,
+    substring,
+    remove_prefix,
+    remove_suffix,
+    collapse_repeats,
+    pad_start,
+    pad_end,
+    pad_center,
+    split,
+    partition,
+    lines,
+    words,
+    @"letter?",
+    @"digit?",
+    @"whitespace?",
+    @"upper?",
+    @"lower?",
+    chars,
+    code_points,
+    bytes,
+    index_of,
+    to_int,
+    to_int_or,
+    to_int_maybe,
+    to_float,
+    to_float_or,
+    to_float_maybe,
+    to_bytes,
+};
+
+pub fn stringMethod(ctx: *Context, bytes: []const u8, method: Method, arguments: []const Value) Error!Value {
     const gpa = ctx.gpa;
-    if (std.mem.eql(u8, name, "to_bytes")) return ctx.heap.copyBytes(bytes);
-    return switch (std.meta.stringToEnum(Method, name).?) {
+    return switch (method) {
+        .to_bytes => ctx.heap.copyBytes(bytes),
         .@"empty?" => .initBool(bytes.len == 0),
         .@"blank?" => .initBool(strings.isBlank(bytes)),
         .@"letter?" => .initBool(strings.everyCharacter(bytes, .letter)),
@@ -120,7 +123,7 @@ pub fn stringMethod(ctx: *Context, bytes: []const u8, name: []const u8, argument
         .pad_start, .pad_end, .pad_center => blk: {
             const width = arguments[0].data.int;
             const fill = if (arguments.len == 2) arguments[1].data.string.bytes else " ";
-            const side: strings.PadSide = switch (std.meta.stringToEnum(Method, name).?) {
+            const side: strings.PadSide = switch (method) {
                 .pad_start => .start,
                 .pad_end => .end,
                 .pad_center => .center,

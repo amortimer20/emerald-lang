@@ -21,32 +21,35 @@ const toFloat = Native.toFloat;
 const holdsNan = Native.holdsNan;
 
 /// Section 8.5's dictionary and set methods that only look.
+/// Every dictionary and set method these natives answer, by name.
+pub const Method = enum { @"empty?", @"union", intersection, difference, symmetric_difference, @"subset?", @"superset?", @"disjoint?", @"contains_key?", @"contains?", @"contains_value?", keys, values, entries };
+
 pub fn readMap(
     ctx: *Context,
-    name: []const u8,
+    method: Method,
     map: *const Heap.Map,
     arguments: []const Value,
 ) Error!Value {
-    if (std.mem.eql(u8, name, "empty?")) return .initBool(map.count() == 0);
+    if (method == .@"empty?") return .initBool(map.count() == 0);
 
     if (map.is_set) {
-        if (std.mem.eql(u8, name, "union") or
-            std.mem.eql(u8, name, "intersection") or
-            std.mem.eql(u8, name, "difference") or
-            std.mem.eql(u8, name, "symmetric_difference"))
+        if (method == .@"union" or
+            method == .intersection or
+            method == .difference or
+            method == .symmetric_difference)
         {
             const other = arguments[0];
             if (other.kind() != .map or !other.data.map.is_set) {
                 return ctx.raiseFmt(
                     "`{s}` needs a Set",
-                    .{name},
+                    .{@tagName(method)},
                     "Pass a set with the same element type.",
                 );
             }
             const result = try ctx.heap.createMap(map.key_kind, .nothing, true);
             const value: Value = .{ .data = .{ .map = result } };
             errdefer ctx.heap.release(value);
-            if (std.mem.eql(u8, name, "union")) {
+            if (method == .@"union") {
                 for (map.entries.items) |entry| {
                     const key = Heap.retain(entry.key);
                     const hash = try hashKey(ctx, key);
@@ -59,7 +62,7 @@ pub fn readMap(
                 }
                 return value;
             }
-            if (std.mem.eql(u8, name, "intersection")) {
+            if (method == .intersection) {
                 for (map.entries.items) |entry| {
                     const key = Heap.retain(entry.key);
                     const hash = try hashKey(ctx, key);
@@ -68,7 +71,7 @@ pub fn readMap(
                 }
                 return value;
             }
-            if (std.mem.eql(u8, name, "difference")) {
+            if (method == .difference) {
                 for (map.entries.items) |entry| {
                     const key = Heap.retain(entry.key);
                     const hash = try hashKey(ctx, key);
@@ -94,23 +97,23 @@ pub fn readMap(
             return value;
         }
 
-        if (std.mem.eql(u8, name, "subset?") or std.mem.eql(u8, name, "superset?") or std.mem.eql(u8, name, "disjoint?")) {
+        if (method == .@"subset?" or method == .@"superset?" or method == .@"disjoint?") {
             const other = arguments[0];
             if (other.kind() != .map or !other.data.map.is_set) {
                 return ctx.raiseFmt(
                     "`{s}` needs a Set",
-                    .{name},
+                    .{@tagName(method)},
                     "Pass a set with the same element type.",
                 );
             }
-            if (std.mem.eql(u8, name, "subset?")) {
+            if (method == .@"subset?") {
                 for (map.entries.items) |entry| {
                     const hash = try hashKey(ctx, entry.key);
                     if (try Heap.lookupIn(ctx.gpa, other.data.map, hash, entry.key, ctx.equatable()) == null) return .initBool(false);
                 }
                 return .initBool(true);
             }
-            if (std.mem.eql(u8, name, "superset?")) {
+            if (method == .@"superset?") {
                 for (other.data.map.entries.items) |entry| {
                     const hash = try hashKey(ctx, entry.key);
                     if (try Heap.lookupIn(ctx.gpa, map, hash, entry.key, ctx.equatable()) == null) return .initBool(false);
@@ -125,22 +128,22 @@ pub fn readMap(
         }
     }
 
-    if (std.mem.eql(u8, name, "contains_key?") or std.mem.eql(u8, name, "contains?")) {
+    if (method == .@"contains_key?" or method == .@"contains?") {
         const key = widen(Heap.retain(arguments[0]), map.key_kind);
         defer ctx.heap.release(key);
         const hash = try hashKey(ctx, key);
         return .initBool(try Heap.lookupIn(ctx.gpa, map, hash, key, ctx.equatable()) != null);
     }
 
-    if (std.mem.eql(u8, name, "contains_value?")) {
+    if (method == .@"contains_value?") {
         for (map.entries.items) |entry| {
             if (try Value.equals(ctx.gpa, entry.value, arguments[0], ctx.equatable())) return .initBool(true);
         }
         return .initBool(false);
     }
 
-    if (std.mem.eql(u8, name, "keys")) return mapHalf(ctx.heap, map, .key);
-    if (std.mem.eql(u8, name, "values")) return mapHalf(ctx.heap, map, .value);
+    if (method == .keys) return mapHalf(ctx.heap, map, .key);
+    if (method == .values) return mapHalf(ctx.heap, map, .value);
 
     // `entries`
     const items = try collectItems(ctx.heap, map);

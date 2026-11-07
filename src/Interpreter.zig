@@ -51,6 +51,7 @@ const unicode = @import("runtime").unicode;
 const call_arguments = @import("arguments.zig");
 const Scheduler = @import("runtime").Scheduler;
 const Native = @import("runtime").Native;
+const Natives = @import("runtime").Natives;
 const MapMethods = @import("runtime").MapMethods;
 const ListMethods = @import("runtime").ListMethods;
 const RangeMethods = @import("runtime").RangeMethods;
@@ -5606,7 +5607,7 @@ fn evaluateRangeCall(self: *Interpreter, expression: *const Ast.Expression, call
     const base = (try self.evaluate(member.base)).data.range;
     if (std.mem.eql(u8, member.name, "reverse")) return .{ .data = .{ .range = base.reverse() } };
     const distance = (try self.evaluate(call.arguments[0])).data.int;
-    return self.runNative(expression.span, RangeMethods.rangeMethod, .{ base, "step", &[_]Value{.initInt(distance)} });
+    return self.runNative(expression.span, RangeMethods.rangeMethod, .{ base, .step, &[_]Value{.initInt(distance)} });
 }
 
 /// The block spelling is a convenience on Int, not a second Range iteration
@@ -9359,7 +9360,7 @@ fn callMethod(
                 "Pass another List to pair the items up.",
             );
         }
-        return self.runNative(expression.span, ListMethods.readListMethod, .{ receiver.data.list, member.name, arguments });
+        return self.runNative(expression.span, Natives.call, .{ Natives.lookup(.list, member.name).?, receiver, arguments });
     }
 
     const list_method = Type.list_methods.get(member.name);
@@ -9475,18 +9476,18 @@ fn callReadingMethod(
 
     // `empty?` and `contains?` belong to strings, lists, and sets alike.
     if (receiver.data == .string) {
-        return self.runNative(expression.span, StringMethods.stringMethod, .{ receiver.data.string.bytes, member.name, arguments });
+        return self.runNative(expression.span, Natives.call, .{ Natives.lookup(.string, member.name).?, receiver, arguments });
     }
     if (receiver.data == .range) {
-        return self.runNative(expression.span, RangeMethods.rangeMethod, .{ receiver.data.range, member.name, arguments });
+        return self.runNative(expression.span, Natives.call, .{ Natives.lookup(.range, member.name).?, receiver, arguments });
     }
     if (receiver.data == .map) {
-        return self.runNative(if (call.arguments.len > 0) call.arguments[0].span else member.name_span, MapMethods.readMap, .{ member.name, receiver.data.map, arguments });
+        return self.runNative(if (call.arguments.len > 0) call.arguments[0].span else member.name_span, Natives.call, .{ Natives.lookup(.map, member.name).?, receiver, arguments });
     }
 
     self.beginCallback(&guard, member.name);
     defer self.endCallback(&guard);
-    return self.runNative(expression.span, ListMethods.readListMethod, .{ receiver.data.list, member.name, arguments });
+    return self.runNative(expression.span, Natives.call, .{ Natives.lookup(.list, member.name).?, receiver, arguments });
 }
 
 fn callMapTransform(
@@ -9986,14 +9987,14 @@ fn callValueMethod(self: *Interpreter, span: Source.Span, call: Ast.Expression.C
         self.gpa.free(arguments);
     }
 
-    if (receiver.data == .range) return self.runNative(span, RangeMethods.rangeMethod, .{ receiver.data.range, member.name, arguments });
-    if (receiver.data == .string) return self.runNative(span, StringMethods.stringMethod, .{ receiver.data.string.bytes, member.name, arguments });
-    if (receiver.data == .bytes) return self.runNative(span, BytesMethods.bytesMethod, .{ receiver.data.bytes.bytes, member.name });
+    if (receiver.data == .range) return self.runNative(span, Natives.call, .{ Natives.lookup(.range, member.name).?, receiver, arguments });
+    if (receiver.data == .string) return self.runNative(span, Natives.call, .{ Natives.lookup(.string, member.name).?, receiver, arguments });
+    if (receiver.data == .bytes) return self.runNative(span, Natives.call, .{ Natives.lookup(.bytes, member.name).?, receiver, &.{} });
     if (receiver.data == .int and !std.mem.eql(u8, member.name, "to_string")) {
-        return self.runNative(span, NumberMethods.intMethod, .{ receiver.data.int, member.name, arguments });
+        return self.runNative(span, Natives.call, .{ Natives.lookup(.int, member.name).?, receiver, arguments });
     }
     if (receiver.data == .float and !std.mem.eql(u8, member.name, "to_string")) {
-        return self.runNative(span, NumberMethods.floatMethod, .{ receiver.data.float, member.name, arguments });
+        return self.runNative(span, Natives.call, .{ Natives.lookup(.float, member.name).?, receiver, arguments });
     }
 
     // `to_string` on an `Int`, a `Float`, or a `Bool`: its display.

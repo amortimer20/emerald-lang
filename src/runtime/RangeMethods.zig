@@ -15,15 +15,16 @@ const Range = @import("Range.zig").Range;
 const toFloat = Native.toFloat;
 const holdsNan = Native.holdsNan;
 
-pub fn rangeMethod(ctx: *Context, range: Range, name: []const u8, arguments: []const Value) Error!Value {
-    const Method = enum {
-        @"empty?",
-        step,
-        reverse,
-        to_list,
-    };
+/// Every `Range` method these natives answer, by name.
+pub const Method = enum {
+    @"empty?",
+    step,
+    reverse,
+    to_list,
+};
 
-    return switch (std.meta.stringToEnum(Method, name).?) {
+pub fn rangeMethod(ctx: *Context, range: Range, method: Method, arguments: []const Value) Error!Value {
+    return switch (method) {
         .@"empty?" => .initBool(range.empty()),
         .step => blk: {
             const distance = arguments[0].data.int;

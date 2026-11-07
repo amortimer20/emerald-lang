@@ -18,26 +18,27 @@ const integer_range_help = Native.integer_range_help;
 
 /// Section 9.3's integer vocabulary. The checker has proved each argument is
 /// an `Int`, leaving only value-dependent failures for the runtime to explain.
-pub fn intMethod(ctx: *Context, value: i64, name: []const u8, arguments: []const Value) Error!Value {
-    const Method = enum {
-        abs,
-        clamp,
-        @"between?",
-        @"zero?",
-        @"positive?",
-        @"negative?",
-        @"even?",
-        @"odd?",
-        @"multiple_of?",
-        digits,
-        gcd,
-        lcm,
-        factorial,
-        to_float,
-        to_character,
-    };
+/// Every `Int` method these natives answer, by name.
+pub const IntMethod = enum {
+    abs,
+    clamp,
+    @"between?",
+    @"zero?",
+    @"positive?",
+    @"negative?",
+    @"even?",
+    @"odd?",
+    @"multiple_of?",
+    digits,
+    gcd,
+    lcm,
+    factorial,
+    to_float,
+    to_character,
+};
 
-    return switch (std.meta.stringToEnum(Method, name).?) {
+pub fn intMethod(ctx: *Context, value: i64, method: IntMethod, arguments: []const Value) Error!Value {
+    return switch (method) {
         .abs => if (value == std.math.minInt(i64))
             ctx.raiseFmt("the absolute value of {d} does not fit in Int", .{value}, integer_range_help)
         else
@@ -195,29 +196,30 @@ pub fn integerDigits(heap: *Heap, value: i64) Error!Value {
 
 /// Section 9.3's floating-point vocabulary. Rounding operations that return an
 /// `Int` all pass through one range and finiteness check before host conversion.
-pub fn floatMethod(ctx: *Context, value: f64, name: []const u8, arguments: []const Value) Error!Value {
-    const Method = enum {
-        abs,
-        clamp,
-        @"between?",
-        @"zero?",
-        @"positive?",
-        @"negative?",
-        square_root,
-        to_radians,
-        to_degrees,
-        floor,
-        ceil,
-        round,
-        round_to,
-        truncate,
-        @"finite?",
-        @"infinite?",
-        @"nan?",
-        to_int,
-    };
+/// Every `Float` method these natives answer, by name.
+pub const FloatMethod = enum {
+    abs,
+    clamp,
+    @"between?",
+    @"zero?",
+    @"positive?",
+    @"negative?",
+    square_root,
+    to_radians,
+    to_degrees,
+    floor,
+    ceil,
+    round,
+    round_to,
+    truncate,
+    @"finite?",
+    @"infinite?",
+    @"nan?",
+    to_int,
+};
 
-    return switch (std.meta.stringToEnum(Method, name).?) {
+pub fn floatMethod(ctx: *Context, value: f64, method: FloatMethod, arguments: []const Value) Error!Value {
+    return switch (method) {
         .abs => .initFloat(@abs(value)),
         .clamp => blk: {
             const minimum = toFloat(arguments[0]);
@@ -241,7 +243,7 @@ pub fn floatMethod(ctx: *Context, value: f64, name: []const u8, arguments: []con
         .ceil => floatResultToInt(ctx, "ceil", @ceil(value)),
         .round => floatResultToInt(ctx, "round", @round(value)),
         .round_to => .initFloat(roundFloatTo(value, arguments[0].data.int)),
-        .truncate, .to_int => floatResultToInt(ctx, name, @trunc(value)),
+        .truncate, .to_int => floatResultToInt(ctx, @tagName(method), @trunc(value)),
         .@"finite?" => .initBool(std.math.isFinite(value)),
         .@"infinite?" => .initBool(std.math.isInf(value)),
         .@"nan?" => .initBool(std.math.isNan(value)),
