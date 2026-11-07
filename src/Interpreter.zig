@@ -51,6 +51,9 @@ const unicode = @import("runtime").unicode;
 const call_arguments = @import("arguments.zig");
 const Scheduler = @import("runtime").Scheduler;
 const Native = @import("runtime").Native;
+const RangeMethods = @import("runtime").RangeMethods;
+const NumberMethods = @import("runtime").NumberMethods;
+const BytesMethods = @import("runtime").BytesMethods;
 const StringMethods = @import("runtime").StringMethods;
 const widen = Native.widen;
 const holdsNan = Native.holdsNan;
@@ -3457,33 +3460,34 @@ fn nativeContext(self: *Interpreter, engine: *NativeEngine) Native.Context {
     };
 }
 
-/// A native's result, with a failure it recorded raised at `span`. A
-/// `Raised` with no recorded failure came from the program's own code, which
-/// a callback ran and which has already reported.
-fn nativeResult(self: *Interpreter, span: Source.Span, ctx: *const Native.Context, result: Native.Error!Value) Error!Value {
-    return result catch |err| {
-        if (err == error.Raised) {
-            if (ctx.failure) |failure| return self.raiseFailure(span, failure);
-        }
-        return err;
-    };
-}
-
 /// Runs a runtime native, `function(ctx, arguments...)`, raising any failure
-/// it records at `span`.
-fn runNative(self: *Interpreter, span: Source.Span, comptime function: anytype, arguments: anytype) Error!NativePayload(@TypeOf(function)) {
+/// it records at `span`. A native that only fails (a shared message) gives
+/// `Error`; any other gives `Error!` its result.
+fn runNative(self: *Interpreter, span: Source.Span, comptime function: anytype, arguments: anytype) NativeReturn(@TypeOf(function)) {
     var engine: NativeEngine = .{ .interpreter = self, .span = span };
     var ctx = self.nativeContext(&engine);
-    return @call(.auto, function, .{&ctx} ++ arguments) catch |err| {
-        if (err == error.Raised) {
-            if (ctx.failure) |failure| return self.raiseFailure(span, failure);
-        }
-        return err;
+    if (@typeInfo(@typeInfo(@TypeOf(function)).@"fn".return_type.?) == .error_set) {
+        return self.nativeFailure(span, &ctx, @call(.auto, function, .{&ctx} ++ arguments));
+    }
+    return @call(.auto, function, .{&ctx} ++ arguments) catch |err| self.nativeFailure(span, &ctx, err);
+}
+
+fn NativeReturn(comptime Function: type) type {
+    return switch (@typeInfo(@typeInfo(Function).@"fn".return_type.?)) {
+        .error_set => Error,
+        .error_union => |result| Error!result.payload,
+        else => @compileError("a runtime native returns an error union or an error set"),
     };
 }
 
-fn NativePayload(comptime Function: type) type {
-    return @typeInfo(@typeInfo(Function).@"fn".return_type.?).error_union.payload;
+/// A native's failure raised at `span`. A `Raised` with no recorded failure
+/// came from the program's own code, which a callback ran and which has
+/// already reported.
+fn nativeFailure(self: *Interpreter, span: Source.Span, ctx: *const Native.Context, err: Native.Error) Error {
+    if (err == error.Raised) {
+        if (ctx.failure) |failure| return self.raiseFailure(span, failure);
+    }
+    return err;
 }
 
 fn raiseFailure(self: *Interpreter, span: Source.Span, failure: Native.Failure) Error {
@@ -5553,7 +5557,7 @@ fn base64Decode(self: *Interpreter, span: Source.Span, text: []const u8, url_saf
         }
         if (first_padding) |padding_index| {
             if (maybe) return Value.nothing;
-            return self.raiseEncodingMessage(span, try std.fmt.allocPrint(self.arena, "Base64 text has `=` at index {d}, before its end", .{padding_index}));
+            return self.runNative(span, BytesMethods.raiseEncodingMessage, .{try std.fmt.allocPrint(self.arena, "Base64 text has `=` at index {d}, before its end", .{padding_index})});
         }
         const known = character.len == 1 and base64Index(alphabet, character[0]) != null;
         if (!known) {
@@ -5569,7 +5573,7 @@ fn base64Decode(self: *Interpreter, span: Source.Span, text: []const u8, url_saf
                 self.task.state.raised_value = self.makeError(Resolver.preludeKey("EncodingError"), message) catch return error.OutOfMemory;
                 return self.raiseTyped(span, "EncodingError", message, help);
             }
-            return self.raiseEncodingMessage(span, try std.fmt.allocPrint(self.arena, "Base64 text has `{s}` at index {d}, which is not a Base64 character", .{ character, index }));
+            return self.runNative(span, BytesMethods.raiseEncodingMessage, .{try std.fmt.allocPrint(self.arena, "Base64 text has `{s}` at index {d}, which is not a Base64 character", .{ character, index })});
         }
         try clean.append(self.gpa, character[0]);
         try positions.append(self.gpa, index);
@@ -5579,7 +5583,7 @@ fn base64Decode(self: *Interpreter, span: Source.Span, text: []const u8, url_saf
     const encoded = clean.items[0 .. clean.items.len - padding];
     if (encoded.len % 4 == 1) {
         if (maybe) return Value.nothing;
-        return self.raiseEncodingMessage(span, "Base64 text ends partway through a group: it has 1 character too many, or is missing some");
+        return self.runNative(span, BytesMethods.raiseEncodingMessage, .{"Base64 text ends partway through a group: it has 1 character too many, or is missing some"});
     }
     // Four characters make a group; a last group of two or three is padded
     // with two or one `=`, and a complete group with none.
@@ -5590,7 +5594,7 @@ fn base64Decode(self: *Interpreter, span: Source.Span, text: []const u8, url_saf
             try std.fmt.allocPrint(self.arena, "Base64 text ends with {d} `=`, but its last group is already complete and needs none", .{padding})
         else
             try std.fmt.allocPrint(self.arena, "Base64 text ends with {d} `=`, but its last group needs {d}", .{ padding, needed });
-        return self.raiseEncodingMessage(span, message);
+        return self.runNative(span, BytesMethods.raiseEncodingMessage, .{message});
     }
     if (encoded.len % 4 != 0) {
         const last = encoded[encoded.len - 1];
@@ -5599,7 +5603,7 @@ fn base64Decode(self: *Interpreter, span: Source.Span, text: []const u8, url_saf
         if ((value & mask) != 0) {
             if (maybe) return Value.nothing;
             const canonical = alphabet[value & ~mask];
-            return self.raiseEncodingMessage(span, try std.fmt.allocPrint(self.arena, "Base64 text's last character, `{c}` at index {d}, is not a possible final character; write `{c}` instead", .{ last, positions.items[encoded.len - 1], canonical }));
+            return self.runNative(span, BytesMethods.raiseEncodingMessage, .{try std.fmt.allocPrint(self.arena, "Base64 text's last character, `{c}` at index {d}, is not a possible final character; write `{c}` instead", .{ last, positions.items[encoded.len - 1], canonical })});
         }
     }
     const decoder = if (url_safe) std.base64.url_safe_no_pad.Decoder else std.base64.standard_no_pad.Decoder;
@@ -5622,11 +5626,6 @@ fn base64Index(alphabet: [64]u8, character: u8) ?u8 {
     return null;
 }
 
-fn raiseEncodingMessage(self: *Interpreter, span: Source.Span, message: []const u8) Error {
-    self.task.state.raised_value = self.makeError(Resolver.preludeKey("EncodingError"), message) catch return error.OutOfMemory;
-    return self.raiseTyped(span, "EncodingError", message, "Check that this text uses the expected encoding.");
-}
-
 fn evaluateRangeCall(self: *Interpreter, expression: *const Ast.Expression, call: Ast.Expression.Call) Error!Value {
     const member = call.callee.data.member;
     if (std.mem.eql(u8, member.name, "up_to") or std.mem.eql(u8, member.name, "down_to")) {
@@ -5637,7 +5636,7 @@ fn evaluateRangeCall(self: *Interpreter, expression: *const Ast.Expression, call
     const base = (try self.evaluate(member.base)).data.range;
     if (std.mem.eql(u8, member.name, "reverse")) return .{ .data = .{ .range = base.reverse() } };
     const distance = (try self.evaluate(call.arguments[0])).data.int;
-    return self.rangeMethod(expression.span, base, "step", &.{.initInt(distance)});
+    return self.runNative(expression.span, RangeMethods.rangeMethod, .{ base, "step", &[_]Value{.initInt(distance)} });
 }
 
 /// The block spelling is a convenience on Int, not a second Range iteration
@@ -9687,7 +9686,7 @@ fn callReadingMethod(
         return self.runNative(expression.span, StringMethods.stringMethod, .{ receiver.data.string.bytes, member.name, arguments });
     }
     if (receiver.data == .range) {
-        return self.rangeMethod(expression.span, receiver.data.range, member.name, arguments);
+        return self.runNative(expression.span, RangeMethods.rangeMethod, .{ receiver.data.range, member.name, arguments });
     }
     if (receiver.data == .map) {
         return self.readMap(call, member, receiver.data.map, arguments);
@@ -10616,14 +10615,14 @@ fn callValueMethod(self: *Interpreter, span: Source.Span, call: Ast.Expression.C
         self.gpa.free(arguments);
     }
 
-    if (receiver.data == .range) return self.rangeMethod(span, receiver.data.range, member.name, arguments);
+    if (receiver.data == .range) return self.runNative(span, RangeMethods.rangeMethod, .{ receiver.data.range, member.name, arguments });
     if (receiver.data == .string) return self.runNative(span, StringMethods.stringMethod, .{ receiver.data.string.bytes, member.name, arguments });
-    if (receiver.data == .bytes) return self.bytesMethod(span, receiver.data.bytes.bytes, member.name);
+    if (receiver.data == .bytes) return self.runNative(span, BytesMethods.bytesMethod, .{ receiver.data.bytes.bytes, member.name });
     if (receiver.data == .int and !std.mem.eql(u8, member.name, "to_string")) {
-        return self.intMethod(span, receiver.data.int, member.name, arguments);
+        return self.runNative(span, NumberMethods.intMethod, .{ receiver.data.int, member.name, arguments });
     }
     if (receiver.data == .float and !std.mem.eql(u8, member.name, "to_string")) {
-        return self.floatMethod(span, receiver.data.float, member.name, arguments);
+        return self.runNative(span, NumberMethods.floatMethod, .{ receiver.data.float, member.name, arguments });
     }
 
     // `to_string` on an `Int`, a `Float`, or a `Bool`: its display.
@@ -10691,126 +10690,6 @@ fn scalarMember(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call
     return .{ .data = .{ .string = try self.heap.createText(try built.toOwnedSlice()) } };
 }
 
-fn rangeMethod(self: *Interpreter, span: Source.Span, range: Range, name: []const u8, arguments: []const Value) Error!Value {
-    const Method = enum {
-        @"empty?",
-        step,
-        reverse,
-        to_list,
-    };
-
-    return switch (std.meta.stringToEnum(Method, name).?) {
-        .@"empty?" => .initBool(range.empty()),
-        .step => blk: {
-            const distance = arguments[0].data.int;
-            if (distance < 1) return self.raiseFmt(
-                span,
-                "a step must be at least 1, but this is {d}",
-                .{distance},
-                "The range says which way to count; the step says only how far, as in `10.down_to(0).step(2)`.",
-            );
-            break :blk .{ .data = .{ .range = range.step(distance) } };
-        },
-        .reverse => .{ .data = .{ .range = range.reverse() } },
-        .to_list => blk: {
-            const items = range.toList(self.gpa) catch |err| switch (err) {
-                error.RangeTooLarge => return self.raise(
-                    span,
-                    "this Range is too large to turn into a List",
-                    "Use a narrower Range or a larger `step` before calling `to_list()`.",
-                ),
-                error.OutOfMemory => return error.OutOfMemory,
-            };
-            defer if (items.len > 0) self.gpa.free(items);
-            const list = try self.heap.createList(.int, items.len);
-            const result: Value = .{ .data = .{ .list = list } };
-            errdefer self.heap.release(result);
-            for (items) |item| list.items.appendAssumeCapacity(.initInt(item));
-            break :blk result;
-        },
-    };
-}
-
-/// Section 9.3's integer vocabulary. The checker has proved each argument is
-/// an `Int`, leaving only value-dependent failures for the runtime to explain.
-fn intMethod(self: *Interpreter, span: Source.Span, value: i64, name: []const u8, arguments: []const Value) Error!Value {
-    const Method = enum {
-        abs,
-        clamp,
-        @"between?",
-        @"zero?",
-        @"positive?",
-        @"negative?",
-        @"even?",
-        @"odd?",
-        @"multiple_of?",
-        digits,
-        gcd,
-        lcm,
-        factorial,
-        to_float,
-        to_character,
-    };
-
-    return switch (std.meta.stringToEnum(Method, name).?) {
-        .abs => if (value == std.math.minInt(i64))
-            self.raiseFmt(span, "the absolute value of {d} does not fit in Int", .{value}, integer_range_help)
-        else
-            .initInt(if (value < 0) -value else value),
-        .clamp => blk: {
-            const minimum = arguments[0].data.int;
-            const maximum = arguments[1].data.int;
-            try self.requireOrderedBounds(span, "clamp", minimum, maximum);
-            break :blk .initInt(@max(minimum, @min(maximum, value)));
-        },
-        .@"between?" => blk: {
-            const minimum = arguments[0].data.int;
-            const maximum = arguments[1].data.int;
-            try self.requireOrderedBounds(span, "between?", minimum, maximum);
-            break :blk .initBool(value >= minimum and value <= maximum);
-        },
-        .@"zero?" => .initBool(value == 0),
-        .@"positive?" => .initBool(value > 0),
-        .@"negative?" => .initBool(value < 0),
-        .@"even?" => .initBool(@mod(value, 2) == 0),
-        .@"odd?" => .initBool(@mod(value, 2) != 0),
-        .@"multiple_of?" => blk: {
-            const divisor = arguments[0].data.int;
-            if (divisor == 0) return self.raise(
-                span,
-                "`multiple_of?` cannot use zero as its divisor",
-                "Pass a nonzero Int. Zero itself is a multiple of every nonzero Int.",
-            );
-            // Every Int is divisible by -1, including the asymmetric minimum.
-            break :blk .initBool(divisor == -1 or @mod(value, divisor) == 0);
-        },
-        .digits => self.integerDigits(value),
-        .gcd => self.integerGcd(span, value, arguments[0].data.int),
-        .lcm => self.integerLcm(span, value, arguments[0].data.int),
-        .factorial => self.integerFactorial(span, value),
-        .to_float => .initFloat(@floatFromInt(value)),
-        .to_character => blk: {
-            const problem: ?[]const u8 = if (value < 0)
-                "it is negative"
-            else if (value > 0x10FFFF)
-                "it is past 1114111, the largest code point"
-            else if (value >= 0xD800 and value <= 0xDFFF)
-                "55296 to 57343 are surrogates, which only UTF-16 uses, in pairs"
-            else
-                null;
-            if (problem) |why| return self.raiseFmt(
-                span,
-                "{d} is not a character's code point: {s}",
-                .{ value, why },
-                "Pass a code point such as one from `code_points()`: 0 to 1114111, leaving out 55296 to 57343.",
-            );
-            var buffer: [4]u8 = undefined;
-            const length = std.unicode.utf8Encode(@intCast(value), &buffer) catch unreachable;
-            break :blk self.heap.copyText(buffer[0..length]);
-        },
-    };
-}
-
 /// Section 15.5's `to_string(base:)`: decimal text by default, or any base 2
 /// through 36 (digits `0`-`9` then lowercase `a`-`z`) when named.
 fn intToString(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call, value: i64) Error!Value {
@@ -10831,7 +10710,7 @@ fn intToString(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call,
 /// for a negative value. `base` is already proven to be 2 through 36.
 fn digitsInBase(self: *Interpreter, value: i64, base: u64) Error![]u8 {
     const alphabet = "0123456789abcdefghijklmnopqrstuvwxyz";
-    var magnitude = integerMagnitude(value);
+    var magnitude = NumberMethods.integerMagnitude(value);
     var reversed: [64]u8 = undefined;
     var count: usize = 0;
     if (magnitude == 0) {
@@ -10865,7 +10744,7 @@ fn intFormat(self: *Interpreter, call: Ast.Expression.Call, value: i64) Error!Va
     defer self.gpa.free(bound.values);
     defer if (bound.omitted) |omitted| self.gpa.free(omitted);
     const group_digits = bound.values[0].data != .nothing and bound.values[0].data.bool;
-    return self.ownedText(try self.formatMagnitude(integerMagnitude(value), value < 0, group_digits));
+    return self.ownedText(try self.formatMagnitude(NumberMethods.integerMagnitude(value), value < 0, group_digits));
 }
 
 /// Decimal digits of `magnitude`, comma-grouped every three from the right
@@ -10922,211 +10801,6 @@ fn groupDigits(self: *Interpreter, digits: []const u8) Error![]u8 {
         }
     }
     return text;
-}
-
-fn requireOrderedBounds(self: *Interpreter, span: Source.Span, name: []const u8, minimum: i64, maximum: i64) Error!void {
-    if (minimum <= maximum) return;
-    return self.raiseFmt(
-        span,
-        "`{s}` has a minimum of {d}, greater than its maximum of {d}",
-        .{ name, minimum, maximum },
-        "Put the lower bound first and the upper bound second.",
-    );
-}
-
-/// The unsigned magnitude avoids overflowing on the one `Int` whose positive
-/// counterpart cannot be represented.
-fn integerMagnitude(value: i64) u64 {
-    if (value >= 0) return @intCast(value);
-    return @as(u64, @intCast(-(value + 1))) + 1;
-}
-
-fn integerDigits(self: *Interpreter, value: i64) Error!Value {
-    var magnitude = integerMagnitude(value);
-    var reversed: [20]i64 = undefined;
-    var count: usize = 0;
-    if (magnitude == 0) {
-        reversed[0] = 0;
-        count = 1;
-    } else {
-        while (magnitude != 0) : (magnitude /= 10) {
-            reversed[count] = @intCast(magnitude % 10);
-            count += 1;
-        }
-    }
-
-    const list = try self.heap.createList(.int, count);
-    const result: Value = .{ .data = .{ .list = list } };
-    errdefer self.heap.release(result);
-    while (count > 0) {
-        count -= 1;
-        list.items.appendAssumeCapacity(.initInt(reversed[count]));
-    }
-    return result;
-}
-
-fn unsignedGcd(a_value: u64, b_value: u64) u64 {
-    var a = a_value;
-    var b = b_value;
-    while (b != 0) {
-        const remainder = a % b;
-        a = b;
-        b = remainder;
-    }
-    return a;
-}
-
-fn checkedMagnitude(self: *Interpreter, span: Source.Span, operation: []const u8, magnitude: u64) Error!Value {
-    if (magnitude > std.math.maxInt(i64)) return self.raiseFmt(
-        span,
-        "the result of `{s}` does not fit in Int",
-        .{operation},
-        integer_range_help,
-    );
-    return .initInt(@intCast(magnitude));
-}
-
-fn integerGcd(self: *Interpreter, span: Source.Span, left: i64, right: i64) Error!Value {
-    return self.checkedMagnitude(span, "gcd", unsignedGcd(integerMagnitude(left), integerMagnitude(right)));
-}
-
-fn integerLcm(self: *Interpreter, span: Source.Span, left: i64, right: i64) Error!Value {
-    const a = integerMagnitude(left);
-    const b = integerMagnitude(right);
-    if (a == 0 or b == 0) return .initInt(0);
-    const divided = a / unsignedGcd(a, b);
-    const result = @mulWithOverflow(divided, b);
-    if (result[1] != 0 or result[0] > std.math.maxInt(i64)) return self.raiseFmt(
-        span,
-        "the least common multiple of {d} and {d} does not fit in Int",
-        .{ left, right },
-        integer_range_help,
-    );
-    return .initInt(@intCast(result[0]));
-}
-
-fn integerFactorial(self: *Interpreter, span: Source.Span, value: i64) Error!Value {
-    if (value < 0) return self.raiseFmt(
-        span,
-        "a negative Int has no factorial, but this is {d}",
-        .{value},
-        "Call `factorial()` on 0 or a positive Int.",
-    );
-
-    var result: i64 = 1;
-    var factor: i64 = 2;
-    while (factor <= value) : (factor += 1) {
-        const multiplied = @mulWithOverflow(result, factor);
-        if (multiplied[1] != 0) return self.raiseFmt(
-            span,
-            "{d}! does not fit in Int",
-            .{value},
-            "The largest factorial an Int can hold is 20!.",
-        );
-        result = multiplied[0];
-    }
-    return .initInt(result);
-}
-
-/// Section 9.3's floating-point vocabulary. Rounding operations that return an
-/// `Int` all pass through one range and finiteness check before host conversion.
-fn floatMethod(self: *Interpreter, span: Source.Span, value: f64, name: []const u8, arguments: []const Value) Error!Value {
-    const Method = enum {
-        abs,
-        clamp,
-        @"between?",
-        @"zero?",
-        @"positive?",
-        @"negative?",
-        square_root,
-        to_radians,
-        to_degrees,
-        floor,
-        ceil,
-        round,
-        round_to,
-        truncate,
-        @"finite?",
-        @"infinite?",
-        @"nan?",
-        to_int,
-    };
-
-    return switch (std.meta.stringToEnum(Method, name).?) {
-        .abs => .initFloat(@abs(value)),
-        .clamp => blk: {
-            const minimum = toFloat(arguments[0]);
-            const maximum = toFloat(arguments[1]);
-            try self.requireFloatBounds(span, "clamp", minimum, maximum);
-            break :blk .initFloat(if (value < minimum) minimum else if (value > maximum) maximum else value);
-        },
-        .@"between?" => blk: {
-            const minimum = toFloat(arguments[0]);
-            const maximum = toFloat(arguments[1]);
-            try self.requireFloatBounds(span, "between?", minimum, maximum);
-            break :blk .initBool(value >= minimum and value <= maximum);
-        },
-        .@"zero?" => .initBool(value == 0),
-        .@"positive?" => .initBool(value > 0),
-        .@"negative?" => .initBool(value < 0),
-        .square_root => .initFloat(std.math.sqrt(value)),
-        .to_radians => .initFloat(value * std.math.pi / 180.0),
-        .to_degrees => .initFloat(value * 180.0 / std.math.pi),
-        .floor => self.floatResultToInt(span, "floor", @floor(value)),
-        .ceil => self.floatResultToInt(span, "ceil", @ceil(value)),
-        .round => self.floatResultToInt(span, "round", @round(value)),
-        .round_to => .initFloat(roundFloatTo(value, arguments[0].data.int)),
-        .truncate, .to_int => self.floatResultToInt(span, name, @trunc(value)),
-        .@"finite?" => .initBool(std.math.isFinite(value)),
-        .@"infinite?" => .initBool(std.math.isInf(value)),
-        .@"nan?" => .initBool(std.math.isNan(value)),
-    };
-}
-
-fn requireFloatBounds(self: *Interpreter, span: Source.Span, name: []const u8, minimum: f64, maximum: f64) Error!void {
-    if (std.math.isNan(minimum) or std.math.isNan(maximum)) return self.raiseFmt(
-        span,
-        "`{s}` cannot use NaN as a bound",
-        .{name},
-        "Use ordered Float bounds. NaN is not less than, equal to, or greater than any value.",
-    );
-    if (minimum <= maximum) return;
-
-    var minimum_text: std.Io.Writer.Allocating = .init(self.gpa);
-    defer minimum_text.deinit();
-    try Value.initFloat(minimum).display(&minimum_text.writer);
-    var maximum_text: std.Io.Writer.Allocating = .init(self.gpa);
-    defer maximum_text.deinit();
-    try Value.initFloat(maximum).display(&maximum_text.writer);
-    return self.raiseFmt(
-        span,
-        "`{s}` has a minimum of {s}, greater than its maximum of {s}",
-        .{ name, minimum_text.written(), maximum_text.written() },
-        "Put the lower bound first and the upper bound second.",
-    );
-}
-
-/// Converts an already-rounded Float only after proving Zig's `@intFromFloat`
-/// is defined. The upper comparison is inclusive because 2^63 is exactly
-/// representable as a Float but is one beyond the greatest `Int`.
-fn floatResultToInt(self: *Interpreter, span: Source.Span, operation: []const u8, value: f64) Error!Value {
-    if (!std.math.isFinite(value)) return self.raiseFmt(
-        span,
-        "`{s}` cannot produce an Int from a non-finite Float",
-        .{operation},
-        "Check `finite?()` first. NaN and infinity cannot be represented by Int.",
-    );
-    if (value >= 9223372036854775808.0 or value < -9223372036854775808.0) return self.raiseFmt(
-        span,
-        "the result of `{s}` is outside the range of Int",
-        .{operation},
-        integer_range_help,
-    );
-    return .initInt(@intFromFloat(value));
-}
-
-fn roundFloatTo(value: f64, places: i64) f64 {
-    return FloatMath.roundTo(value, places);
 }
 
 fn displayFloatAlloc(self: *Interpreter, value: f64) Error![]u8 {
@@ -11196,32 +10870,12 @@ fn groupFloatText(self: *Interpreter, text: []u8) Error![]u8 {
     return result;
 }
 
-fn bytesMethod(self: *Interpreter, span: Source.Span, bytes: []const u8, name: []const u8) Error!Value {
-    if (std.mem.eql(u8, name, "to_string_maybe")) {
-        return if (std.unicode.utf8ValidateSlice(bytes)) self.heap.copyText(bytes) else Value.nothing;
-    }
-    if (std.mem.eql(u8, name, "to_hex")) return self.bytesToHex(bytes);
-    if (!std.unicode.utf8ValidateSlice(bytes)) return self.raiseEncodingMessage(span, "these Bytes are not valid UTF-8 text");
-    return self.heap.copyText(bytes);
-}
-
-fn bytesToHex(self: *Interpreter, bytes: []const u8) std.mem.Allocator.Error!Value {
-    const length = std.math.mul(usize, bytes.len, 2) catch return error.OutOfMemory;
-    const out = try self.gpa.alloc(u8, length);
-    const digits = "0123456789abcdef";
-    for (bytes, 0..) |byte, index| {
-        out[index * 2] = digits[byte >> 4];
-        out[index * 2 + 1] = digits[byte & 0x0f];
-    }
-    return .{ .data = .{ .string = try self.heap.createText(out) } };
-}
-
 fn bytesFromHex(self: *Interpreter, span: Source.Span, text: []const u8, maybe: bool) Error!Value {
     const characters = try strings.characters(self.gpa, text);
     defer self.gpa.free(characters);
     if (characters.len % 2 != 0) {
         if (maybe) return Value.nothing;
-        return self.raiseEncodingMessage(span, try std.fmt.allocPrint(self.arena, "hex text has {d} digits, but every byte takes two", .{characters.len}));
+        return self.runNative(span, BytesMethods.raiseEncodingMessage, .{try std.fmt.allocPrint(self.arena, "hex text has {d} digits, but every byte takes two", .{characters.len})});
     }
 
     const bytes = try self.gpa.alloc(u8, characters.len / 2);
@@ -11229,7 +10883,7 @@ fn bytesFromHex(self: *Interpreter, span: Source.Span, text: []const u8, maybe: 
         const digit = hexValue(character) orelse {
             self.gpa.free(bytes);
             if (maybe) return Value.nothing;
-            return self.raiseEncodingMessage(span, try std.fmt.allocPrint(self.arena, "hex text has `{s}` at index {d}, which is not a hex digit", .{ character, index }));
+            return self.runNative(span, BytesMethods.raiseEncodingMessage, .{try std.fmt.allocPrint(self.arena, "hex text has `{s}` at index {d}, which is not a hex digit", .{ character, index })});
         };
         if (index % 2 == 0) {
             bytes[index / 2] = digit << 4;
@@ -11378,8 +11032,7 @@ fn evaluateArguments(self: *Interpreter, expressions: []const *const Ast.Express
 
 // Raising.
 
-const integer_range_help =
-    "`Int` holds whole numbers from -9223372036854775808 through 9223372036854775807.";
+const integer_range_help = Native.integer_range_help;
 
 /// Every runtime error carries the calls active when it was raised, innermost
 /// first, which is section 13.2's stack trace.

@@ -99,6 +99,10 @@ pub const Equatable = struct {
     }
 };
 
+/// The help for every failure an `Int` result too large or too small causes.
+pub const integer_range_help =
+    "`Int` holds whole numbers from -9223372036854775808 through 9223372036854775807.";
+
 /// Section 4.4's widening, the only implicit conversion: an `Int` where a
 /// `Float` is expected becomes one.
 pub fn widen(value: Value, kind: Value.Kind) Value {
