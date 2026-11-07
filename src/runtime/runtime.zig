@@ -21,6 +21,7 @@ pub const Native = @import("Native.zig");
 pub const Natives = @import("Natives.zig");
 pub const RegexNatives = @import("RegexNatives.zig");
 pub const EncodingNatives = @import("EncodingNatives.zig");
+pub const TimeNatives = @import("TimeNatives.zig");
 pub const MapMethods = @import("MapMethods.zig");
 pub const ListMethods = @import("ListMethods.zig");
 pub const RangeMethods = @import("RangeMethods.zig");

@@ -54,6 +54,7 @@ const Native = @import("runtime").Native;
 const Natives = @import("runtime").Natives;
 const RegexNatives = @import("runtime").RegexNatives;
 const EncodingNatives = @import("runtime").EncodingNatives;
+const TimeNatives = @import("runtime").TimeNatives;
 const MapMethods = @import("runtime").MapMethods;
 const ListMethods = @import("runtime").ListMethods;
 const RangeMethods = @import("runtime").RangeMethods;
@@ -287,11 +288,8 @@ terminal_ready: bool = false,
 /// variables privately.
 environment: std.process.Environ,
 /// Section 15.8's `TimeZone.local`, resolved once for the whole execution.
-local_zone: TimeZone.Local,
 /// The built-in zone database, decompressed the first time a program names a
 /// zone, and the zones read from it so far. Both live in `arena`.
-zone_database: ?TimeZone.Database = null,
-zone_cache: std.StringHashMapUnmanaged(TimeZone.Rules) = .empty,
 /// What the runtime's natives keep between calls (`Native.State`), such as
 /// compiled regular expressions. It lives in `arena`.
 native_state: Native.State = .{},
@@ -601,7 +599,7 @@ pub const Session = struct {
             .color = color,
             .standard_input = standard_input,
             .environment = process_environment,
-            .local_zone = local_zone,
+            .native_state = .{ .local_zone = local_zone },
             .arguments = arguments,
             .checked_structs = analysis.checked_structs,
             .signatures = analysis.signatures,
@@ -988,7 +986,7 @@ pub fn run(
         .terminal = console.terminal,
         .standard_input = standard_input,
         .environment = process_environment,
-        .local_zone = local_zone,
+        .native_state = .{ .local_zone = local_zone },
         .arguments = arguments,
         .checked_structs = checked_structs,
         .signatures = signatures,
@@ -4116,10 +4114,10 @@ fn evaluateCallInner(
         }
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Instant::_now")) return .initInt(clockNanoseconds(self.io, .real));
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Stopwatch::_ticks")) return .initInt(clockNanoseconds(self.io, .awake));
-        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_local_name")) return self.heap.copyText(self.local_zone.name);
-        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_known?")) return self.callZoneKnown(call);
-        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_offset_seconds")) return self.callZoneOffset(call);
-        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_suggestion")) return self.callZoneSuggestion(call);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_local_name")) return self.heap.copyText(self.native_state.local_zone.name);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_known?")) return self.callZoneKnown(expression.span, call);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_offset_seconds")) return self.callZoneOffset(expression.span, call);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_suggestion")) return self.callZoneSuggestion(expression.span, call);
         if (std.mem.eql(u8, key, Resolver.program_sleep_key)) return self.callSleep(expression.span, call);
         if (std.mem.eql(u8, key, Resolver.program_environment_key)) return self.callEnvironment(expression.span, call);
         if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Regex::")) {
@@ -5592,60 +5590,6 @@ fn callMath(self: *Interpreter, call: Ast.Expression.Call, key: []const u8) Erro
     return .initFloat(if (std.mem.eql(u8, name, "sin")) std.math.sin(values[0]) else if (std.mem.eql(u8, name, "cos")) std.math.cos(values[0]) else if (std.mem.eql(u8, name, "tan")) std.math.tan(values[0]) else if (std.mem.eql(u8, name, "arc_sin")) std.math.asin(values[0]) else if (std.mem.eql(u8, name, "arc_cos")) std.math.acos(values[0]) else if (std.mem.eql(u8, name, "arc_tan")) std.math.atan(values[0]) else if (std.mem.eql(u8, name, "arc_tan2")) std.math.atan2(values[0], values[1]) else if (std.mem.eql(u8, name, "natural_log")) std.math.log(f64, std.math.e, values[0]) else if (std.mem.eql(u8, name, "log10")) std.math.log10(values[0]) else if (std.mem.eql(u8, name, "log")) if (values[1] <= 0 or values[1] == 1) std.math.nan(f64) else std.math.log(f64, values[1], values[0]) else FloatMath.power(values[0], values[1]));
 }
 
-/// The rules a zone name has, for a zone whose offset changes: the built-in
-/// database's first, so a name means the same everywhere, then the machine's
-/// own rules for a local zone the database does not know.
-fn zoneRules(self: *Interpreter, name: []const u8) Error!?TimeZone.Rules {
-    if (self.zone_cache.get(name)) |rules| return rules;
-    const database = try self.zoneDatabase();
-    const found = (database.rules(self.arena, name) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => null,
-    }) orelse {
-        const local = self.local_zone.rules orelse return null;
-        return if (std.mem.eql(u8, name, self.local_zone.name)) local else null;
-    };
-    try self.zone_cache.put(self.arena, try self.arena.dupe(u8, name), found);
-    return found;
-}
-
-fn zoneDatabase(self: *Interpreter) Error!TimeZone.Database {
-    if (self.zone_database) |database| return database;
-    // The embedded file is generated and checked by its unit test, so only
-    // running out of memory can stop it loading.
-    const database = TimeZone.Database.load(self.arena) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => unreachable,
-    };
-    self.zone_database = database;
-    return database;
-}
-
-fn callZoneKnown(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
-    const name = try self.evaluate(call.arguments[0]);
-    defer self.heap.release(name);
-    return .initBool(try self.zoneRules(name.data.string.bytes) != null);
-}
-
-/// The offset in seconds a rule-based zone has at a moment in Unix seconds.
-/// The prelude asks only after `_known?` has accepted the name.
-fn callZoneOffset(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
-    const name = try self.evaluate(call.arguments[0]);
-    defer self.heap.release(name);
-    const at = (try self.evaluate(call.arguments[1])).data.int;
-    const rules = try self.zoneRules(name.data.string.bytes) orelse return .initInt(0);
-    return .initInt(rules.offsetAt(at));
-}
-
-/// The zone name meant by one written in the wrong case, or `nothing`.
-fn callZoneSuggestion(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
-    const name = try self.evaluate(call.arguments[0]);
-    defer self.heap.release(name);
-    const database = try self.zoneDatabase();
-    const closest = database.closest(name.data.string.bytes) orelse return .nothing;
-    return self.heap.copyText(closest);
-}
-
 fn callJson(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Error!?Value {
     const Entry = enum { _parse, _problem, _write, _key_path, encode, decode };
     const native = std.meta.stringToEnum(Entry, name) orelse return null;
@@ -7109,6 +7053,25 @@ fn callRegex(self: *Interpreter, span: Source.Span, name: []const u8, call: Ast.
         self.gpa.free(values);
     }
     return try self.runNative(span, RegexNatives.call, .{ native, values });
+}
+
+fn callZoneKnown(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call) Error!Value {
+    const name = try self.evaluate(call.arguments[0]);
+    defer self.heap.release(name);
+    return .initBool(try self.runNative(span, TimeNatives.zoneRules, .{name.data.string.bytes}) != null);
+}
+
+fn callZoneOffset(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call) Error!Value {
+    const name = try self.evaluate(call.arguments[0]);
+    defer self.heap.release(name);
+    const at = (try self.evaluate(call.arguments[1])).data.int;
+    return self.runNative(span, TimeNatives.zoneOffset, .{ name.data.string.bytes, at });
+}
+
+fn callZoneSuggestion(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call) Error!Value {
+    const name = try self.evaluate(call.arguments[0]);
+    defer self.heap.release(name);
+    return self.runNative(span, TimeNatives.zoneSuggestion, .{name.data.string.bytes});
 }
 
 /// A clock reading in nanoseconds: since 1970 for `.real`, which fits `Int`
