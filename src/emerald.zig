@@ -1011,6 +1011,41 @@ fn dupeDiagnostics(arena: std.mem.Allocator, diagnostics: []const Diagnostic) ![
     return copies;
 }
 
+test "every reading method the checker accepts has a runtime native, or is the interpreter's own" {
+    const Natives = @import("runtime").Natives;
+    // Methods the interpreter answers itself, because they run a block or
+    // build from the receiver's syntax (`Interpreter.callMethod`), until the
+    // compiler slices give them natives of their own.
+    const engine_methods = [_][]const u8{
+        "partition",       "group_by",     "frequencies",  "min_by",        "max_by",       "min_max",    "sort_by",
+        "unique_by",       "associate",    "associate_by", "to_dictionary", "map_keys",     "map_values", "each",
+        "each_with_index", "reverse_each", "map",          "filter",        "reject",       "flat_map",   "filter_map",
+        "take_while",      "drop_while",   "any?",         "all?",          "none?",        "one?",       "count_where",
+        "find",            "find_index",   "to_set",       "reduce",        "reduce_right", "or",         "remove_if",
+    };
+    const isEngine = struct {
+        fn f(name: []const u8) bool {
+            for (engine_methods) |engine| if (std.mem.eql(u8, engine, name)) return true;
+            return false;
+        }
+    }.f;
+    for (Type.list_methods.keys(), Type.list_methods.values()) |name, method| {
+        if (method.mutates or isEngine(name)) continue;
+        if (Natives.lookup(.list, name) == null) {
+            std.debug.print("list method `{s}` has no runtime native\n", .{name});
+            return error.TestUnexpectedResult;
+        }
+    }
+    for (Type.map_methods.keys()) |name| {
+        if (Type.map_mutators.has(name) or isEngine(name)) continue;
+        if (Natives.lookup(.map, name) == null) {
+            std.debug.print("dictionary method `{s}` has no runtime native\n", .{name});
+            return error.TestUnexpectedResult;
+        }
+    }
+    for (Checker.bytes_methods) |name| try std.testing.expect(Natives.lookup(.bytes, name) != null);
+}
+
 test "every builtin data signature has exactly the checker's result type" {
     try @import("BuiltinParity.zig").checkResults();
 }

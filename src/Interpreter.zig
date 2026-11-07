@@ -3468,6 +3468,9 @@ fn NativeReturn(comptime Function: type) type {
 fn nativeFailure(self: *Interpreter, span: Source.Span, ctx: *const Native.Context, err: Native.Error) Error {
     if (err == error.Raised) {
         if (ctx.failure) |failure| return self.raiseFailure(span, failure);
+        // Otherwise the program's own code raised inside a callback, and has
+        // reported; a native that returned `Raised` without `ctx.raise` is a bug.
+        std.debug.assert(self.task.state.failure != null);
     }
     return err;
 }
