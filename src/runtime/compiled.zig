@@ -81,7 +81,7 @@ const no_engine: Native.Engine.VTable = .{
     }.f,
     .random = struct {
         fn f(_: *anyopaque) std.Random {
-            unreachable;
+            return random_engine.random();
         }
     }.f,
     .prelude_struct = struct {
@@ -92,6 +92,10 @@ const no_engine: Native.Engine.VTable = .{
 };
 
 var engine_token: u8 = 0;
+
+/// The program's unseeded randomness, seeded as the interpreter seeds its own:
+/// from an address, so each run differs.
+var random_engine: std.Random.DefaultPrng = undefined;
 
 fn context() Native.Context {
     return .{
@@ -140,6 +144,7 @@ fn outOfMemory() noreturn {
 }
 
 export fn em_start() void {
+    random_engine = .init(@intFromPtr(&heap) ^ 0xa0761d6478bd642f);
     threaded = .init(gpa, .{});
     io = threaded.io();
     out_writer = std.Io.File.stdout().writerStreaming(io, &out_buffer);
@@ -356,6 +361,7 @@ pub const EmValue = extern struct {
         float: f64,
         boolean: bool,
         text: ?*Heap.Text,
+        list: ?*Heap.List,
     },
 };
 
@@ -366,6 +372,7 @@ fn fromC(value: EmValue) Value {
         .int => .initInt(value.as.int),
         .float => .initFloat(value.as.float),
         .string => textValue(value.as.text.?),
+        .list => listValue(value.as.list.?),
         else => unreachable, // generated C holds no other kind yet
     };
 }
@@ -377,6 +384,7 @@ fn toC(value: Value) EmValue {
         .int => |number| .{ .kind = @backingInt(Value.Kind.int), .as = .{ .int = number } },
         .float => |number| .{ .kind = @backingInt(Value.Kind.float), .as = .{ .float = number } },
         .string => |text| .{ .kind = @backingInt(Value.Kind.string), .as = .{ .text = text } },
+        .list => |list| .{ .kind = @backingInt(Value.Kind.list), .as = .{ .list = list } },
         else => unreachable, // the compiler asks only for natives giving these
     };
 }
@@ -402,4 +410,91 @@ fn idOf(comptime Natives: type, family: usize, method: usize) Natives.Id {
     return switch (tag) {
         inline else => |known| @unionInit(Natives.Id, @tagName(known), @fromBackingInt(@intCast(method))),
     };
+}
+
+// Lists (slice 3b). A list in generated C is the runtime's own `Heap.List`,
+// held under the same rule as a string. A change to a list goes through the
+// slot that holds it, which is made the list's only holder first, copying
+// the list if anything else shares it (`Heap.unique`), so value semantics
+// hold exactly as they do in the interpreter.
+
+fn listValue(list: *Heap.List) Value {
+    return .{ .data = .{ .list = list } };
+}
+
+export fn em_retain_list(list: ?*Heap.List) void {
+    if (list) |held| _ = Heap.retain(listValue(held));
+}
+
+export fn em_release_list(list: ?*Heap.List) void {
+    if (list) |held| heap.release(listValue(held));
+}
+
+/// Section 8.2's `[a, b, c]`: a new list of `element`s, each widened to it.
+export fn em_list_new(element: u8, items: [*]const EmValue, count: usize) *Heap.List {
+    const kind: Value.Kind = @fromBackingInt(@intCast(element));
+    const list = heap.createList(kind, count) catch outOfMemory();
+    for (items[0..count]) |item| list.items.appendAssumeCapacity(Native.widen(Heap.retain(fromC(item)), kind));
+    return list;
+}
+
+export fn em_list_count(list: *Heap.List) i64 {
+    return @intCast(list.items.items.len);
+}
+
+/// Section 5.4's `list[position]`, a new reference to the element.
+export fn em_list_get(list: *Heap.List, position: i64, result: *EmValue, site: *const Site) c_int {
+    const count = list.items.items.len;
+    if (position < 0 or position >= count) return call(site, Operations.outsideIndex, .{ Operations.Collection.list, count, position }, {});
+    result.* = toC(Heap.retain(list.items.items[@intCast(position)]));
+    return 0;
+}
+
+fn uniqueList(slot: **Heap.List) *Heap.List {
+    var value = listValue(slot.*);
+    const list = heap.unique(&value) catch outOfMemory();
+    slot.* = list;
+    return list;
+}
+
+/// `list[position] = value`, through the slot holding the list.
+export fn em_list_set(slot: **Heap.List, position: i64, value: EmValue, site: *const Site) c_int {
+    const count = slot.*.items.items.len;
+    if (position < 0 or position >= count) return call(site, Operations.outsideIndex, .{ Operations.Collection.list, count, position }, {});
+    const list = uniqueList(slot);
+    const at = &list.items.items[@intCast(position)];
+    const old = at.*;
+    at.* = Native.widen(Heap.retain(fromC(value)), list.element);
+    heap.release(old);
+    return 0;
+}
+
+/// One of `ListMethods.Mutation`'s methods, through the slot holding the
+/// list. The arguments are borrowed here and retained for `mutate`, which
+/// keeps or releases what it is given.
+export fn em_list_mutate(slot: **Heap.List, method: c_int, arguments: [*]const EmValue, count: usize, expected: u8, result: *EmValue, site: *const Site) c_int {
+    const ListMethods = @import("ListMethods.zig");
+    var values: [8]Value = undefined;
+    for (arguments[0..count], values[0..count]) |argument, *value| value.* = Heap.retain(fromC(argument));
+    const list = uniqueList(slot);
+    var answer: Value = undefined;
+    const status = call(site, ListMethods.mutate, .{ list, @as(ListMethods.Mutation, @fromBackingInt(@intCast(method))), values[0..count] }, &answer);
+    if (status == 0) result.* = toC(Native.widen(answer, @fromBackingInt(@intCast(expected))));
+    return status;
+}
+
+/// Any value as `print` shows it: a list's strings quoted, as the
+/// interpreter writes them.
+export fn em_write_value(value: EmValue) void {
+    fromC(value).display(&out_writer.interface) catch {};
+}
+
+export fn em_builder_value(builder: *Builder, value: EmValue) void {
+    fromC(value).display(&builder.writer) catch outOfMemory();
+}
+
+/// Section 5.2's `==` on values of the kinds above, element by element.
+export fn em_equal_values(left: EmValue, right: EmValue) bool {
+    var ctx = context();
+    return Value.equals(gpa, fromC(left), fromC(right), ctx.equatable()) catch outOfMemory();
 }

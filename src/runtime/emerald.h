@@ -91,7 +91,8 @@ void em_builder_bool(em_builder *builder, bool value);
 em_text *em_builder_finish(em_builder *builder);
 
 /* A value crossing to a native, tagged in the runtime's `Value.Kind` order. */
-enum { EM_KIND_NOTHING, EM_KIND_BOOL, EM_KIND_INT, EM_KIND_FLOAT, EM_KIND_STRING };
+enum { EM_KIND_NOTHING, EM_KIND_BOOL, EM_KIND_INT, EM_KIND_FLOAT, EM_KIND_STRING, EM_KIND_BYTES, EM_KIND_RANGE, EM_KIND_LIST };
+typedef struct em_list em_list;
 typedef struct {
     uint8_t kind;
     union {
@@ -99,9 +100,23 @@ typedef struct {
         double number;
         bool boolean;
         em_text *text;
+        em_list *list;
     } as;
 } em_value;
 
 int em_native(int family, int method, em_value receiver, const em_value *arguments, size_t count, uint8_t expected, em_value *result, const em_site *site);
+
+/* Lists, held as strings are. A change goes through the slot holding the
+ * list, which the runtime makes its only holder first. */
+void em_retain_list(em_list *list);
+void em_release_list(em_list *list);
+em_list *em_list_new(uint8_t element, const em_value *items, size_t count);
+int64_t em_list_count(em_list *list);
+int em_list_get(em_list *list, int64_t position, em_value *result, const em_site *site);
+int em_list_set(em_list **slot, int64_t position, em_value value, const em_site *site);
+int em_list_mutate(em_list **slot, int method, const em_value *arguments, size_t count, uint8_t expected, em_value *result, const em_site *site);
+void em_write_value(em_value value);
+void em_builder_value(em_builder *builder, em_value value);
+bool em_equal_values(em_value left, em_value right);
 
 #endif
