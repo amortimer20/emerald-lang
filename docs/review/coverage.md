@@ -1,5 +1,8 @@
 # Coverage before the review
 
+> Paths here are as they were when this was written. On 2026-11-06 the runtime files
+> (`Heap.zig`, `Value.zig`, `Json.zig` and the rest) moved to `src/runtime/`.
+
 Measured 2026-10-28 on main at `d580f40` (Zig 0.17.0), with `kcov` on Linux (aarch64, in Docker) over the four test binaries the build runs: unit tests (`emerald-test`), the conformance suite, the language server's tests, and the REPL's. Lines are the executable lines `kcov` reports, so blank lines, comments, and declarations do not count. This is a map of where the suites are thin, not a target (`codebase-review-plan.md`, section 3).
 
 **Overall: 93.3%**, 29,534 of 31,650 executable lines in `src/`.

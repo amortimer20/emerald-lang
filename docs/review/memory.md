@@ -1,5 +1,8 @@
 # Area 1: memory and lifetimes
 
+> Paths here are as they were when this was written. On 2026-11-06 the runtime files
+> (`Heap.zig`, `Value.zig`, `Json.zig` and the rest) moved to `src/runtime/`.
+
 Reviewed 2026-10-28/29 on `claude/review-memory`, branched from main at `d580f40`, with Zig 0.17.0
 on macOS (aarch64, Darwin 27). Method: `codebase-review-plan.md`, section 4, row 1.
 

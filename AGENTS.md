@@ -131,7 +131,8 @@ implemented and Claude reviewed.
   nodes breaks the link.
 - **The runtime boundary:** `src/runtime/` (heap, values, strings, Unicode, the library code, the
   scheduler, the module loader) builds as its own Zig module, `runtime`, and must never import the
-  front end or the interpreter; a compiled program will link it alone
+  front end or the interpreter. Zig refuses imports outside the module's directory, so the rule
+  holds as long as the module is given no imports in `build.zig`. A compiled program will link it alone
   (`docs/compiler-design-plan.md`, decision 4). Code outside it imports `@import("runtime").X`.
 - **Ownership** is described in the header of `src/runtime/Heap.zig`: counts must never be too low but
   may be too high, an error unwinding can skip a release (`deinit` frees what is left), and

@@ -6477,8 +6477,8 @@ raise sites build their messages in `Interpreter.zig`. 1a is the boundary only. 
 `Http`, `TimeZone` (with `tzdata/`), `Scheduler` and `Module` moved to `src/runtime/`, which
 `build.zig` builds as the module `runtime`; the front end and the interpreter import it through
 `@import("runtime")`. The one front-end tie was a closure holding its lambda's `Ast.Expression`;
-it is now an opaque pointer the interpreter casts back. Because a Zig file belongs to one module,
-a runtime file that imported the front end would now fail to build, which is the boundary's
-check. `runtime-test` runs the moved files' 149 tests; paths were updated in tools, CI, the
+it is now an opaque pointer the interpreter casts back. Zig refuses an `@import` of a file outside
+a module's own directory, so a runtime file that reached for the front end would fail to build, as
+long as `runtime_module` is given no imports; `build.zig` says so where it is made. `runtime-test` runs the moved files' 149 tests; paths were updated in tools, CI, the
 generators and the living docs (not in the journal or the review's snapshots). No behaviour
 change: the whole suite passes and the benchmarks are within noise.

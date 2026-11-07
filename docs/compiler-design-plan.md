@@ -190,7 +190,12 @@ would be too large to review.
   once and evaluates the arguments itself. Each native's messages move with it.
   1a done on `claude/runtime-layer`: thirteen files and the Unicode and time-zone data moved;
   `src/runtime/runtime.zig` is the module's root and `runtime-test` runs its 149 tests on its
-  own; benchmarks unchanged (0.95 to 1.04 of before, noise).
+  own; benchmarks unchanged (0.95 to 1.04 of before, noise). The boundary is so far one of
+  imports: the runtime still carries interpreter-shaped types (`Environment`, closures that name
+  their function by key or hold an interpreter's lambda as an opaque pointer, the REPL's
+  `session_entry` fields). Slice 3, which gives compiled programs closures and structs on this
+  heap, replaces the opaque `lambda` with a variant per engine so no engine reads another's
+  code pointer, and decides what of the rest a compiled program needs.
 - **1c, the remaining messages.** The runtime errors the interpreter raises for operators,
   indexing, overflow, optionals and conversions get their text from runtime functions both
   engines call.
