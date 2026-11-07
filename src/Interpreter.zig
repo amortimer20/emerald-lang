@@ -58,6 +58,7 @@ const TimeNatives = @import("runtime").TimeNatives;
 const JsonNatives = @import("runtime").JsonNatives;
 const CsvNatives = @import("runtime").CsvNatives;
 const MathNatives = @import("runtime").MathNatives;
+const SystemNatives = @import("runtime").SystemNatives;
 const MapMethods = @import("runtime").MapMethods;
 const ListMethods = @import("runtime").ListMethods;
 const RangeMethods = @import("runtime").RangeMethods;
@@ -4113,14 +4114,14 @@ fn evaluateCallInner(
             return .nothing;
         }
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::_color")) return .initBool(self.color);
-        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::_width")) return self.callConsoleWidth(call);
-        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::plain")) return self.callConsolePlain(call);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::_width")) return self.callConsoleText(expression.span, call, SystemNatives.columnWidth);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::plain")) return self.callConsoleText(expression.span, call, SystemNatives.plainOf);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::clear")) return self.callConsoleClear();
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::table")) {
             if (self.json_encodes.get(call.callee)) |record_type| return self.callConsoleStructTable(expression.span, call, record_type);
         }
-        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Instant::_now")) return .initInt(clockNanoseconds(self.io, .real));
-        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Stopwatch::_ticks")) return .initInt(clockNanoseconds(self.io, .awake));
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Instant::_now")) return self.runNative(expression.span, SystemNatives.clock, .{.real});
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Stopwatch::_ticks")) return self.runNative(expression.span, SystemNatives.clock, .{.awake});
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_local_name")) return self.heap.copyText(self.native_state.local_zone.name);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_known?")) return self.callZoneKnown(expression.span, call);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_offset_seconds")) return self.callZoneOffset(expression.span, call);
@@ -4838,36 +4839,6 @@ fn deinitChannels(self: *Interpreter) void {
     self.channels.deinit(self.gpa);
 }
 
-/// Removes only complete ANSI SGR sequences: ESC, `[`, zero or more decimal
-/// digits or semicolons, then `m`. Cursor controls and malformed sequences
-/// are deliberately not a sanitizer's job.
-fn callConsolePlain(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
-    const values = try self.evaluateArguments(call.arguments);
-    defer {
-        for (values) |value| self.heap.release(value);
-        self.gpa.free(values);
-    }
-
-    return .{ .data = .{ .string = try self.heap.createText(try plainText(self.gpa, values[0].data.string.bytes)) } };
-}
-
-/// `text` without its complete ANSI SGR sequences, which is what Console's
-/// styling adds, leaving any other control text alone.
-fn plainText(gpa: std.mem.Allocator, text: []const u8) std.mem.Allocator.Error![]u8 {
-    var plain: std.ArrayList(u8) = .empty;
-    errdefer plain.deinit(gpa);
-    var index: usize = 0;
-    while (index < text.len) {
-        if (unicode.sgrEnd(text, index)) |end| {
-            index = end;
-            continue;
-        }
-        try plain.append(gpa, text[index]);
-        index += 1;
-    }
-    return plain.toOwnedSlice(gpa);
-}
-
 /// Section 15.6's `Console.clear()`: clears the screen and puts the cursor at
 /// the top left, but only on a terminal, so redirected output stays clean.
 fn callConsoleClear(self: *Interpreter) Error!Value {
@@ -4887,16 +4858,6 @@ fn callConsoleClear(self: *Interpreter) Error!Value {
     try self.out.writeAll("\x1b[2J\x1b[H");
     try self.out.flush();
     return Value.nothing;
-}
-
-fn callConsoleWidth(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
-    const values = try self.evaluateArguments(call.arguments);
-    defer {
-        for (values) |value| self.heap.release(value);
-        self.gpa.free(values);
-    }
-    const columns = try unicode.columnWidth(self.gpa, values[0].data.string.bytes);
-    return .initInt(@intCast(columns));
 }
 
 fn consoleStringList(self: *Interpreter, cells: []const []const u8) Error!Value {
@@ -6650,6 +6611,20 @@ fn jsonTextualType(key: []const u8) bool {
         std.mem.eql(u8, short, ".Instant");
 }
 
+/// Section 14.3's `Console` natives that only measure or clean text
+/// (`runtime/SystemNatives.zig`).
+fn callConsoleText(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call, comptime native: anytype) Error!Value {
+    const text = try self.evaluate(call.arguments[0]);
+    defer self.heap.release(text);
+    return self.runNative(span, native, .{text.data.string.bytes});
+}
+
+fn callEnvironment(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call) Error!Value {
+    const argument = try self.evaluate(call.arguments[0]);
+    defer self.heap.release(argument);
+    return self.runNative(span, SystemNatives.environment, .{ self.environment, argument.data.string.bytes });
+}
+
 /// Section 15.4's natives (`runtime/RegexNatives.zig`), which the prelude's
 /// `Regex` calls with the pattern and its options first. Null for a name that
 /// is not one of them, such as a method the prelude writes in Emerald.
@@ -6688,36 +6663,6 @@ fn callMath(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call, ke
     defer for (values) |value| self.heap.release(value);
     for (call.arguments, 0..) |argument, index| values[index] = try self.evaluate(argument);
     return self.runNative(span, MathNatives.call, .{ key[Resolver.math_prefix.len..], values[0..call.arguments.len] });
-}
-
-/// A clock reading in nanoseconds: since 1970 for `.real`, which fits `Int`
-/// until 2262, and since some unspecified start for the monotonic `.awake`.
-fn clockNanoseconds(io: std.Io, clock: std.Io.Clock) i64 {
-    return @intCast(clock.now(io).toNanoseconds());
-}
-
-/// Section 15.10's `Program.environment`: one variable's value, or `nothing`
-/// when it is not set. No variable is named `""` or has `=` or a NUL in its
-/// name, so asking for one finds nothing.
-fn callEnvironment(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call) Error!Value {
-    const argument = try self.evaluate(call.arguments[0]);
-    defer self.heap.release(argument);
-    const name = argument.data.string.bytes;
-    if (name.len == 0 or std.mem.indexOfAny(u8, name, "=\x00") != null) return Value.nothing;
-    var variables = std.process.Environ.createMap(self.environment, self.gpa) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        // Only WASI can fail otherwise, and then nothing is readable.
-        else => return Value.nothing,
-    };
-    defer variables.deinit();
-    const value = variables.get(name) orelse return Value.nothing;
-    // Windows gives WTF-8, which an unpaired surrogate leaves invalid UTF-8.
-    if (!std.unicode.utf8ValidateSlice(value)) {
-        const message = try std.fmt.allocPrint(self.arena, "the environment variable `{s}` is not valid UTF-8 text", .{name});
-        self.task.state.raised_value = try self.makeError(Resolver.preludeKey("EncodingError"), message);
-        return self.raiseTyped(span, "EncodingError", message, "Set the variable to UTF-8 text before running the program.");
-    }
-    return self.heap.copyText(value);
 }
 
 /// Section 15.8's `Program.sleep`. The checker guarantees a `Duration`, whose
@@ -7311,7 +7256,7 @@ fn evaluatePrintError(self: *Interpreter, call: Ast.Expression.Call) Error!Value
     // What the program printed before this line reaches the terminal first.
     try self.out.flush();
     if (self.color and !self.error_color) {
-        const plain = try plainText(self.gpa, line.written());
+        const plain = try SystemNatives.plainText(self.gpa, line.written());
         defer self.gpa.free(plain);
         try err.writeAll(plain);
     } else {
