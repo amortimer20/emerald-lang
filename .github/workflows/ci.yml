@@ -60,6 +60,10 @@ jobs:
         shell: bash
         run: zig build test -Doptimize=${{ matrix.optimize }} ${{ matrix.test_flags }}
 
+      - name: Build and check the compiled cases
+        shell: bash
+        run: zig build test-compiler -Doptimize=${{ matrix.optimize }}
+
       - name: Check cancellation with live standard input
         shell: bash
         run: |

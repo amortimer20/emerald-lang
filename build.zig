@@ -136,6 +136,52 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(exe);
 
+    // The runtime a compiled program links (docs/compiler-design-plan.md,
+    // decisions 2 and 4): a static library per target, installed where
+    // `emerald build` looks for it, `build-tools/runtime/<arch-os-abi>/`.
+    // The release's build-tools archive will carry one per target (slice 7).
+    const compiled_runtime = b.addLibrary(.{
+        .linkage = .static,
+        .name = "emerald_runtime",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/runtime/compiled.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const runtime_triple = b.fmt("{s}-{s}-{s}", .{ @tagName(target.result.cpu.arch), @tagName(target.result.os.tag), @tagName(target.result.abi) });
+    const install_compiled_runtime = b.addInstallArtifact(compiled_runtime, .{
+        .dest_dir = .{ .override = .{ .custom = b.fmt("build-tools/runtime/{s}", .{runtime_triple}) } },
+    });
+    b.getInstallStep().dependOn(&install_compiled_runtime.step);
+
+    // `zig build test-compiler` (decision 11): the cases in
+    // conformance/compiled.txt, built with `emerald build` and held to the
+    // interpreter's expectations. The build tools are this build's own Zig and
+    // the runtime library just built, laid out as a release lays them out.
+    const build_tools = b.addWriteFiles();
+    _ = build_tools.addCopyFile(compiled_runtime.getEmittedBin(), b.fmt("runtime/{s}/{s}", .{
+        runtime_triple,
+        if (target.result.os.tag == .windows) "emerald_runtime.lib" else "libemerald_runtime.a",
+    }));
+    const compiler_tests = b.addExecutable(.{
+        .name = "test-compiler",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/test_compiler.zig"),
+            .target = b.graph.host,
+            .optimize = .debug,
+        }),
+    });
+    const run_compiler_tests = b.addRunArtifact(compiler_tests);
+    run_compiler_tests.addArtifactArg(exe);
+    run_compiler_tests.addArg(b.graph.zig_exe);
+    run_compiler_tests.addDirectoryArg(build_tools.getDirectory());
+    run_compiler_tests.addArg("conformance");
+    _ = run_compiler_tests.addOutputDirectoryArg("test-compiler");
+    run_compiler_tests.has_side_effects = true;
+    const test_compiler_step = b.step("test-compiler", "Build the listed conformance cases with `emerald build` and check them");
+    test_compiler_step.dependOn(&run_compiler_tests.step);
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
     run_cmd.addPassthruArgs();
@@ -672,6 +718,22 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
     reports_runtime.expectExitCode(2);
     reports_runtime.addCheck(.{ .expect_stderr_match = "overflows Int" });
     test_step.dependOn(&reports_runtime.step);
+
+    // `emerald build` stops before needing the build tools when the program
+    // uses something it cannot compile yet, and says what and where.
+    const not_compiled_yet = fixtures.add("not-compiled-yet.em", "const names = [\"Ava\"]\nprint(names)\n");
+    const build_refuses = b.addRunArtifact(exe);
+    build_refuses.addArg("build");
+    build_refuses.addFileArg(not_compiled_yet);
+    build_refuses.expectExitCode(1);
+    build_refuses.addCheck(.{ .expect_stderr_match = ":1:15: `emerald build` cannot compile a value of this type yet" });
+    test_step.dependOn(&build_refuses.step);
+
+    const build_misused = b.addRunArtifact(exe);
+    build_misused.addArgs(&.{ "build", "-o" });
+    build_misused.expectExitCode(64);
+    build_misused.addCheck(.{ .expect_stderr_match = "emerald: build expects a path after `-o`" });
+    test_step.dependOn(&build_misused.step);
 
     const passing_tests = fixtures.add("passing-tests.em", "print(\"entry must not run\")\n\nfunc announce(text: String): Int {\n    print(text)\n    return 1\n}\n\nfunc broken_pair(): (Int, Int) {\n    print(\"pair attempted\")\n    raise Error(\"no pair\")\n}\n\nconst reached = announce(\"reached\")\nconst untouched = announce(\"untouched\")\nconst (left, right) = broken_pair()\n\n@test\nfunc one() {\n    assert reached == 1\n}\n\n@test\nfunc two() {\n    assert true\n}\n\n@test\nfunc failed_left() {\n    try {\n        print(left)\n    }\n    catch error {\n    }\n}\n\n@test\nfunc failed_right() {\n    try {\n        print(right)\n    }\n    catch error {\n    }\n}\n");
     const tests_pass = b.addRunArtifact(exe);

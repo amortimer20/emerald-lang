@@ -36,6 +36,7 @@ const global_help =
     \\
     \\Commands:
     \\  run       run a program
+    \\  build     compile a program to an executable
     \\  check     report problems without running it
     \\  test      run tests
     \\  format    format a file or project
@@ -47,7 +48,7 @@ const global_help =
     \\
 ;
 
-const Command = enum { check, run, @"test", format, repl, lsp, explain, help };
+const Command = enum { check, run, build, @"test", format, repl, lsp, explain, help };
 
 /// The allocator a program's runtime work goes through. Zig's default for a
 /// ReleaseSafe build without libc is its leak-checking debug allocator, which
@@ -121,6 +122,8 @@ pub fn main(init: std.process.Init) !u8 {
         if (args.len == 4 and std.mem.eql(u8, args[2], "--check")) return executeFormat(gpa, io, args[3], true);
         return commandMisuse(io, command, "expects `<file.em>` or `--check <file.em>`");
     }
+
+    if (command == .build) return executeBuild(gpa, io, args[2..], init.environ_map);
 
     if (command == .repl) {
         // Unlike every other command, `emerald repl` names no file (18.1).
@@ -413,6 +416,16 @@ fn printCommandHelp(io: std.Io, command: Command) !u8 {
         \\supports it; NO_COLOR and FORCE_COLOR are also honored.
         \\
         ,
+        .build =>
+        \\Usage: emerald build [--debug] [-o <output>] <file.em>
+        \\
+        \\Check a file, then compile it to an executable that behaves as
+        \\`emerald run` would. The executable is written beside the file,
+        \\named for it, unless `-o` names it. `--debug` keeps runtime
+        \\assertions and debug information; either way every check the
+        \\language makes is kept. Needs Emerald's build tools.
+        \\
+        ,
         .@"test" =>
         \\Usage: emerald test [--color=auto|always|never] <file.em> [-- <program-argument>...]
         \\
@@ -551,7 +564,7 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
         .@"test" => emerald.testProject(gpa, &project, streams),
         // `main` routes `format`, `repl`, `lsp`, and `help` to their own functions
         // before this is reached.
-        .format, .repl, .lsp, .explain, .help => unreachable,
+        .format, .repl, .lsp, .explain, .help, .build => unreachable,
     };
     var report = analysis catch |err| return internalFailure(io, err);
     defer report.deinit();
@@ -603,6 +616,124 @@ fn execute(gpa: std.mem.Allocator, io: std.Io, command: Command, path: []const u
     if (warned) return @backingInt(ExitCode.source_diagnostics);
     if (command == .check) try writeAll(io, .stdout, "No problems found.\n");
     return @backingInt(ExitCode.success);
+}
+
+/// `emerald build [--debug] [-o <output>] <file.em>` (docs/compiler-design-plan.md,
+/// decision 10): checks the program as `check` would, generates C, and
+/// compiles it with the build tools' Zig against the runtime library.
+fn executeBuild(gpa: std.mem.Allocator, io: std.Io, args: []const []const u8, environment: *const std.process.Environ.Map) !u8 {
+    var options: emerald.Compiler.Options = .{};
+    var output_flag: ?[]const u8 = null;
+    var path: ?[]const u8 = null;
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        const arg = args[index];
+        if (std.mem.eql(u8, arg, "--debug")) {
+            options.debug = true;
+        } else if (std.mem.eql(u8, arg, "-o")) {
+            index += 1;
+            if (index >= args.len) return commandMisuse(io, .build, "expects a path after `-o`");
+            output_flag = args[index];
+        } else if (path == null and !std.mem.startsWith(u8, arg, "-")) {
+            path = arg;
+        } else return commandMisuse(io, .build, "expects `[--debug] [-o <output>] <file.em>`");
+    }
+    const entry_path = path orelse return commandMisuse(io, .build, "expects a `<file.em>` path");
+
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var project = emerald.Project.load(gpa, io, entry_path) catch |err| {
+        var buffer: [512]u8 = undefined;
+        const message = std.fmt.bufPrint(&buffer, "emerald: cannot read '{s}': {t}\n", .{ entry_path, err }) catch
+            "emerald: cannot read the requested file\n";
+        try writeAll(io, .stderr, message);
+        return @backingInt(ExitCode.missing_input);
+    };
+    defer project.deinit(gpa);
+    const sources = try project.sources(gpa);
+    defer gpa.free(sources);
+
+    // The same analysis, and the same report, as `emerald check`.
+    var report = emerald.checkProject(gpa, &project) catch |err| return internalFailure(io, err);
+    defer report.deinit();
+    if (report.diagnostics.len != 0) {
+        try writeDiagnostics(gpa, io, sources, report.diagnostics);
+        if (emerald.Diagnostic.anyErrors(report.diagnostics)) return @backingInt(ExitCode.source_diagnostics);
+    }
+
+    var generated: std.Io.Writer.Allocating = .init(gpa);
+    defer generated.deinit();
+    const outcome = emerald.Compiler.generate(gpa, &project, &generated.writer) catch |err| switch (err) {
+        error.OutOfMemory, error.WriteFailed, error.StackUnavailable => |e| return internalFailure(io, e),
+        else => return internalFailure(io, error.WriteFailed),
+    };
+    switch (outcome) {
+        .c => {},
+        .unsupported => |diagnostic| {
+            defer gpa.free(diagnostic.message);
+            try writeDiagnostics(gpa, io, sources, &.{diagnostic});
+            return @backingInt(ExitCode.source_diagnostics);
+        },
+    }
+
+    const tools = switch (try emerald.Compiler.findTools(arena, io, environment)) {
+        .found => |found| found,
+        .missing => |missing| {
+            try writeAll(io, .stderr, missing.message);
+            return @backingInt(ExitCode.missing_input);
+        },
+    };
+
+    // `program.em` builds `program`, or `program.exe` on Windows, beside it.
+    // A file without the `.em` extension gets `.out` where a system adds
+    // nothing, so the executable never takes the program's own name.
+    const output = output_flag orelse blk: {
+        const plain = std.mem.endsWith(u8, entry_path, ".em");
+        const stem = if (plain) entry_path[0 .. entry_path.len - 3] else entry_path;
+        const extension = builtin.target.exeFileExt();
+        break :blk try std.fmt.allocPrint(arena, "{s}{s}", .{ stem, if (extension.len == 0 and !plain) ".out" else extension });
+    };
+    if (std.mem.eql(u8, output, entry_path)) return commandMisuse(io, .build, "cannot write the executable over the program it builds");
+
+    // The generated C and the header sit in a folder of their own beside the
+    // output while the C compiler runs, and are removed afterwards. Its name
+    // is random, and it must not exist yet, so the removal never touches a
+    // folder of anyone else's.
+    var nonce: [6]u8 = undefined;
+    io.random(&nonce);
+    const work = try std.fmt.allocPrint(arena, "{s}.emerald-build-{x}", .{ output, nonce });
+    const cwd = std.Io.Dir.cwd();
+    cwd.createDir(io, work, .default_dir) catch |err| return cannotWrite(io, work, err);
+    defer cwd.deleteTree(io, work) catch {};
+    const c_path = try std.fs.path.join(arena, &.{ work, "program.c" });
+    const header_path = try std.fs.path.join(arena, &.{ work, "emerald.h" });
+    cwd.writeFile(io, .{ .sub_path = c_path, .data = generated.written() }) catch |err| return cannotWrite(io, c_path, err);
+    cwd.writeFile(io, .{ .sub_path = header_path, .data = emerald.Compiler.header }) catch |err| return cannotWrite(io, header_path, err);
+
+    const failed = emerald.Compiler.compileC(gpa, io, tools, c_path, work, output, options) catch |err| {
+        var buffer: [512]u8 = undefined;
+        const message = std.fmt.bufPrint(&buffer, "emerald: cannot run the build tools' C compiler '{s}': {t}\n", .{ tools.zig, err }) catch
+            "emerald: cannot run the build tools' C compiler\n";
+        try writeAll(io, .stderr, message);
+        return @backingInt(ExitCode.internal_failure);
+    };
+    if (failed) |toolchain_output| {
+        defer gpa.free(toolchain_output);
+        try writeAll(io, .stderr, "emerald: the C compiler rejected the code generated for this program, which is a bug in Emerald.\nPlease report it with the program and this output:\n");
+        try writeAll(io, .stderr, toolchain_output);
+        return @backingInt(ExitCode.internal_failure);
+    }
+    return @backingInt(ExitCode.success);
+}
+
+fn cannotWrite(io: std.Io, path: []const u8, err: anyerror) !u8 {
+    var buffer: [512]u8 = undefined;
+    const message = std.fmt.bufPrint(&buffer, "emerald: cannot write '{s}': {t}\n", .{ path, err }) catch
+        "emerald: cannot write the build's files\n";
+    try writeAll(io, .stderr, message);
+    return @backingInt(ExitCode.internal_failure);
 }
 
 /// `emerald format` and `emerald format --check` (18.3). Formatting is

@@ -1,0 +1,30 @@
+# The conformance cases `zig build test-compiler` builds with `emerald build` and holds to
+# their .expected files (docs/compiler-design-plan.md, decision 11). Sorted, one per line.
+# The list grows with each slice of the compiler and is deleted once it holds every case.
+run/adjacent-minus.em
+run/bindings.em
+run/bool-action-name.em
+run/comparison.em
+run/conditionals.em
+run/division.em
+run/early-return.em
+run/exponentiation.em
+run/float-display.em
+run/inline-doc-comments.em
+run/int-range.em
+run/loop-assignment.em
+run/loops.em
+run/milestone.em
+run/module-scope.em
+run/precedence.em
+run/print-arguments.em
+run/trailing-if.em
+run/typed-declarations.em
+run/unicode-names.em
+run/widening.em
+runtime-errors/compound-assignment-overflow.em
+runtime-errors/division-by-zero.em
+runtime-errors/error-in-function.em
+runtime-errors/integer-overflow.em
+runtime-errors/negate-minimum-int.em
+runtime-errors/negative-exponent.em

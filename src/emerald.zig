@@ -43,6 +43,7 @@ pub const Scheduler = @import("runtime").Scheduler;
 pub const Builtins = @import("Builtins.zig");
 pub const Module = @import("runtime").Module;
 pub const Vendor = @import("Vendor.zig");
+pub const Compiler = @import("compiler/Compiler.zig");
 
 /// Declarations every program sees, such as section 11.5's `Ordered`.
 const prelude_text = @embedFile("prelude.em");
@@ -187,6 +188,13 @@ fn analyzeProjectForTool(gpa: std.mem.Allocator, project: *const Project, keep_u
         return error.StackUnavailable;
     thread.join();
     return task.result;
+}
+
+/// `analyzeProject` on the caller's own thread, which must already have the
+/// large stack (`stack_size`), as `emerald build`'s does: it lowers and emits
+/// from the same trees while they are alive.
+pub fn analyzeProjectOnThisStack(gpa: std.mem.Allocator, project: *const Project) Error!?Analysis {
+    return analyzeOnce(gpa, project, false);
 }
 
 fn analyzeOnce(gpa: std.mem.Allocator, project: *const Project, keep_unresolved: bool) Error!?Analysis {
@@ -704,7 +712,7 @@ fn formatAnalyze(gpa: std.mem.Allocator, project: *const Project) Error!FormatRe
 /// The evaluator's recursion guard is designed around a large thread stack, and
 /// the debug stress case of 1,000 calls whose bodies nest 250 levels deep still
 /// needs enough room for the recursive frames plus the expression tree itself.
-const stack_size: usize = if (@sizeOf(usize) >= 8) 1024 * 1024 * 1024 else 32 * 1024 * 1024;
+pub const stack_size: usize = if (@sizeOf(usize) >= 8) 1024 * 1024 * 1024 else 32 * 1024 * 1024;
 
 comptime {
     if (builtin.single_threaded) @compileError(

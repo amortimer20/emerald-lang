@@ -54,6 +54,14 @@ reports the whole picture.
 yet. Those cases protect real lexical rules now, and graduate to `run/` as the stages
 behind them land.
 
+## Compiled cases
+
+`compiled.txt` lists the `run/` and `runtime-errors/` cases the compiler can build so far.
+`zig build test-compiler` builds each with `emerald build`, runs the executable, and holds it
+to the same `.expected` file, and the same `.status`, as the interpreter. The list is sorted,
+grows as the compiler learns the language, and is deleted once it holds every case
+(docs/compiler-design-plan.md, decision 11).
+
 ## Adding a case
 
 Add a `.em` file to the directory matching what you want to assert. Every directory except

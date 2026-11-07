@@ -249,6 +249,39 @@ would be too large to review.
 **Slice 2: the IR and the smallest compiler.** IR, lowering, the C emitter and `emerald build`
 for `Int`, `Float`, `Bool`, functions, control flow, `print` and overflow; the build-tools
 lookup and its message; `zig build test-compiler` with its first list of cases.
+*As built* on `claude/compiler-smallest`: `src/compiler/Ir.zig` (basic blocks, a check
+instruction for each runtime check, carrying the site its failure reports), `Lower.zig`,
+`EmitC.zig` and `Compiler.zig`; `src/runtime/compiled.zig` and `emerald.h`, the runtime's C
+interface, built by `zig build` as a static library under
+`zig-out/build-tools/runtime/<arch-os-abi>/`; and `emerald build [--debug] [-o <output>]
+<file.em>`. It compiles `Int`, `Float` and `Bool` values, functions of them, `if`, `while`,
+`for` over a written range, `break`, `continue`, `and`, `or`, `not`, comparison chains, and
+`print` and `write` with literal and interpolated text. Anything else stops the build with
+"`emerald build` cannot compile ... yet" at the construct, before the build tools are needed.
+`conformance/compiled.txt` holds the 27 cases that build and match exactly (21 `run/`, 6
+`runtime-errors/`), and CI runs `zig build test-compiler` on all three systems. Of every
+single-file case tried, none built and behaved differently. Compiled `fib` runs in 0.009 s,
+63 times the interpreter's 0.58 s, and builds in 0.6 s.
+*Settled while building:*
+- **The build tools' layout.** `build-tools/zig/zig[.exe]` and
+  `build-tools/runtime/<arch-os-abi>/` holding the runtime library, looked for in
+  `EMERALD_BUILD_TOOLS`, then beside the executable, then beside its directory, as library
+  modules are. `EMERALD_ZIG` names another Zig, which is how the tests use the build's own.
+  `emerald.h` is compiled into `emerald` and written beside the generated C, so the header
+  always matches the compiler. Slice 7's archive fills `zig/` and one runtime per target.
+- **Failures and traces.** A failure records its message through `Operations` and returns
+  status 1; each caller adds its frame to the trace and returns 1 in turn, so a call that
+  succeeds costs one branch. The location, the quoted line and the carets are rendered at build
+  time by `Diagnostic`, from the source the program was built from, and stored as constants.
+- **Evaluation order.** A module variable read in an expression is copied first, since a call
+  later in the expression can change it; `print` evaluates every argument before writing, as
+  the interpreter builds the line first.
+- **The common case stays inline** in the C (`+`, `-`, `*` with clang's overflow builtins,
+  float `/`, `//` and `%` with a nonzero divisor), and the runtime does the rest: `**`, the
+  float `//`, `%` and `**`, exact `Int` and `Float` comparison, and every failure.
+- **Not yet:** `--target` (one runtime library per target is slice 7's), the call-depth limit
+  and `RecursionError` (slice 4, with the other errors), and projects of several files (slice
+  3, which needs the namespaced names).
 
 **Slice 3: values on the heap.** Strings, lists, dictionaries, sets, tuples, ranges, structs,
 classes and closures, with reference counting, copy-on-write and the cycle collector.
