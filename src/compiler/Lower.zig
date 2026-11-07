@@ -789,14 +789,16 @@ const Builder = struct {
                 .int => switch (right.type) {
                     .int => .int,
                     .float => .int_float,
+                    .optional, .nothing => if (operator.isEquality()) .value else return self.owner.fail(expression_.span, "this comparison"),
                     else => return self.owner.fail(expression_.span, "this comparison"),
                 },
                 .float => switch (right.type) {
                     .float => .float,
                     .int => .float_int,
+                    .optional, .nothing => if (operator.isEquality()) .value else return self.owner.fail(expression_.span, "this comparison"),
                     else => return self.owner.fail(expression_.span, "this comparison"),
                 },
-                .bool => if (right.type == .bool and operator.isEquality()) .bool else return self.owner.fail(expression_.span, "this comparison"),
+                .bool => if (right.type == .bool and operator.isEquality()) .bool else if ((right.type == .optional or right.type == .nothing) and operator.isEquality()) .value else return self.owner.fail(expression_.span, "this comparison"),
                 .string => if (right.type == .string) .string else if (operator.isEquality()) .value else return self.owner.fail(expression_.span, "this comparison"),
                 .list, .optional, .tuple, .nothing => if (operator.isEquality()) .value else return self.owner.fail(expression_.span, "this comparison"),
             };
