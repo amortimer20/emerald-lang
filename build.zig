@@ -16,12 +16,7 @@ pub fn build(b: *std.Build) void {
     // The runtime is its own module so that it cannot import the front end or
     // the interpreter: a compiled program links it alone
     // (docs/compiler-design-plan.md, decision 4).
-    const runtime_module = b.createModule(.{
-        .root_source_file = b.path("src/runtime/runtime.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = link_libc,
-    });
+    const runtime_module = runtimeModule(b, target, optimize, link_libc);
 
     const emerald_module = b.createModule(.{
         .root_source_file = b.path("src/emerald.zig"),
@@ -39,11 +34,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/front.zig"),
         .target = b.graph.host,
         .optimize = .debug,
-        .imports = &.{.{ .name = "runtime", .module = b.createModule(.{
-            .root_source_file = b.path("src/runtime/runtime.zig"),
-            .target = b.graph.host,
-            .optimize = .debug,
-        }) }},
+        .imports = &.{.{ .name = "runtime", .module = runtimeModule(b, b.graph.host, .debug, null) }},
     });
     const prelude_ast_tool = b.addExecutable(.{
         .name = "prelude-ast",
@@ -299,6 +290,18 @@ pub fn build(b: *std.Build) void {
 /// End-to-end coverage of the command-line contract. The exit codes in section
 /// 18.1 are a promised interface, so they are asserted against the real binary
 /// rather than only against library functions.
+/// The runtime module. It takes no imports, and must keep none: an import is the
+/// one way runtime code could reach the front end or the interpreter, since Zig
+/// refuses a file outside the module's own directory.
+fn runtimeModule(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, link_libc: ?bool) *std.Build.Module {
+    return b.createModule(.{
+        .root_source_file = b.path("src/runtime/runtime.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = link_libc,
+    });
+}
+
 fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Build.Step) void {
     const fixtures = b.addWriteFiles();
     // Written here rather than committed so the repository stays valid UTF-8.
