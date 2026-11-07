@@ -6504,3 +6504,25 @@ which compared names as strings, now switch on the enum.
 The prelude's natives (Regex, Json, Csv, Http, files, Console, time zones) are 1b part 2: they
 need runtime state the interpreter holds (the regex cache, I/O, terminal settings) and the
 prelude's struct types. Benchmarks are unchanged or slightly faster.
+
+## 2026-11-07: Compiler slice 1b, part 2: the prelude's natives
+
+1b part 1 merged as PR #72 (the repository now allows auto-merge, at the user's request). Part 2
+moved the prelude's natives that need no scheduler: `RegexNatives`, `EncodingNatives` (Base64, hex,
+SHA-256 and HMAC), `TimeNatives`, `JsonNatives` and `CsvNatives` (parsing and writing without a
+target type), `MathNatives`, and `SystemNatives` (Console's width and plain text, the clocks, the
+environment). What the interpreter held for them moved into `Native.State` (the compiled-pattern
+cache, the machine's zone, the zone database and its cache); the context gained `io`, and the
+engine a `prelude_struct` callback for `Regex::Match`, `Json`, `CsvError` and the rest. `CsvError`
+carries a `line`, so a native can now raise an error value it built (`raiseValue`).
+
+One bug was caught before the suite ran: the Json builder holds the native's context, and the
+interpreter had kept a builder past the `runNative` call whose stack the context lived on. It
+became `JsonNatives.buildValue`, which builds a whole value inside one call, and AGENTS.md says a
+value holding a context must not outlive its call.
+
+Files and Http stay in the interpreter, with `print`, `input`, `exit`, `sleep` and
+`Console.clear`: they release the task baton around blocking I/O, check for cancellation, lock file
+handles shared between tasks, and `File.with_open` runs a block. Slice 6 (the library and tasks)
+moves them with an engine interface for blocking and cancellation. `Interpreter.zig` is down to
+about 9,700 lines from 11,800 before slice 1b; benchmarks are 0.91 to 1.02 of part 1's.

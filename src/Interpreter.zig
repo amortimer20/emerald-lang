@@ -52,6 +52,13 @@ const call_arguments = @import("arguments.zig");
 const Scheduler = @import("runtime").Scheduler;
 const Native = @import("runtime").Native;
 const Natives = @import("runtime").Natives;
+const RegexNatives = @import("runtime").RegexNatives;
+const EncodingNatives = @import("runtime").EncodingNatives;
+const TimeNatives = @import("runtime").TimeNatives;
+const JsonNatives = @import("runtime").JsonNatives;
+const CsvNatives = @import("runtime").CsvNatives;
+const MathNatives = @import("runtime").MathNatives;
+const SystemNatives = @import("runtime").SystemNatives;
 const MapMethods = @import("runtime").MapMethods;
 const ListMethods = @import("runtime").ListMethods;
 const RangeMethods = @import("runtime").RangeMethods;
@@ -285,15 +292,11 @@ terminal_ready: bool = false,
 /// variables privately.
 environment: std.process.Environ,
 /// Section 15.8's `TimeZone.local`, resolved once for the whole execution.
-local_zone: TimeZone.Local,
 /// The built-in zone database, decompressed the first time a program names a
 /// zone, and the zones read from it so far. Both live in `arena`.
-zone_database: ?TimeZone.Database = null,
-zone_cache: std.StringHashMapUnmanaged(TimeZone.Rules) = .empty,
-/// Section 15.4's compiled patterns, keyed by options and pattern, so a
-/// `Regex` built again, as in a loop, is compiled once. They live in `arena`;
-/// past `regex_cache_limit` patterns, each is compiled for one call instead.
-regex_cache: std.StringHashMapUnmanaged(Regex.Program) = .empty,
+/// What the runtime's natives keep between calls (`Native.State`), such as
+/// compiled regular expressions. It lives in `arena`.
+native_state: Native.State = .{},
 /// Section 14.1's `Program.arguments`: the program's own CLI arguments,
 /// excluding the Emerald executable and entry-file paths. Empty outside the
 /// CLI's `run`/`test` commands.
@@ -600,7 +603,7 @@ pub const Session = struct {
             .color = color,
             .standard_input = standard_input,
             .environment = process_environment,
-            .local_zone = local_zone,
+            .native_state = .{ .local_zone = local_zone },
             .arguments = arguments,
             .checked_structs = analysis.checked_structs,
             .signatures = analysis.signatures,
@@ -987,7 +990,7 @@ pub fn run(
         .terminal = console.terminal,
         .standard_input = standard_input,
         .environment = process_environment,
-        .local_zone = local_zone,
+        .native_state = .{ .local_zone = local_zone },
         .arguments = arguments,
         .checked_structs = checked_structs,
         .signatures = signatures,
@@ -3406,6 +3409,7 @@ const NativeEngine = struct {
         .custom_hash = engineHash,
         .compare = engineCompare,
         .random = engineRandom,
+        .prelude_struct = enginePreludeStruct,
     };
 
     fn of(ptr: *anyopaque) *NativeEngine {
@@ -3427,6 +3431,22 @@ const NativeEngine = struct {
         return self.interpreter.callOperator(self.span, "compare", left, right);
     }
 
+    fn enginePreludeStruct(ptr: *anyopaque, name: []const u8) *const Value.StructType {
+        const interpreter = of(ptr).interpreter;
+        const prefix = Resolver.prelude_namespace ++ ".";
+        var buffer: [128]u8 = undefined;
+        if (prefix.len + name.len <= buffer.len) {
+            @memcpy(buffer[0..prefix.len], prefix);
+            @memcpy(buffer[prefix.len..][0..name.len], name);
+            return interpreter.structs.get(buffer[0 .. prefix.len + name.len]).?;
+        }
+        // A name too long for the buffer; prelude names are short, so this is
+        // a safety net rather than a path anything takes today.
+        const key = std.mem.concat(interpreter.gpa, u8, &.{ prefix, name }) catch @panic("out of memory");
+        defer interpreter.gpa.free(key);
+        return interpreter.structs.get(key).?;
+    }
+
     fn engineRandom(ptr: *anyopaque) std.Random {
         return of(ptr).interpreter.random();
     }
@@ -3438,6 +3458,8 @@ fn nativeContext(self: *Interpreter, engine: *NativeEngine) Native.Context {
         .gpa = self.gpa,
         .arena = self.arena,
         .heap = &self.heap,
+        .io = self.io,
+        .state = &self.native_state,
         .engine = .{ .ptr = engine, .vtable = &NativeEngine.vtable },
     };
 }
@@ -3477,8 +3499,12 @@ fn nativeFailure(self: *Interpreter, span: Source.Span, ctx: *const Native.Conte
 
 fn raiseFailure(self: *Interpreter, span: Source.Span, failure: Native.Failure) Error {
     if (failure.type_name.len == 0) return self.raise(span, failure.message, failure.help);
-    const key = try std.fmt.allocPrint(self.arena, Resolver.prelude_namespace ++ ".{s}", .{failure.type_name});
-    self.task.state.raised_value = try self.makeError(key, failure.message);
+    if (failure.value) |value| {
+        self.task.state.raised_value = value;
+    } else {
+        const key = try std.fmt.allocPrint(self.arena, Resolver.prelude_namespace ++ ".{s}", .{failure.type_name});
+        self.task.state.raised_value = try self.makeError(key, failure.message);
+    }
     return self.raiseTyped(span, failure.type_name, failure.message, failure.help);
 }
 
@@ -4098,22 +4124,22 @@ fn evaluateCallInner(
             return .nothing;
         }
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::_color")) return .initBool(self.color);
-        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::_width")) return self.callConsoleWidth(call);
-        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::plain")) return self.callConsolePlain(call);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::_width")) return self.callTextNative(expression.span, call, SystemNatives.columnWidth);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::plain")) return self.callTextNative(expression.span, call, SystemNatives.plainOf);
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::clear")) return self.callConsoleClear();
         if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Console::table")) {
             if (self.json_encodes.get(call.callee)) |record_type| return self.callConsoleStructTable(expression.span, call, record_type);
         }
-        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Instant::_now")) return .initInt(clockNanoseconds(self.io, .real));
-        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Stopwatch::_ticks")) return .initInt(clockNanoseconds(self.io, .awake));
-        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_local_name")) return self.heap.copyText(self.local_zone.name);
-        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_known?")) return self.callZoneKnown(call);
-        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_offset_seconds")) return self.callZoneOffset(call);
-        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_suggestion")) return self.callZoneSuggestion(call);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Instant::_now")) return self.runNative(expression.span, SystemNatives.clock, .{.real});
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".Stopwatch::_ticks")) return self.runNative(expression.span, SystemNatives.clock, .{.awake});
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_local_name")) return self.heap.copyText(self.native_state.local_zone.name);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_known?")) return self.callTextNative(expression.span, call, TimeNatives.zoneKnown);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_offset_seconds")) return self.callZoneOffset(expression.span, call);
+        if (std.mem.eql(u8, key, Resolver.prelude_namespace ++ ".TimeZone::_suggestion")) return self.callTextNative(expression.span, call, TimeNatives.zoneSuggestion);
         if (std.mem.eql(u8, key, Resolver.program_sleep_key)) return self.callSleep(expression.span, call);
         if (std.mem.eql(u8, key, Resolver.program_environment_key)) return self.callEnvironment(expression.span, call);
         if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Regex::")) {
-            if (try self.callRegex(key[Resolver.prelude_namespace.len + ".Regex::".len ..], call)) |result| return result;
+            if (try self.callRegex(expression.span, key[Resolver.prelude_namespace.len + ".Regex::".len ..], call)) |result| return result;
         }
         if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Json::")) {
             if (try self.callJson(key[(Resolver.prelude_namespace ++ ".Json::").len..], call)) |result| return result;
@@ -4128,13 +4154,10 @@ fn evaluateCallInner(
             return self.callBase64(expression.span, key[(Resolver.prelude_namespace ++ ".Base64::").len..], call);
         }
         if (std.mem.startsWith(u8, key, Resolver.prelude_namespace ++ ".Digest::")) {
-            return self.callDigest(key[(Resolver.prelude_namespace ++ ".Digest::").len..], call);
+            return self.callDigest(expression.span, key[(Resolver.prelude_namespace ++ ".Digest::").len..], call);
         }
         if (isFilesystemKey(key)) return self.callFilesystem(expression.span, key, call);
-        if (Resolver.mathFunction(key)) |function| {
-            if (function.ordered) return self.callMathExtreme(expression.span, call, key);
-            return self.callMath(call, key);
-        }
+        if (Resolver.mathFunction(key) != null) return self.callMath(expression.span, call, key);
         try self.reach(key, call.callee.span);
         if (self.choices.get(key)) |choice| return self.constructChoice(call, choice);
         if (self.structs.get(key)) |descriptor| return self.constructStruct(expression.span, key, descriptor, call);
@@ -4826,36 +4849,6 @@ fn deinitChannels(self: *Interpreter) void {
     self.channels.deinit(self.gpa);
 }
 
-/// Removes only complete ANSI SGR sequences: ESC, `[`, zero or more decimal
-/// digits or semicolons, then `m`. Cursor controls and malformed sequences
-/// are deliberately not a sanitizer's job.
-fn callConsolePlain(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
-    const values = try self.evaluateArguments(call.arguments);
-    defer {
-        for (values) |value| self.heap.release(value);
-        self.gpa.free(values);
-    }
-
-    return .{ .data = .{ .string = try self.heap.createText(try plainText(self.gpa, values[0].data.string.bytes)) } };
-}
-
-/// `text` without its complete ANSI SGR sequences, which is what Console's
-/// styling adds, leaving any other control text alone.
-fn plainText(gpa: std.mem.Allocator, text: []const u8) std.mem.Allocator.Error![]u8 {
-    var plain: std.ArrayList(u8) = .empty;
-    errdefer plain.deinit(gpa);
-    var index: usize = 0;
-    while (index < text.len) {
-        if (unicode.sgrEnd(text, index)) |end| {
-            index = end;
-            continue;
-        }
-        try plain.append(gpa, text[index]);
-        index += 1;
-    }
-    return plain.toOwnedSlice(gpa);
-}
-
 /// Section 15.6's `Console.clear()`: clears the screen and puts the cursor at
 /// the top left, but only on a terminal, so redirected output stays clean.
 fn callConsoleClear(self: *Interpreter) Error!Value {
@@ -4875,16 +4868,6 @@ fn callConsoleClear(self: *Interpreter) Error!Value {
     try self.out.writeAll("\x1b[2J\x1b[H");
     try self.out.flush();
     return Value.nothing;
-}
-
-fn callConsoleWidth(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
-    const values = try self.evaluateArguments(call.arguments);
-    defer {
-        for (values) |value| self.heap.release(value);
-        self.gpa.free(values);
-    }
-    const columns = try unicode.columnWidth(self.gpa, values[0].data.string.bytes);
-    return .initInt(@intCast(columns));
 }
 
 fn consoleStringList(self: *Interpreter, cells: []const []const u8) Error!Value {
@@ -5054,7 +5037,7 @@ fn callFilesystem(self: *Interpreter, span: Source.Span, key: []const u8, call: 
         return .{ .data = .{ .bytes = try self.heap.createText(bytes) } };
     }
     if (std.mem.eql(u8, suffix, "Bytes::from_hex") or std.mem.eql(u8, suffix, "Bytes::from_hex_maybe")) {
-        return self.bytesFromHex(span, values[0].data.string.bytes, std.mem.eql(u8, suffix, "Bytes::from_hex_maybe"));
+        return self.runNative(span, EncodingNatives.bytesFromHex, .{ values[0].data.string.bytes, std.mem.eql(u8, suffix, "Bytes::from_hex_maybe") });
     }
     if (std.mem.eql(u8, suffix, "File::open")) return self.openFileHandle(span, cwd, io, values[0].data.string.bytes);
     if (std.mem.eql(u8, suffix, "File::with_open")) {
@@ -5480,17 +5463,11 @@ fn callBase64(self: *Interpreter, span: Source.Span, name: []const u8, call: Ast
         if (bound.omitted) |omitted| self.gpa.free(omitted);
     }
     const url_safe = if (bound.omitted != null and bound.omitted.?[1]) false else bound.values[1].data.bool;
-    if (encode) {
-        const source = bound.values[0].data.bytes.bytes;
-        const codec = if (url_safe) std.base64.url_safe_no_pad.Encoder else std.base64.standard.Encoder;
-        const out = try self.gpa.alloc(u8, codec.calcSize(source.len));
-        _ = codec.encode(out, source);
-        return .{ .data = .{ .string = try self.heap.createText(out) } };
-    }
-    return self.base64Decode(span, bound.values[0].data.string.bytes, url_safe, maybe);
+    if (encode) return self.runNative(span, EncodingNatives.base64Encode, .{ bound.values[0].data.bytes.bytes, url_safe });
+    return self.runNative(span, EncodingNatives.base64Decode, .{ bound.values[0].data.string.bytes, url_safe, maybe });
 }
 
-fn callDigest(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Error!Value {
+fn callDigest(self: *Interpreter, span: Source.Span, name: []const u8, call: Ast.Expression.Call) Error!Value {
     const hmac = std.mem.eql(u8, name, "hmac_sha256");
     const bound = try self.evaluateBound(call, if (hmac) &.{ "bytes", "key" } else &.{"bytes"}, if (hmac) &.{ false, false } else &.{false});
     defer {
@@ -5498,106 +5475,7 @@ fn callDigest(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) E
         self.gpa.free(bound.values);
         if (bound.omitted) |omitted| self.gpa.free(omitted);
     }
-    var out: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
-    if (!hmac) {
-        std.crypto.hash.sha2.Sha256.hash(bound.values[0].data.bytes.bytes, &out, .{});
-    } else {
-        std.crypto.auth.hmac.sha2.HmacSha256.create(&out, bound.values[0].data.bytes.bytes, bound.values[1].data.bytes.bytes);
-    }
-    return self.heap.copyBytes(&out);
-}
-
-fn base64Decode(self: *Interpreter, span: Source.Span, text: []const u8, url_safe: bool, maybe: bool) Error!Value {
-    // Walk characters, not bytes, so an index matches string indexing and a
-    // non-ASCII character is quoted whole rather than as a broken byte.
-    const characters = try strings.characters(self.gpa, text);
-    defer self.gpa.free(characters);
-    // The Base64 characters kept, each with its index in the original text.
-    var clean: std.ArrayList(u8) = .empty;
-    defer clean.deinit(self.gpa);
-    var positions: std.ArrayList(usize) = .empty;
-    defer positions.deinit(self.gpa);
-    const alphabet = if (url_safe) std.base64.url_safe_alphabet_chars else std.base64.standard_alphabet_chars;
-    var first_padding: ?usize = null;
-    for (characters, 0..) |character, index| {
-        // Wrapped Base64 (email, PEM files, copied output) breaks lines; a
-        // Windows line ending is one character, "\r\n".
-        if (isBase64Space(character)) continue;
-        if (character.len == 1 and character[0] == '=') {
-            first_padding = first_padding orelse index;
-            try clean.append(self.gpa, '=');
-            try positions.append(self.gpa, index);
-            continue;
-        }
-        if (first_padding) |padding_index| {
-            if (maybe) return Value.nothing;
-            return self.runNative(span, BytesMethods.raiseEncodingMessage, .{try std.fmt.allocPrint(self.arena, "Base64 text has `=` at index {d}, before its end", .{padding_index})});
-        }
-        const known = character.len == 1 and base64Index(alphabet, character[0]) != null;
-        if (!known) {
-            if (maybe) return Value.nothing;
-            const other_alphabet = character.len == 1 and if (url_safe)
-                character[0] == '+' or character[0] == '/'
-            else
-                character[0] == '-' or character[0] == '_';
-            if (other_alphabet) {
-                const mode = if (url_safe) "standard" else "URL-safe";
-                const help = if (url_safe) "Decode it without `url_safe: true`." else "Decode it with `url_safe: true`.";
-                const message = try std.fmt.allocPrint(self.arena, "Base64 text has `{s}` at index {d}, which belongs to {s} Base64", .{ character, index, mode });
-                self.task.state.raised_value = self.makeError(Resolver.preludeKey("EncodingError"), message) catch return error.OutOfMemory;
-                return self.raiseTyped(span, "EncodingError", message, help);
-            }
-            return self.runNative(span, BytesMethods.raiseEncodingMessage, .{try std.fmt.allocPrint(self.arena, "Base64 text has `{s}` at index {d}, which is not a Base64 character", .{ character, index })});
-        }
-        try clean.append(self.gpa, character[0]);
-        try positions.append(self.gpa, index);
-    }
-    var padding: usize = 0;
-    while (padding < clean.items.len and clean.items[clean.items.len - 1 - padding] == '=') : (padding += 1) {}
-    const encoded = clean.items[0 .. clean.items.len - padding];
-    if (encoded.len % 4 == 1) {
-        if (maybe) return Value.nothing;
-        return self.runNative(span, BytesMethods.raiseEncodingMessage, .{"Base64 text ends partway through a group: it has 1 character too many, or is missing some"});
-    }
-    // Four characters make a group; a last group of two or three is padded
-    // with two or one `=`, and a complete group with none.
-    const needed: usize = (4 - encoded.len % 4) % 4;
-    if (padding > 0 and padding != needed) {
-        if (maybe) return Value.nothing;
-        const message = if (needed == 0)
-            try std.fmt.allocPrint(self.arena, "Base64 text ends with {d} `=`, but its last group is already complete and needs none", .{padding})
-        else
-            try std.fmt.allocPrint(self.arena, "Base64 text ends with {d} `=`, but its last group needs {d}", .{ padding, needed });
-        return self.runNative(span, BytesMethods.raiseEncodingMessage, .{message});
-    }
-    if (encoded.len % 4 != 0) {
-        const last = encoded[encoded.len - 1];
-        const value = base64Index(alphabet, last).?;
-        const mask: u8 = if (encoded.len % 4 == 2) 0x0f else 0x03;
-        if ((value & mask) != 0) {
-            if (maybe) return Value.nothing;
-            const canonical = alphabet[value & ~mask];
-            return self.runNative(span, BytesMethods.raiseEncodingMessage, .{try std.fmt.allocPrint(self.arena, "Base64 text's last character, `{c}` at index {d}, is not a possible final character; write `{c}` instead", .{ last, positions.items[encoded.len - 1], canonical })});
-        }
-    }
-    const decoder = if (url_safe) std.base64.url_safe_no_pad.Decoder else std.base64.standard_no_pad.Decoder;
-    const size = decoder.calcSizeForSlice(encoded) catch unreachable;
-    const out = try self.gpa.alloc(u8, size);
-    decoder.decode(out, encoded) catch unreachable;
-    return .{ .data = .{ .bytes = try self.heap.createText(out) } };
-}
-
-fn isBase64Space(character: []const u8) bool {
-    for (character) |byte| switch (byte) {
-        ' ', '\t', '\r', '\n' => {},
-        else => return false,
-    };
-    return character.len > 0;
-}
-
-fn base64Index(alphabet: [64]u8, character: u8) ?u8 {
-    for (alphabet, 0..) |candidate, index| if (candidate == character) return @intCast(index);
-    return null;
+    return self.runNative(span, EncodingNatives.digest, .{ bound.values[0].data.bytes.bytes, if (hmac) bound.values[1].data.bytes.bytes else null });
 }
 
 fn evaluateRangeCall(self: *Interpreter, expression: *const Ast.Expression, call: Ast.Expression.Call) Error!Value {
@@ -5647,150 +5525,6 @@ fn evaluateCountingBlock(self: *Interpreter, expression: *const Ast.Expression, 
         self.heap.release(result);
         if (current == range.last) return Value.nothing;
         current = if (range.descending) current - range.step_size else current + range.step_size;
-    }
-}
-
-/// `Math.max` and `Math.min`: one of the two arguments, `first` when they are
-/// equal. An Int beside a Float is widened, as the checker typed the call.
-/// The checker allows only Ints, Floats, Strings, and `Ordered` values, so the
-/// ordering is the one `List.max` uses, and NaN raises as it does there.
-fn callMathExtreme(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call, key: []const u8) Error!Value {
-    const minimum = std.mem.eql(u8, key[Resolver.math_prefix.len..], "min");
-    var first = try self.evaluate(call.arguments[0]);
-    errdefer self.heap.release(first);
-    var second = try self.evaluate(call.arguments[1]);
-    errdefer self.heap.release(second);
-    if (first.data == .float or second.data == .float) {
-        first = widen(first, .float);
-        second = widen(second, .float);
-        if (std.math.isNan(first.data.float) or std.math.isNan(second.data.float)) return self.raiseFmt(
-            span,
-            "`Math.{s}` cannot compare NaN",
-            .{if (minimum) "min" else "max"},
-            "Check values with `nan?()` before choosing a minimum or maximum.",
-        );
-    }
-    const ordering = try self.runNative(span, ListMethods.orderListItems, .{ first.data, first, second, .ordinary });
-    const take_second = if (minimum) ordering == .gt else ordering == .lt;
-    if (take_second) {
-        self.heap.release(first);
-        return second;
-    }
-    self.heap.release(second);
-    return first;
-}
-
-fn callMath(self: *Interpreter, call: Ast.Expression.Call, key: []const u8) Error!Value {
-    var values: [2]f64 = undefined;
-    for (call.arguments, 0..) |argument, index| values[index] = toFloat(try self.evaluate(argument));
-    const name = key[Resolver.math_prefix.len..];
-    return .initFloat(if (std.mem.eql(u8, name, "sin")) std.math.sin(values[0]) else if (std.mem.eql(u8, name, "cos")) std.math.cos(values[0]) else if (std.mem.eql(u8, name, "tan")) std.math.tan(values[0]) else if (std.mem.eql(u8, name, "arc_sin")) std.math.asin(values[0]) else if (std.mem.eql(u8, name, "arc_cos")) std.math.acos(values[0]) else if (std.mem.eql(u8, name, "arc_tan")) std.math.atan(values[0]) else if (std.mem.eql(u8, name, "arc_tan2")) std.math.atan2(values[0], values[1]) else if (std.mem.eql(u8, name, "natural_log")) std.math.log(f64, std.math.e, values[0]) else if (std.mem.eql(u8, name, "log10")) std.math.log10(values[0]) else if (std.mem.eql(u8, name, "log")) if (values[1] <= 0 or values[1] == 1) std.math.nan(f64) else std.math.log(f64, values[1], values[0]) else FloatMath.power(values[0], values[1]));
-}
-
-/// The rules a zone name has, for a zone whose offset changes: the built-in
-/// database's first, so a name means the same everywhere, then the machine's
-/// own rules for a local zone the database does not know.
-fn zoneRules(self: *Interpreter, name: []const u8) Error!?TimeZone.Rules {
-    if (self.zone_cache.get(name)) |rules| return rules;
-    const database = try self.zoneDatabase();
-    const found = (database.rules(self.arena, name) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => null,
-    }) orelse {
-        const local = self.local_zone.rules orelse return null;
-        return if (std.mem.eql(u8, name, self.local_zone.name)) local else null;
-    };
-    try self.zone_cache.put(self.arena, try self.arena.dupe(u8, name), found);
-    return found;
-}
-
-fn zoneDatabase(self: *Interpreter) Error!TimeZone.Database {
-    if (self.zone_database) |database| return database;
-    // The embedded file is generated and checked by its unit test, so only
-    // running out of memory can stop it loading.
-    const database = TimeZone.Database.load(self.arena) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => unreachable,
-    };
-    self.zone_database = database;
-    return database;
-}
-
-fn callZoneKnown(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
-    const name = try self.evaluate(call.arguments[0]);
-    defer self.heap.release(name);
-    return .initBool(try self.zoneRules(name.data.string.bytes) != null);
-}
-
-/// The offset in seconds a rule-based zone has at a moment in Unix seconds.
-/// The prelude asks only after `_known?` has accepted the name.
-fn callZoneOffset(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
-    const name = try self.evaluate(call.arguments[0]);
-    defer self.heap.release(name);
-    const at = (try self.evaluate(call.arguments[1])).data.int;
-    const rules = try self.zoneRules(name.data.string.bytes) orelse return .initInt(0);
-    return .initInt(rules.offsetAt(at));
-}
-
-/// The zone name meant by one written in the wrong case, or `nothing`.
-fn callZoneSuggestion(self: *Interpreter, call: Ast.Expression.Call) Error!Value {
-    const name = try self.evaluate(call.arguments[0]);
-    defer self.heap.release(name);
-    const database = try self.zoneDatabase();
-    const closest = database.closest(name.data.string.bytes) orelse return .nothing;
-    return self.heap.copyText(closest);
-}
-
-const regex_cache_limit = 256;
-
-/// A compiled pattern, which the caller deinitializes only when `owned`: one
-/// from the cache belongs to the execution.
-const CompiledRegex = struct {
-    program: Regex.Program,
-    owned: bool,
-
-    fn deinit(self: *CompiledRegex) void {
-        if (self.owned) self.program.deinit();
-    }
-};
-
-/// Section 15.4's natives, which the prelude's `Regex` calls with the pattern
-/// and its options first. Null for a name that is not one of them, such as a
-/// method the prelude writes in Emerald.
-fn callRegex(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Error!?Value {
-    const Entry = enum { escape, _problem, @"_whole?", _find, _replace, _split, _splice };
-    const native = std.meta.stringToEnum(Entry, name) orelse return null;
-    const values = try self.evaluateArguments(call.arguments);
-    defer {
-        for (values) |value| self.heap.release(value);
-        self.gpa.free(values);
-    }
-    switch (native) {
-        .escape => return try self.regexEscape(values[0].data.string.bytes),
-        ._problem => return try self.regexProblem(values),
-        .@"_whole?", ._find, ._replace, ._split => {
-            var compiled = try self.regexFor(values);
-            defer compiled.deinit();
-            const text = try Regex.Text.init(self.gpa, values[3].data.string.bytes);
-            defer text.deinit(self.gpa);
-            const slots = try self.gpa.alloc(usize, compiled.program.slotCount());
-            defer self.gpa.free(slots);
-            var matcher = try Regex.Matcher.init(self.gpa, &compiled.program);
-            defer matcher.deinit();
-            var matches: RegexMatches = .{ .matcher = &matcher, .text = text, .slots = slots };
-            return switch (native) {
-                .@"_whole?" => .initBool(try matcher.run(text, 0, .whole, slots)),
-                ._find => try self.regexFind(&matches, values[0], @intCast(values[4].data.int)),
-                ._replace => try self.regexReplace(&matches, values[4].data.string.bytes, @intCast(values[5].data.int)),
-                ._split => try self.regexSplit(&matches),
-                else => unreachable,
-            };
-        },
-        ._splice => {
-            const text = try Regex.Text.init(self.gpa, values[0].data.string.bytes);
-            defer text.deinit(self.gpa);
-            return try self.regexSplice(text, values[1].data.list.items.items, values[2].data.list.items.items);
-        },
     }
 }
 
@@ -5844,12 +5578,10 @@ fn callJson(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Err
             defer document.deinit();
             // `Json.parse` asks for the problem only after `_parse` refused.
             if (native == ._problem) return try self.heap.copyText("");
-            var builder = try JsonBuilder.init(self, call.callee.span);
-            defer builder.deinit();
-            return try builder.build(document.root);
+            return try self.runNative(call.callee.span, JsonNatives.buildValue, .{document.root});
         },
-        ._write => return try self.jsonWrite(call.callee.span, values[0], values[1].data.bool),
-        ._key_path => return try self.jsonKeyPath(values[0].data.string.bytes, values[1].data.string.bytes),
+        ._write => return try self.runNative(call.callee.span, JsonNatives.jsonWrite, .{ values[0], values[1].data.bool }),
+        ._key_path => return try self.runNative(call.callee.span, JsonNatives.jsonKeyPath, .{ values[0].data.string.bytes, values[1].data.string.bytes }),
         .encode => unreachable,
         .decode => unreachable,
     }
@@ -5876,9 +5608,9 @@ fn callCsv(self: *Interpreter, span: Source.Span, name: []const u8, call: Ast.Ex
         if (bound.omitted) |omitted| self.gpa.free(omitted);
     }
     return switch (native) {
-        ._parse => @as(?Value, try self.csvRows(span, bound.values[0].data.string.bytes, bound.values[1].data.string.bytes)),
-        ._parse_records => @as(?Value, try self.csvRecords(span, bound.values[0].data.string.bytes, bound.values[1].data.string.bytes)),
-        ._format => @as(?Value, try self.csvFormat(span, bound.values[0].data.list, bound.values[1].data.string.bytes)),
+        ._parse => @as(?Value, try self.runNative(span, CsvNatives.csvRows, .{ bound.values[0].data.string.bytes, bound.values[1].data.string.bytes })),
+        ._parse_records => @as(?Value, try self.runNative(span, CsvNatives.csvRecords, .{ bound.values[0].data.string.bytes, bound.values[1].data.string.bytes })),
+        ._format => @as(?Value, try self.runNative(span, CsvNatives.csvFormat, .{ bound.values[0].data.list, bound.values[1].data.string.bytes })),
         .encode, .decode => unreachable,
     };
 }
@@ -5907,7 +5639,7 @@ fn csvEncodeRecords(self: *Interpreter, span: Source.Span, value: Value, value_t
     var out: std.Io.Writer.Allocating = .init(self.gpa);
     defer out.deinit();
     Csv.write(rows, separator, &out.writer) catch |err| switch (err) {
-        error.InvalidSeparator => return self.raiseCsvSeparator(span, separator),
+        error.InvalidSeparator => return self.runNative(span, CsvNatives.raiseCsvSeparator, .{separator}),
         error.WriteFailed => return error.OutOfMemory,
     };
     return .{ .data = .{ .string = try self.heap.createText(try out.toOwnedSlice()) } };
@@ -6000,7 +5732,7 @@ fn csvDecodeText(self: *Interpreter, span: Source.Span, text: []const u8, separa
     var problem: Csv.Problem = .{};
     var document = Csv.parse(self.gpa, text, separator, &problem) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
-        error.InvalidCsv => return self.raiseCsvProblem(span, problem),
+        error.InvalidCsv => return self.runNative(span, CsvNatives.raiseCsvProblem, .{problem}),
     };
     defer document.deinit();
     var arena_state: std.heap.ArenaAllocator = .init(self.gpa);
@@ -6014,10 +5746,10 @@ fn csvJsonRoot(self: *Interpreter, span: Source.Span, arena: std.mem.Allocator, 
     if (rows.len == 0) return .initList(items);
     const header = rows[0];
     for (header.fields, 0..) |name, index| {
-        if (name.len == 0) return self.raiseCsv(span, "the header has an empty column name", header.line);
+        if (name.len == 0) return self.runNative(span, CsvNatives.raiseCsv, .{ "the header has an empty column name", header.line });
         for (header.fields[0..index]) |earlier| if (std.mem.eql(u8, name, earlier)) {
             const message = try std.fmt.allocPrint(self.arena, "the header names the column \"{s}\" twice", .{name});
-            return self.raiseCsv(span, message, header.line);
+            return self.runNative(span, CsvNatives.raiseCsv, .{ message, header.line });
         };
     }
     const element = target.element.?.*;
@@ -6026,7 +5758,7 @@ fn csvJsonRoot(self: *Interpreter, span: Source.Span, arena: std.mem.Allocator, 
     for (rows[1..], items) |row, *item| {
         if (row.fields.len != header.fields.len) {
             const message = try std.fmt.allocPrint(self.arena, "line {d} has {d} fields, but the header has {d}", .{ row.line, row.fields.len, header.fields.len });
-            return self.raiseCsv(span, message, row.line);
+            return self.runNative(span, CsvNatives.raiseCsv, .{ message, row.line });
         }
         const entries = try arena.alloc(Json.Entry, user.fields.len);
         var entry_count: usize = 0;
@@ -6038,7 +5770,7 @@ fn csvJsonRoot(self: *Interpreter, span: Source.Span, arena: std.mem.Allocator, 
                 const columns = try self.csvColumns(header.fields);
                 defer self.gpa.free(columns);
                 const message = try std.fmt.allocPrint(self.arena, "there is no column \"{s}\"; the columns are {s}", .{ field.name, columns });
-                return self.raiseCsv(span, message, null);
+                return self.runNative(span, CsvNatives.raiseCsv, .{ message, null });
             }
             const cell = row.fields[header_index.?];
             if (cell.len == 0 and written.default != null) continue;
@@ -6062,25 +5794,25 @@ fn csvCellJson(self: *Interpreter, span: Source.Span, arena: std.mem.Allocator, 
     }
     if (cell.len == 0) {
         if (target.kind == .string) return .initString(try arena.dupe(u8, cell));
-        return self.raiseCsvCell(span, line, column, "this cell is empty");
+        return self.runNative(span, CsvNatives.raiseCsvCell, .{ line, column, "this cell is empty" });
     }
     return switch (target.kind) {
         .string => .initString(try arena.dupe(u8, cell)),
         .int => switch (strings.parseInt(cell)) {
             .value => |value| Json.Value.initInt(value),
-            else => self.raiseCsvCell(span, line, column, try std.fmt.allocPrint(self.arena, "expected a whole number, found \"{s}\"", .{cell})),
+            else => self.runNative(span, CsvNatives.raiseCsvCell, .{ line, column, try std.fmt.allocPrint(self.arena, "expected a whole number, found \"{s}\"", .{cell}) }),
         },
         .float => switch (strings.parseFloat(cell)) {
             .value => |value| Json.Value.initFloat(value),
-            else => self.raiseCsvCell(span, line, column, try std.fmt.allocPrint(self.arena, "expected a number, found \"{s}\"", .{cell})),
+            else => self.runNative(span, CsvNatives.raiseCsvCell, .{ line, column, try std.fmt.allocPrint(self.arena, "expected a number, found \"{s}\"", .{cell}) }),
         },
-        .bool => if (std.ascii.eqlIgnoreCase(cell, "true")) Json.Value.initBool(true) else if (std.ascii.eqlIgnoreCase(cell, "false")) Json.Value.initBool(false) else self.raiseCsvCell(span, line, column, try std.fmt.allocPrint(self.arena, "expected true or false, found \"{s}\"", .{cell})),
+        .bool => if (std.ascii.eqlIgnoreCase(cell, "true")) Json.Value.initBool(true) else if (std.ascii.eqlIgnoreCase(cell, "false")) Json.Value.initBool(false) else self.runNative(span, CsvNatives.raiseCsvCell, .{ line, column, try std.fmt.allocPrint(self.arena, "expected true or false, found \"{s}\"", .{cell}) }),
         .struct_value => {
             const user = target.user.?;
             if (user.enumeration) {
                 const descriptor = self.structs.get(user.name).?;
                 for (descriptor.values) |value| if (std.mem.eql(u8, value, cell)) return .initString(try arena.dupe(u8, cell));
-                return self.raiseCsvCell(span, line, column, try std.fmt.allocPrint(self.arena, "expected a value of `{s}`, found \"{s}\"", .{ user.display_name, cell }));
+                return self.runNative(span, CsvNatives.raiseCsvCell, .{ line, column, try std.fmt.allocPrint(self.arena, "expected a value of `{s}`, found \"{s}\"", .{ user.display_name, cell }) });
             }
             if (jsonTextualType(user.name)) {
                 const key = try Resolver.methodKey(self.arena, user.name, "parse_maybe");
@@ -6089,17 +5821,12 @@ fn csvCellJson(self: *Interpreter, span: Source.Span, arena: std.mem.Allocator, 
                 const valid = parsed.data != .nothing;
                 self.heap.release(parsed);
                 if (valid) return .initString(try arena.dupe(u8, cell));
-                return self.raiseCsvCell(span, line, column, try std.fmt.allocPrint(self.arena, "expected valid `{s}`, found \"{s}\"", .{ user.display_name, cell }));
+                return self.runNative(span, CsvNatives.raiseCsvCell, .{ line, column, try std.fmt.allocPrint(self.arena, "expected valid `{s}`, found \"{s}\"", .{ user.display_name, cell }) });
             }
             unreachable;
         },
         else => unreachable,
     };
-}
-
-fn raiseCsvCell(self: *Interpreter, span: Source.Span, line: u32, column: []const u8, detail: []const u8) Error {
-    const message = std.fmt.allocPrint(self.arena, "line {d}, column \"{s}\": {s}", .{ line, column, detail }) catch return error.OutOfMemory;
-    return self.raiseCsv(span, message, line);
 }
 
 fn csvColumns(self: *Interpreter, headers: []const []const u8) Error![]u8 {
@@ -6110,132 +5837,6 @@ fn csvColumns(self: *Interpreter, headers: []const []const u8) Error![]u8 {
         try out.writer.print("\"{s}\"", .{header});
     }
     return try out.toOwnedSlice();
-}
-
-fn csvRows(self: *Interpreter, span: Source.Span, text: []const u8, separator: []const u8) Error!Value {
-    var problem: Csv.Problem = .{};
-    var document = Csv.parse(self.gpa, text, separator, &problem) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.InvalidCsv => return self.raiseCsvProblem(span, problem),
-    };
-    defer document.deinit();
-
-    const rows = try self.heap.createList(.list, document.rows.len);
-    const result: Value = .{ .data = .{ .list = rows } };
-    errdefer self.heap.release(result);
-    for (document.rows) |row| {
-        const fields = try self.heap.createList(.string, row.fields.len);
-        const value: Value = .{ .data = .{ .list = fields } };
-        errdefer self.heap.release(value);
-        for (row.fields) |field| fields.items.appendAssumeCapacity(try self.heap.copyText(field));
-        rows.items.appendAssumeCapacity(value);
-    }
-    return result;
-}
-
-fn csvRecords(self: *Interpreter, span: Source.Span, text: []const u8, separator: []const u8) Error!Value {
-    var problem: Csv.Problem = .{};
-    var document = Csv.parse(self.gpa, text, separator, &problem) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.InvalidCsv => return self.raiseCsvProblem(span, problem),
-    };
-    defer document.deinit();
-    if (document.rows.len == 0) {
-        return .{ .data = .{ .list = try self.heap.createList(.map, 0) } };
-    }
-
-    const header = document.rows[0];
-    for (header.fields, 0..) |name, index| {
-        if (name.len == 0) return self.raiseCsv(span, "the header has an empty column name", header.line);
-        for (header.fields[0..index]) |earlier| {
-            if (std.mem.eql(u8, name, earlier)) {
-                const message = try std.fmt.allocPrint(self.arena, "the header names the column \"{s}\" twice", .{name});
-                return self.raiseCsv(span, message, header.line);
-            }
-        }
-    }
-
-    const records = try self.heap.createList(.map, document.rows.len - 1);
-    const result: Value = .{ .data = .{ .list = records } };
-    errdefer self.heap.release(result);
-    for (document.rows[1..]) |row| {
-        if (row.fields.len != header.fields.len) {
-            const message = try std.fmt.allocPrint(self.arena, "line {d} has {d} fields, but the header has {d}", .{ row.line, row.fields.len, header.fields.len });
-            return self.raiseCsv(span, message, row.line);
-        }
-        const record = try self.heap.createMap(.string, .string, false);
-        const value: Value = .{ .data = .{ .map = record } };
-        errdefer self.heap.release(value);
-        for (header.fields, row.fields) |name, field| {
-            const key = try self.heap.copyText(name);
-            const field_value = try self.heap.copyText(field);
-            const hash = try self.runNative(span, MapMethods.hashKey, .{key});
-            try self.heap.put(record, hash, key, field_value, self.equatable(span));
-        }
-        records.items.appendAssumeCapacity(value);
-    }
-    return result;
-}
-
-fn csvFormat(self: *Interpreter, span: Source.Span, rows: *const Heap.List, separator: []const u8) Error!Value {
-    const row_slices = try self.gpa.alloc([]const []const u8, rows.items.items.len);
-    defer self.gpa.free(row_slices);
-    var field_count: usize = 0;
-    for (rows.items.items) |row| field_count += row.data.list.items.items.len;
-    const fields = try self.gpa.alloc([]const u8, field_count);
-    defer self.gpa.free(fields);
-    var at: usize = 0;
-    for (rows.items.items, row_slices) |row, *out| {
-        const items = row.data.list.items.items;
-        out.* = fields[at .. at + items.len];
-        for (items) |item| {
-            fields[at] = item.data.string.bytes;
-            at += 1;
-        }
-    }
-    var out: std.Io.Writer.Allocating = .init(self.gpa);
-    defer out.deinit();
-    Csv.write(row_slices, separator, &out.writer) catch |err| switch (err) {
-        error.InvalidSeparator => return self.raiseCsvSeparator(span, separator),
-        error.WriteFailed => return error.OutOfMemory,
-    };
-    return .{ .data = .{ .string = try self.heap.createText(try out.toOwnedSlice()) } };
-}
-
-fn raiseCsvProblem(self: *Interpreter, span: Source.Span, problem: Csv.Problem) Error {
-    const message = if (problem.line) |line|
-        std.fmt.allocPrint(self.arena, "line {d}: {s}", .{ line, problem.message() }) catch return error.OutOfMemory
-    else
-        problem.message();
-    return self.raiseCsv(span, message, problem.line);
-}
-
-fn raiseCsvSeparator(self: *Interpreter, span: Source.Span, separator: []const u8) Error {
-    const message = std.fmt.allocPrint(self.arena, "a separator must be one character, not \"{s}\"", .{separator}) catch return error.OutOfMemory;
-    return self.raiseCsv(span, message, null);
-}
-
-fn raiseCsv(self: *Interpreter, span: Source.Span, message: []const u8, line: ?u32) Error {
-    self.task.state.raised_value = self.makeCsvError(message, line) catch return error.OutOfMemory;
-    return self.raiseTyped(span, "CsvError", message, "Correct the CSV text or use a one-character separator.");
-}
-
-fn makeCsvError(self: *Interpreter, message: []const u8, line: ?u32) RunError!Value {
-    const descriptor = self.structs.get(Resolver.preludeKey("CsvError")).?;
-    const fields = try self.gpa.alloc(Value, descriptor.fields.len);
-    @memset(fields, Value.nothing);
-    var owned = true;
-    errdefer if (owned) {
-        for (fields) |field| self.heap.release(field);
-        self.gpa.free(fields);
-    };
-    for (descriptor.fields, fields) |field, *value| {
-        if (std.mem.eql(u8, field.name, "message")) value.* = try self.heap.copyText(message);
-        if (std.mem.eql(u8, field.name, "line")) value.* = if (line) |number| .initInt(number) else .nothing;
-    }
-    // `createStruct` takes the fields over, even when it fails.
-    owned = false;
-    return .{ .data = .{ .struct_value = try self.heap.createStruct(descriptor, fields) } };
 }
 
 /// Section 15.10's HTTP boundary. The public functions in the prelude bind
@@ -6304,9 +5905,7 @@ fn callHttp(self: *Interpreter, span: Source.Span, name: []const u8, call: Ast.E
                 },
             };
             defer document.deinit();
-            var builder = try JsonBuilder.init(self, span);
-            defer builder.deinit();
-            return @as(?Value, try builder.build(document.root));
+            return @as(?Value, try self.runNative(span, JsonNatives.buildValue, .{document.root}));
         },
         ._request => return @as(?Value, try self.httpRequest(span, call, false)),
         ._body_request => return @as(?Value, try self.httpRequest(span, call, true)),
@@ -6746,160 +6345,6 @@ fn makeHttpError(self: *Interpreter, message: []const u8, status: ?u16) RunError
     return .{ .data = .{ .struct_value = try self.heap.createStruct(descriptor, fields) } };
 }
 
-/// Where each of the prelude `Json` struct's fields is.
-const JsonFields = struct {
-    kind: usize,
-    bool: usize,
-    number: usize,
-    whole: usize,
-    int: usize,
-    decimal: usize,
-    text: usize,
-    items: usize,
-    entries: usize,
-    path: usize,
-
-    fn of(descriptor: *const Value.StructType) JsonFields {
-        return .{
-            .kind = descriptor.fieldPosition("kind").?,
-            .bool = descriptor.fieldPosition("_bool").?,
-            .number = descriptor.fieldPosition("_number").?,
-            .whole = descriptor.fieldPosition("_whole").?,
-            .int = descriptor.fieldPosition("_int").?,
-            .decimal = descriptor.fieldPosition("_decimal").?,
-            .text = descriptor.fieldPosition("_text").?,
-            .items = descriptor.fieldPosition("_items").?,
-            .entries = descriptor.fieldPosition("_entries").?,
-            .path = descriptor.fieldPosition("_path").?,
-        };
-    }
-};
-
-/// Builds a parsed document's tree of prelude `Json` values. A document can
-/// hold many thousands of values, so every one that needs an empty text,
-/// list, or dictionary shares the same one, and each kind's enum value is
-/// built once.
-const JsonBuilder = struct {
-    interpreter: *Interpreter,
-    span: Source.Span,
-    descriptor: *const Value.StructType,
-    fields: JsonFields,
-    kinds: [std.meta.fieldNames(Json.Kind).len]Value,
-    empty_text: Value,
-    empty_items: Value,
-    empty_entries: Value,
-
-    fn init(interpreter: *Interpreter, span: Source.Span) Error!JsonBuilder {
-        const heap = &interpreter.heap;
-        const descriptor = interpreter.structs.get(Resolver.preludeKey("Json")).?;
-        const kind_descriptor = interpreter.structs.get(Resolver.preludeKey("Json::Kind")).?;
-        var builder: JsonBuilder = .{
-            .interpreter = interpreter,
-            .span = span,
-            .descriptor = descriptor,
-            .fields = .of(descriptor),
-            .kinds = @splat(Value.nothing),
-            .empty_text = Value.nothing,
-            .empty_items = Value.nothing,
-            .empty_entries = Value.nothing,
-        };
-        errdefer builder.deinit();
-        for (&builder.kinds, 0..) |*kind, index| {
-            const instance = try heap.createStruct(kind_descriptor, &.{});
-            instance.variant = @intCast(index);
-            kind.* = .{ .data = .{ .struct_value = instance } };
-        }
-        builder.empty_text = try heap.copyText("");
-        // Through locals: `builder.empty_items = .{ .data = .{ .list = try ... } }`
-        // would write the `.list` tag before the `try`, so a failure would leave
-        // `deinit` releasing an undefined pointer.
-        const empty_items = try heap.createList(.struct_value, 0);
-        builder.empty_items = .{ .data = .{ .list = empty_items } };
-        const empty_entries = try heap.createMap(.string, .struct_value, false);
-        builder.empty_entries = .{ .data = .{ .map = empty_entries } };
-        return builder;
-    }
-
-    fn deinit(self: *JsonBuilder) void {
-        const heap = &self.interpreter.heap;
-        for (self.kinds) |kind| heap.release(kind);
-        heap.release(self.empty_text);
-        heap.release(self.empty_items);
-        heap.release(self.empty_entries);
-    }
-
-    fn build(self: *JsonBuilder, json: Json.Value) Error!Value {
-        const interpreter = self.interpreter;
-        const heap = &interpreter.heap;
-        const fields = try interpreter.gpa.alloc(Value, self.descriptor.fields.len);
-        @memset(fields, Value.nothing);
-        var owned = true;
-        errdefer if (owned) {
-            for (fields) |field| heap.release(field);
-            interpreter.gpa.free(fields);
-        };
-        const at = self.fields;
-        fields[at.kind] = Heap.retain(self.kinds[@backingInt(json.kind)]);
-        fields[at.bool] = .initBool(json.bool_value);
-        fields[at.number] = .initFloat(json.float_value);
-        fields[at.whole] = .initBool(json.is_integer);
-        fields[at.int] = .initInt(json.int_value);
-        fields[at.decimal] = .initBool(json.is_float_literal);
-        fields[at.path] = Heap.retain(self.empty_text);
-        fields[at.text] = if (json.kind == .string) try heap.copyText(json.string_value) else Heap.retain(self.empty_text);
-
-        if (json.kind == .list and json.items.len > 0) {
-            const list = try heap.createList(.struct_value, json.items.len);
-            fields[at.items] = .{ .data = .{ .list = list } };
-            for (json.items) |item| list.items.appendAssumeCapacity(try self.build(item));
-        } else {
-            fields[at.items] = Heap.retain(self.empty_items);
-        }
-
-        if (json.kind == .object and json.entries.len > 0) {
-            const map = try heap.createMap(.string, .struct_value, false);
-            fields[at.entries] = .{ .data = .{ .map = map } };
-            for (json.entries) |entry| {
-                const key = try heap.copyText(entry.key);
-                const hash = interpreter.runNative(self.span, MapMethods.hashKey, .{key}) catch |err| {
-                    heap.release(key);
-                    return err;
-                };
-                const value = self.build(entry.value) catch |err| {
-                    heap.release(key);
-                    return err;
-                };
-                // `Json.parse` has already refused duplicates, compared as
-                // this dictionary compares its keys, so each one is new.
-                try heap.put(map, hash, key, value, interpreter.equatable(self.span));
-            }
-        } else {
-            fields[at.entries] = Heap.retain(self.empty_entries);
-        }
-
-        owned = false;
-        return .{ .data = .{ .struct_value = try heap.createStruct(self.descriptor, fields) } };
-    }
-};
-
-/// A prelude `Json` value as JSON text.
-fn jsonWrite(self: *Interpreter, span: Source.Span, value: Value, pretty: bool) Error!Value {
-    var arena_state: std.heap.ArenaAllocator = .init(self.gpa);
-    defer arena_state.deinit();
-    const descriptor = self.structs.get(Resolver.preludeKey("Json")).?;
-    const json = try jsonFromValue(arena_state.allocator(), JsonFields.of(descriptor), value);
-    var out: std.Io.Writer.Allocating = .init(self.gpa);
-    defer out.deinit();
-    Json.write(json, .{ .pretty = pretty }, &out.writer) catch |err| switch (err) {
-        error.WriteFailed => return error.OutOfMemory,
-        // `Json.from_float` refuses these before a value is built. Keep the
-        // native boundary safe too: a malformed internal Json value must still
-        // be a normal, catchable JsonError rather than an interpreter crash.
-        error.NonFiniteNumber => return self.raiseJson(span, "a non-finite Float cannot be written as JSON"),
-    };
-    return try self.heap.copyText(out.written());
-}
-
 /// Writes an ordinary Emerald value according to the static shape the checker
 /// accepted for `Json.encode` (15.9). Collection element types are otherwise
 /// erased at runtime, so the recorded type is both the language rule and the
@@ -6912,7 +6357,7 @@ fn jsonEncode(self: *Interpreter, span: Source.Span, value: Value, value_type: T
     defer out.deinit();
     Json.write(json, .{ .pretty = pretty }, &out.writer) catch |err| switch (err) {
         error.WriteFailed => return error.OutOfMemory,
-        error.NonFiniteNumber => return self.raiseJson(span, "a non-finite Float cannot be written as JSON"),
+        error.NonFiniteNumber => return self.runNative(span, JsonNatives.raiseJson, .{"a non-finite Float cannot be written as JSON"}),
     };
     return try self.heap.copyText(out.written());
 }
@@ -6975,9 +6420,7 @@ fn jsonDecodeDictionary(self: *Interpreter, span: Source.Span, json: Json.Value,
 fn jsonDecodeStruct(self: *Interpreter, span: Source.Span, json: Json.Value, target: Type, path: []const u8) Error!Value {
     const user = target.user.?;
     if (std.mem.eql(u8, user.name, Resolver.preludeKey("Json"))) {
-        var builder = try JsonBuilder.init(self, span);
-        defer builder.deinit();
-        return builder.build(json);
+        return self.runNative(span, JsonNatives.buildValue, .{json});
     }
     if (user.enumeration) {
         if (json.kind != .string) return self.raiseJsonDecodeKind(span, path, "text naming an enum value", json);
@@ -7101,7 +6544,7 @@ fn jsonIndexPath(self: *Interpreter, path: []const u8, index: usize) std.mem.All
 }
 
 fn jsonObjectPath(self: *Interpreter, path: []const u8, key: []const u8) std.mem.Allocator.Error![]u8 {
-    if (readsAsName(key)) {
+    if (JsonNatives.readsAsName(key)) {
         return if (path.len == 0) std.fmt.allocPrint(self.gpa, "{s}", .{key}) else std.fmt.allocPrint(self.gpa, "{s}.{s}", .{ path, key });
     }
     var out: std.Io.Writer.Allocating = .init(self.gpa);
@@ -7147,7 +6590,7 @@ fn jsonFromStructValue(self: *Interpreter, arena: std.mem.Allocator, span: Sourc
     const user = value_type.user.?;
     if (std.mem.eql(u8, user.name, Resolver.preludeKey("Json"))) {
         const descriptor = self.structs.get(Resolver.preludeKey("Json")).?;
-        return jsonFromValue(arena, JsonFields.of(descriptor), value);
+        return JsonNatives.jsonFromValue(arena, JsonNatives.JsonFields.of(descriptor), value);
     }
     if (user.enumeration) return .initString(value.data.struct_value.descriptor.values[value.data.struct_value.variant]);
     if (jsonTextualType(user.name)) {
@@ -7178,327 +6621,46 @@ fn jsonTextualType(key: []const u8) bool {
         std.mem.eql(u8, short, ".Instant");
 }
 
-fn raiseJson(self: *Interpreter, span: Source.Span, message: []const u8) Error {
-    self.task.state.raised_value = self.makeError(Resolver.preludeKey("JsonError"), message) catch return error.OutOfMemory;
-    return self.raiseTyped(span, "JsonError", message, "JSON cannot represent NaN or infinity.");
+/// A native that takes one evaluated `String` argument, such as Console's
+/// width or a time zone's lookup.
+fn callTextNative(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call, comptime native: anytype) Error!Value {
+    const text = try self.evaluate(call.arguments[0]);
+    defer self.heap.release(text);
+    return self.runNative(span, native, .{text.data.string.bytes});
 }
 
-fn jsonFromValue(arena: std.mem.Allocator, at: JsonFields, value: Value) std.mem.Allocator.Error!Json.Value {
-    const fields = value.data.struct_value.fields;
-    const kind: Json.Kind = @fromBackingInt(@intCast(fields[at.kind].data.struct_value.variant));
-    return switch (kind) {
-        .null => .initNull(),
-        .bool => .initBool(fields[at.bool].data.bool),
-        .number => .{
-            .kind = .number,
-            .is_integer = fields[at.whole].data.bool,
-            .int_value = fields[at.int].data.int,
-            .float_value = fields[at.number].data.float,
-            .is_float_literal = fields[at.decimal].data.bool,
-        },
-        .string => .initString(fields[at.text].data.string.bytes),
-        .list => blk: {
-            const source = fields[at.items].data.list.items.items;
-            const items = try arena.alloc(Json.Value, source.len);
-            for (source, items) |item, *json| json.* = try jsonFromValue(arena, at, item);
-            break :blk .initList(items);
-        },
-        .object => blk: {
-            const source = fields[at.entries].data.map.entries.items;
-            const entries = try arena.alloc(Json.Entry, source.len);
-            for (source, entries) |entry, *json| json.* = .{
-                .key = entry.key.data.string.bytes,
-                .value = try jsonFromValue(arena, at, entry.value),
-            };
-            break :blk .initObject(entries);
-        },
-    };
-}
-
-/// The path to `key` inside the value at `path`, for messages: `.name` after
-/// a path, `name` at the start of one, or `["first name"]` when the key does
-/// not read as a name.
-fn jsonKeyPath(self: *Interpreter, path: []const u8, key: []const u8) Error!Value {
-    var out: std.Io.Writer.Allocating = .init(self.gpa);
-    defer out.deinit();
-    const writer = &out.writer;
-    writer.writeAll(path) catch return error.OutOfMemory;
-    if (readsAsName(key)) {
-        if (path.len > 0) writer.writeByte('.') catch return error.OutOfMemory;
-        writer.writeAll(key) catch return error.OutOfMemory;
-    } else {
-        writer.writeByte('[') catch return error.OutOfMemory;
-        Json.write(.initString(key), .{}, writer) catch return error.OutOfMemory;
-        writer.writeByte(']') catch return error.OutOfMemory;
-    }
-    return try self.heap.copyText(out.written());
-}
-
-fn readsAsName(text: []const u8) bool {
-    if (text.len == 0) return false;
-    var index: usize = 0;
-    while (index < text.len) {
-        const code_point, const length = unicode.decode(text, index);
-        const allowed = if (index == 0) unicode.isIdentifierStart(code_point) or code_point == '_' else unicode.isIdentifierContinue(code_point);
-        if (!allowed) return false;
-        index += length;
-    }
-    return true;
-}
-
-fn regexOptions(values: []const Value) Regex.Options {
-    return .{ .ignore_case = values[1].data.bool, .multiline = values[2].data.bool };
-}
-
-fn compileRegex(self: *Interpreter, pattern: []const u8, options: Regex.Options, problem: *Regex.Problem) Regex.CompileError!CompiledRegex {
-    const key = try std.fmt.allocPrint(self.gpa, "{c}{c}{s}", .{
-        @as(u8, if (options.ignore_case) 'i' else '-'),
-        @as(u8, if (options.multiline) 'm' else '-'),
-        pattern,
-    });
-    defer self.gpa.free(key);
-    if (self.regex_cache.get(key)) |program| return .{ .program = program, .owned = false };
-    if (self.regex_cache.count() >= regex_cache_limit) {
-        return .{ .program = try Regex.compile(self.gpa, pattern, options, problem), .owned = true };
-    }
-    const program = try Regex.compile(self.arena, pattern, options, problem);
-    try self.regex_cache.put(self.arena, try self.arena.dupe(u8, key), program);
-    return .{ .program = program, .owned = false };
-}
-
-/// The program for a `Regex` value's pattern, which its constructor has
-/// already compiled once, so it cannot be refused now.
-fn regexFor(self: *Interpreter, values: []const Value) Error!CompiledRegex {
-    var problem: Regex.Problem = .{};
-    return self.compileRegex(values[0].data.string.bytes, regexOptions(values), &problem) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.InvalidPattern => unreachable,
-    };
-}
-
-fn regexProblem(self: *Interpreter, values: []const Value) Error!Value {
-    const pattern = values[0].data.string.bytes;
-    var problem: Regex.Problem = .{};
-    var compiled = self.compileRegex(pattern, regexOptions(values), &problem) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.InvalidPattern => {
-            const message = try std.fmt.allocPrint(self.gpa, "the pattern \"{s}\" at position {d}: {s}", .{ pattern, problem.position, problem.message() });
-            return .{ .data = .{ .string = try self.heap.createText(message) } };
-        },
-    };
-    compiled.deinit();
-    return .nothing;
-}
-
-/// Section 15.4's non-overlapping matches from left to right. After a match
-/// of nothing the search moves on one character, and a match of nothing just
-/// where the previous match ended does not count, as in Go and Rust: `x*`
-/// finds three matches in "ab", and `\s*` two in "a b" besides the space.
-const RegexMatches = struct {
-    matcher: *Regex.Matcher,
-    text: Regex.Text,
-    /// The current match's groups, once `next` has returned true.
-    slots: []usize,
-    position: usize = 0,
-    previous_end: ?usize = null,
-
-    fn next(self: *RegexMatches) Error!bool {
-        while (self.position <= self.text.count()) {
-            if (!try self.matcher.run(self.text, self.position, .search, self.slots)) return false;
-            const start = self.slots[0];
-            const end = self.slots[1];
-            if (start == end and self.previous_end == start) {
-                self.position = start + 1;
-                continue;
-            }
-            self.previous_end = end;
-            self.position = if (start == end) end + 1 else end;
-            return true;
-        }
-        return false;
-    }
-};
-
-/// At most `limit` matches as `Regex.Match` values, or all of them for 0.
-fn regexFind(self: *Interpreter, matches: *RegexMatches, pattern: Value, limit: usize) Error!Value {
-    const program = matches.matcher.program;
-    const descriptor = self.structs.get(Resolver.preludeKey("Regex::Match")).?;
-    var found: std.ArrayList(Value) = .empty;
-    defer found.deinit(self.gpa);
-    errdefer for (found.items) |value| self.heap.release(value);
-
-    // Every match shares one list of the pattern's group names.
-    const groups = @as(usize, program.group_count) + 1;
-    const names_list = try self.heap.createList(.string, groups);
-    const names: Value = .{ .data = .{ .list = names_list } };
-    defer self.heap.release(names);
-    for (0..groups) |group| {
-        var name: []const u8 = "";
-        for (program.names) |entry| {
-            if (entry.number == group) name = entry.name;
-        }
-        names_list.items.appendAssumeCapacity(try self.heap.copyText(name));
-    }
-
-    while ((limit == 0 or found.items.len < limit) and try matches.next()) {
-        try found.ensureUnusedCapacity(self.gpa, 1);
-        found.appendAssumeCapacity(try self.regexMatch(descriptor, matches.text, matches.slots, names, pattern));
-    }
-    const list = try self.heap.createList(.struct_value, found.items.len);
-    list.items.appendSliceAssumeCapacity(found.items);
-    found.clearRetainingCapacity();
-    return .{ .data = .{ .list = list } };
-}
-
-/// The text with at most `limit` matches (0 for all) replaced by
-/// `replacement`, used as it is written.
-fn regexReplace(self: *Interpreter, matches: *RegexMatches, replacement: []const u8, limit: usize) Error!Value {
-    const text = matches.text;
-    var result: std.ArrayList(u8) = .empty;
-    errdefer result.deinit(self.gpa);
-    var previous: usize = 0;
-    var replaced: usize = 0;
-    while ((limit == 0 or replaced < limit) and try matches.next()) : (replaced += 1) {
-        try result.appendSlice(self.gpa, text.slice(previous, matches.slots[0]));
-        try result.appendSlice(self.gpa, replacement);
-        previous = matches.slots[1];
-    }
-    try result.appendSlice(self.gpa, text.slice(previous, text.count()));
-    return .{ .data = .{ .string = try self.heap.createText(try result.toOwnedSlice(self.gpa)) } };
-}
-
-/// The pieces between matches, empty ones included. A match of nothing at
-/// the very start or end splits nothing off, so a pattern that matches
-/// nothing splits between every character.
-fn regexSplit(self: *Interpreter, matches: *RegexMatches) Error!Value {
-    const text = matches.text;
-    var pieces: std.ArrayList(Value) = .empty;
-    defer pieces.deinit(self.gpa);
-    errdefer for (pieces.items) |piece| self.heap.release(piece);
-    var previous: usize = 0;
-    while (try matches.next()) {
-        const start = matches.slots[0];
-        const end = matches.slots[1];
-        if (start == end and (start == 0 or start == text.count())) continue;
-        try pieces.ensureUnusedCapacity(self.gpa, 1);
-        pieces.appendAssumeCapacity(try self.heap.copyText(text.slice(previous, start)));
-        previous = end;
-    }
-    try pieces.ensureUnusedCapacity(self.gpa, 1);
-    pieces.appendAssumeCapacity(try self.heap.copyText(text.slice(previous, text.count())));
-    const list = try self.heap.createList(.string, pieces.items.len);
-    list.items.appendSliceAssumeCapacity(pieces.items);
-    pieces.clearRetainingCapacity();
-    return .{ .data = .{ .list = list } };
-}
-
-/// A `Regex.Match` for the match `slots` describe.
-fn regexMatch(self: *Interpreter, descriptor: *const Value.StructType, text: Regex.Text, slots: []const usize, names: Value, pattern: Value) Error!Value {
-    const fields = try self.gpa.alloc(Value, descriptor.fields.len);
-    @memset(fields, Value.nothing);
-    var owned = true;
-    errdefer if (owned) {
-        for (fields) |field| self.heap.release(field);
-        self.gpa.free(fields);
-    };
-    const groups = slots.len / 2;
-    const whole = try self.heap.copyText(text.slice(slots[0], slots[1]));
-    fields[descriptor.fieldPosition("text").?] = whole;
-    fields[descriptor.fieldPosition("start").?] = .initInt(@intCast(slots[0]));
-    fields[descriptor.fieldPosition("end").?] = .initInt(@intCast(slots[1]));
-    fields[descriptor.fieldPosition("_names").?] = Heap.retain(names);
-    fields[descriptor.fieldPosition("_pattern").?] = Heap.retain(pattern);
-    const spans = try self.heap.createList(.int, 2 * groups);
-    fields[descriptor.fieldPosition("_spans").?] = .{ .data = .{ .list = spans } };
-    const texts = try self.heap.createList(.string, groups);
-    fields[descriptor.fieldPosition("_texts").?] = .{ .data = .{ .list = texts } };
-    texts.items.appendAssumeCapacity(Heap.retain(whole));
-    for (0..groups) |group| {
-        const start = slots[2 * group];
-        const end = slots[2 * group + 1];
-        const took_part = start != Regex.unset and end != Regex.unset;
-        spans.items.appendAssumeCapacity(.initInt(if (took_part) @intCast(start) else -1));
-        spans.items.appendAssumeCapacity(.initInt(if (took_part) @intCast(end) else -1));
-        if (group > 0) texts.items.appendAssumeCapacity(try self.heap.copyText(if (took_part) text.slice(start, end) else ""));
-    }
-    owned = false;
-    return .{ .data = .{ .struct_value = try self.heap.createStruct(descriptor, fields) } };
-}
-
-fn matchBounds(found: Value) struct { usize, usize } {
-    const object = found.data.struct_value;
-    return .{
-        @intCast(object.fields[fieldPosition(object, "start").?].data.int),
-        @intCast(object.fields[fieldPosition(object, "end").?].data.int),
-    };
-}
-
-/// `text` with each match, in order and not overlapping, replaced by the
-/// replacement at the same position.
-fn regexSplice(self: *Interpreter, text: Regex.Text, found: []const Value, replacements: []const Value) Error!Value {
-    var result: std.ArrayList(u8) = .empty;
-    errdefer result.deinit(self.gpa);
-    var previous: usize = 0;
-    for (found, replacements) |match, replacement| {
-        const start, const end = matchBounds(match);
-        try result.appendSlice(self.gpa, text.slice(previous, start));
-        try result.appendSlice(self.gpa, replacement.data.string.bytes);
-        previous = end;
-    }
-    try result.appendSlice(self.gpa, text.slice(previous, text.count()));
-    return .{ .data = .{ .string = try self.heap.createText(try result.toOwnedSlice(self.gpa)) } };
-}
-
-/// Section 15.4's `Regex.escape`: a backslash before every character with a
-/// meaning in patterns. A character that begins with one and carries more
-/// code points, such as "." with a combining accent, is written as `\u{...}`
-/// escapes instead, since a backslash applies to a single code point.
-fn regexEscape(self: *Interpreter, bytes: []const u8) Error!Value {
-    var result: std.ArrayList(u8) = .empty;
-    errdefer result.deinit(self.gpa);
-    var clusters: unicode.Graphemes = .init(bytes);
-    while (clusters.next()) |cluster| {
-        if (std.mem.indexOfScalar(u8, "\\.+*?()|[]{}^$-", cluster[0]) == null) {
-            try result.appendSlice(self.gpa, cluster);
-        } else if (cluster.len == 1) {
-            try result.append(self.gpa, '\\');
-            try result.append(self.gpa, cluster[0]);
-        } else {
-            var points = (std.unicode.Utf8View.init(cluster) catch unreachable).iterator();
-            while (points.nextCodepoint()) |point| try result.print(self.gpa, "\\u{{{X}}}", .{point});
-        }
-    }
-    return .{ .data = .{ .string = try self.heap.createText(try result.toOwnedSlice(self.gpa)) } };
-}
-
-/// A clock reading in nanoseconds: since 1970 for `.real`, which fits `Int`
-/// until 2262, and since some unspecified start for the monotonic `.awake`.
-fn clockNanoseconds(io: std.Io, clock: std.Io.Clock) i64 {
-    return @intCast(clock.now(io).toNanoseconds());
-}
-
-/// Section 15.10's `Program.environment`: one variable's value, or `nothing`
-/// when it is not set. No variable is named `""` or has `=` or a NUL in its
-/// name, so asking for one finds nothing.
 fn callEnvironment(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call) Error!Value {
     const argument = try self.evaluate(call.arguments[0]);
     defer self.heap.release(argument);
-    const name = argument.data.string.bytes;
-    if (name.len == 0 or std.mem.indexOfAny(u8, name, "=\x00") != null) return Value.nothing;
-    var variables = std.process.Environ.createMap(self.environment, self.gpa) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        // Only WASI can fail otherwise, and then nothing is readable.
-        else => return Value.nothing,
-    };
-    defer variables.deinit();
-    const value = variables.get(name) orelse return Value.nothing;
-    // Windows gives WTF-8, which an unpaired surrogate leaves invalid UTF-8.
-    if (!std.unicode.utf8ValidateSlice(value)) {
-        const message = try std.fmt.allocPrint(self.arena, "the environment variable `{s}` is not valid UTF-8 text", .{name});
-        self.task.state.raised_value = try self.makeError(Resolver.preludeKey("EncodingError"), message);
-        return self.raiseTyped(span, "EncodingError", message, "Set the variable to UTF-8 text before running the program.");
+    return self.runNative(span, SystemNatives.environment, .{ self.environment, argument.data.string.bytes });
+}
+
+/// Section 15.4's natives (`runtime/RegexNatives.zig`), which the prelude's
+/// `Regex` calls with the pattern and its options first. Null for a name that
+/// is not one of them, such as a method the prelude writes in Emerald.
+fn callRegex(self: *Interpreter, span: Source.Span, name: []const u8, call: Ast.Expression.Call) Error!?Value {
+    const native = std.meta.stringToEnum(RegexNatives.Method, name) orelse return null;
+    const values = try self.evaluateArguments(call.arguments);
+    defer {
+        for (values) |value| self.heap.release(value);
+        self.gpa.free(values);
     }
-    return self.heap.copyText(value);
+    return try self.runNative(span, RegexNatives.call, .{ native, values });
+}
+
+fn callZoneOffset(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call) Error!Value {
+    const name = try self.evaluate(call.arguments[0]);
+    defer self.heap.release(name);
+    const at = (try self.evaluate(call.arguments[1])).data.int;
+    return self.runNative(span, TimeNatives.zoneOffset, .{ name.data.string.bytes, at });
+}
+
+/// Section 9.3's `Math` functions (`runtime/MathNatives.zig`).
+fn callMath(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call, key: []const u8) Error!Value {
+    var values: [2]Value = .{ Value.nothing, Value.nothing };
+    defer for (values) |value| self.heap.release(value);
+    for (call.arguments, 0..) |argument, index| values[index] = try self.evaluate(argument);
+    return self.runNative(span, MathNatives.call, .{ key[Resolver.math_prefix.len..], values[0..call.arguments.len] });
 }
 
 /// Section 15.8's `Program.sleep`. The checker guarantees a `Duration`, whose
@@ -8092,7 +7254,7 @@ fn evaluatePrintError(self: *Interpreter, call: Ast.Expression.Call) Error!Value
     // What the program printed before this line reaches the terminal first.
     try self.out.flush();
     if (self.color and !self.error_color) {
-        const plain = try plainText(self.gpa, line.written());
+        const plain = try SystemNatives.plainText(self.gpa, line.written());
         defer self.gpa.free(plain);
         try err.writeAll(plain);
     } else {
@@ -10243,40 +9405,6 @@ fn groupFloatText(self: *Interpreter, text: []u8) Error![]u8 {
     @memcpy(result[index + grouped_digits.len ..][0..fraction.len], fraction);
     self.gpa.free(text);
     return result;
-}
-
-fn bytesFromHex(self: *Interpreter, span: Source.Span, text: []const u8, maybe: bool) Error!Value {
-    const characters = try strings.characters(self.gpa, text);
-    defer self.gpa.free(characters);
-    if (characters.len % 2 != 0) {
-        if (maybe) return Value.nothing;
-        return self.runNative(span, BytesMethods.raiseEncodingMessage, .{try std.fmt.allocPrint(self.arena, "hex text has {d} digits, but every byte takes two", .{characters.len})});
-    }
-
-    const bytes = try self.gpa.alloc(u8, characters.len / 2);
-    for (characters, 0..) |character, index| {
-        const digit = hexValue(character) orelse {
-            self.gpa.free(bytes);
-            if (maybe) return Value.nothing;
-            return self.runNative(span, BytesMethods.raiseEncodingMessage, .{try std.fmt.allocPrint(self.arena, "hex text has `{s}` at index {d}, which is not a hex digit", .{ character, index })});
-        };
-        if (index % 2 == 0) {
-            bytes[index / 2] = digit << 4;
-        } else {
-            bytes[index / 2] |= digit;
-        }
-    }
-    return .{ .data = .{ .bytes = try self.heap.createText(bytes) } };
-}
-
-fn hexValue(character: []const u8) ?u8 {
-    if (character.len != 1) return null;
-    return switch (character[0]) {
-        '0'...'9' => character[0] - '0',
-        'a'...'f' => character[0] - 'a' + 10,
-        'A'...'F' => character[0] - 'A' + 10,
-        else => null,
-    };
 }
 
 fn ownedText(self: *Interpreter, bytes: []u8) Error!Value {
