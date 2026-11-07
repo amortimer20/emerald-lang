@@ -204,7 +204,7 @@ pub fn stringMethod(ctx: *Context, bytes: []const u8, method: Method, arguments:
 }
 
 /// A three-part String tuple. The pieces borrow their receiver until copied.
-pub fn stringTuple(heap: *Heap, parts: struct { []const u8, []const u8, []const u8 }) Error!Value {
+fn stringTuple(heap: *Heap, parts: struct { []const u8, []const u8, []const u8 }) Error!Value {
     const items = try heap.gpa.alloc(Value, 3);
     const kinds = heap.gpa.alloc(Value.Kind, 3) catch |err| {
         heap.gpa.free(items);
@@ -230,7 +230,7 @@ pub fn stringTuple(heap: *Heap, parts: struct { []const u8, []const u8, []const 
 }
 
 /// A list of strings from pieces the caller allocated, which the strings take.
-pub fn stringList(heap: *Heap, pieces: [][]u8) Error!Value {
+fn stringList(heap: *Heap, pieces: [][]u8) Error!Value {
     defer heap.gpa.free(pieces);
     var taken: usize = 0;
     errdefer for (pieces[taken..]) |piece| heap.gpa.free(piece);
@@ -248,7 +248,7 @@ pub fn stringList(heap: *Heap, pieces: [][]u8) Error!Value {
 /// Section 9.1's advanced conversions. A String is always valid UTF-8, so
 /// each call to `unicode.decode` is safe. Code points retain the original
 /// spelling: a decomposed character therefore gives its separate scalars.
-pub fn stringCodePoints(heap: *Heap, bytes: []const u8) Error!Value {
+fn stringCodePoints(heap: *Heap, bytes: []const u8) Error!Value {
     const list = try heap.createList(.int, bytes.len);
     const result: Value = .{ .data = .{ .list = list } };
     errdefer heap.release(result);
@@ -265,7 +265,7 @@ pub fn stringCodePoints(heap: *Heap, bytes: []const u8) Error!Value {
 /// UTF-8 bytes are represented as non-negative Ints until Emerald gains a
 /// purpose-built binary-data type. This keeps `bytes()` honest without making
 /// beginners learn an implementation-only `Byte` type.
-pub fn stringBytes(heap: *Heap, bytes: []const u8) Error!Value {
+fn stringBytes(heap: *Heap, bytes: []const u8) Error!Value {
     const list = try heap.createList(.int, bytes.len);
     const result: Value = .{ .data = .{ .list = list } };
     errdefer heap.release(result);
@@ -275,7 +275,7 @@ pub fn stringBytes(heap: *Heap, bytes: []const u8) Error!Value {
 
 /// Section 9.4's strict parsing, which raises a conversion error. Catching it
 /// arrives with section 13; until then `to_int_or` is the way to recover.
-pub fn raiseConversion(ctx: *Context, bytes: []const u8, comptime type_name: []const u8, out_of_range: bool) Error {
+fn raiseConversion(ctx: *Context, bytes: []const u8, comptime type_name: []const u8, out_of_range: bool) Error {
     const excerpt = if (bytes.len > 40) "the text" else try std.fmt.allocPrint(ctx.arena, "\"{s}\"", .{bytes});
     if (out_of_range) return ctx.raiseFmt(
         "{s} is outside the range of " ++ type_name,
@@ -296,7 +296,7 @@ pub fn raiseConversion(ctx: *Context, bytes: []const u8, comptime type_name: []c
 }
 
 /// Section 9.1: substring bounds are errors rather than being clamped.
-pub fn raiseSubstring(ctx: *Context, bytes: []const u8, start: i64, count: ?i64, err: strings.SubstringError) Error {
+fn raiseSubstring(ctx: *Context, bytes: []const u8, start: i64, count: ?i64, err: strings.SubstringError) Error {
     const total = unicode.graphemeCount(bytes);
     return switch (err) {
         error.NegativeStart => ctx.raiseFmt("a substring cannot start at {d}", .{start}, "Start at 0 or later."),
@@ -314,7 +314,7 @@ pub fn raiseSubstring(ctx: *Context, bytes: []const u8, start: i64, count: ?i64,
     };
 }
 
-pub fn raiseInsert(ctx: *Context, bytes: []const u8, index: i64, err: strings.InsertError) Error {
+fn raiseInsert(ctx: *Context, bytes: []const u8, index: i64, err: strings.InsertError) Error {
     const total = unicode.graphemeCount(bytes);
     return switch (err) {
         error.NegativeIndex => ctx.raiseFmt("a String insertion cannot use index {d}", .{index}, "Insert at 0 or later."),
@@ -326,7 +326,7 @@ pub fn raiseInsert(ctx: *Context, bytes: []const u8, index: i64, err: strings.In
     };
 }
 
-pub fn raisePadding(ctx: *Context, width: i64, fill: []const u8, err: strings.PadError) Error {
+fn raisePadding(ctx: *Context, width: i64, fill: []const u8, err: strings.PadError) Error {
     return switch (err) {
         error.NegativeWidth => ctx.raiseFmt("a padded String cannot have width {d}", .{width}, "Choose a width of 0 or more characters."),
         error.EmptyFill => ctx.raise("padding needs a fill character, but this is an empty String", "Pass one character, such as `\"-\"` or `\" \"`."),

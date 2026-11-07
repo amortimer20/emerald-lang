@@ -235,7 +235,7 @@ pub fn readListMethod(ctx: *Context, list: *const Heap.List, method: Method, arg
 
 /// Section 8.6's first aggregation. Empty numeric Lists have the additive
 /// identity, and Int accumulation uses the same checked arithmetic as `+`.
-pub fn sumList(ctx: *Context, list: *const Heap.List) Error!Value {
+fn sumList(ctx: *Context, list: *const Heap.List) Error!Value {
     return switch (list.element) {
         .int => blk: {
             var total: i64 = 0;
@@ -344,7 +344,7 @@ pub fn orderListItems(ctx: *Context, kind: Value.Kind, left: Value, right: Value
 }
 
 /// The stable insertion sort `sortItemsByKeys` runs on each short run.
-pub fn insertionSort(
+fn insertionSort(
     ctx: *Context,
     kind: Value.Kind,
     items: []Value,
@@ -368,7 +368,7 @@ pub fn insertionSort(
 /// Section 8.6's extrema. Ties retain the first item, and an empty List has no
 /// result. The checker has already limited this to the same orderable types as
 /// ordinary comparisons; NaN is the one numeric value with no order at all.
-pub fn listExtreme(ctx: *Context, list: *const Heap.List, minimum: bool) Error!Value {
+fn listExtreme(ctx: *Context, list: *const Heap.List, minimum: bool) Error!Value {
     const items = list.items.items;
     if (items.len == 0) return Value.nothing;
     if (list.element == .float and std.math.isNan(items[0].data.float)) return ctx.raise(
@@ -401,7 +401,7 @@ pub fn copyList(heap: *Heap, element: Value.Kind, items: []const Value) Error!Va
 /// answer from an Int List stays visible; no items have no average. Each item
 /// widens as an ordinary Float operation would, then Float arithmetic supplies
 /// the established Infinity and NaN behavior.
-pub fn averageList(list: *const Heap.List) Error!Value {
+fn averageList(list: *const Heap.List) Error!Value {
     if (list.items.items.len == 0) return Value.nothing;
     var total: f64 = 0.0;
     switch (list.element) {

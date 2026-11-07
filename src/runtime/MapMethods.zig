@@ -154,7 +154,7 @@ pub fn readMap(
 }
 
 /// Section 8.5's `keys` and `values`, each a list in insertion order.
-pub fn mapHalf(heap: *Heap, map: *const Heap.Map, half: Half) Error!Value {
+fn mapHalf(heap: *Heap, map: *const Heap.Map, half: Half) Error!Value {
     const list = try heap.createList(
         if (half == .key) map.key_kind else map.value_kind,
         map.entries.items.len,

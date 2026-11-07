@@ -95,7 +95,7 @@ pub fn intMethod(ctx: *Context, value: i64, method: IntMethod, arguments: []cons
     };
 }
 
-pub fn requireOrderedBounds(ctx: *Context, name: []const u8, minimum: i64, maximum: i64) Error!void {
+fn requireOrderedBounds(ctx: *Context, name: []const u8, minimum: i64, maximum: i64) Error!void {
     if (minimum <= maximum) return;
     return ctx.raiseFmt(
         "`{s}` has a minimum of {d}, greater than its maximum of {d}",
@@ -104,7 +104,7 @@ pub fn requireOrderedBounds(ctx: *Context, name: []const u8, minimum: i64, maxim
     );
 }
 
-pub fn integerLcm(ctx: *Context, left: i64, right: i64) Error!Value {
+fn integerLcm(ctx: *Context, left: i64, right: i64) Error!Value {
     const a = integerMagnitude(left);
     const b = integerMagnitude(right);
     if (a == 0 or b == 0) return .initInt(0);
@@ -118,7 +118,7 @@ pub fn integerLcm(ctx: *Context, left: i64, right: i64) Error!Value {
     return .initInt(@intCast(result[0]));
 }
 
-pub fn unsignedGcd(a_value: u64, b_value: u64) u64 {
+fn unsignedGcd(a_value: u64, b_value: u64) u64 {
     var a = a_value;
     var b = b_value;
     while (b != 0) {
@@ -136,11 +136,11 @@ pub fn integerMagnitude(value: i64) u64 {
     return @as(u64, @intCast(-(value + 1))) + 1;
 }
 
-pub fn integerGcd(ctx: *Context, left: i64, right: i64) Error!Value {
+fn integerGcd(ctx: *Context, left: i64, right: i64) Error!Value {
     return checkedMagnitude(ctx, "gcd", unsignedGcd(integerMagnitude(left), integerMagnitude(right)));
 }
 
-pub fn checkedMagnitude(ctx: *Context, operation: []const u8, magnitude: u64) Error!Value {
+fn checkedMagnitude(ctx: *Context, operation: []const u8, magnitude: u64) Error!Value {
     if (magnitude > std.math.maxInt(i64)) return ctx.raiseFmt(
         "the result of `{s}` does not fit in Int",
         .{operation},
@@ -149,7 +149,7 @@ pub fn checkedMagnitude(ctx: *Context, operation: []const u8, magnitude: u64) Er
     return .initInt(@intCast(magnitude));
 }
 
-pub fn integerFactorial(ctx: *Context, value: i64) Error!Value {
+fn integerFactorial(ctx: *Context, value: i64) Error!Value {
     if (value < 0) return ctx.raiseFmt(
         "a negative Int has no factorial, but this is {d}",
         .{value},
@@ -170,7 +170,7 @@ pub fn integerFactorial(ctx: *Context, value: i64) Error!Value {
     return .initInt(result);
 }
 
-pub fn integerDigits(heap: *Heap, value: i64) Error!Value {
+fn integerDigits(heap: *Heap, value: i64) Error!Value {
     var magnitude = integerMagnitude(value);
     var reversed: [20]i64 = undefined;
     var count: usize = 0;
@@ -250,11 +250,11 @@ pub fn floatMethod(ctx: *Context, value: f64, method: FloatMethod, arguments: []
     };
 }
 
-pub fn roundFloatTo(value: f64, places: i64) f64 {
+fn roundFloatTo(value: f64, places: i64) f64 {
     return FloatMath.roundTo(value, places);
 }
 
-pub fn requireFloatBounds(ctx: *Context, name: []const u8, minimum: f64, maximum: f64) Error!void {
+fn requireFloatBounds(ctx: *Context, name: []const u8, minimum: f64, maximum: f64) Error!void {
     if (std.math.isNan(minimum) or std.math.isNan(maximum)) return ctx.raiseFmt(
         "`{s}` cannot use NaN as a bound",
         .{name},
@@ -278,7 +278,7 @@ pub fn requireFloatBounds(ctx: *Context, name: []const u8, minimum: f64, maximum
 /// Converts an already-rounded Float only after proving Zig's `@intFromFloat`
 /// is defined. The upper comparison is inclusive because 2^63 is exactly
 /// representable as a Float but is one beyond the greatest `Int`.
-pub fn floatResultToInt(ctx: *Context, operation: []const u8, value: f64) Error!Value {
+fn floatResultToInt(ctx: *Context, operation: []const u8, value: f64) Error!Value {
     if (!std.math.isFinite(value)) return ctx.raiseFmt(
         "`{s}` cannot produce an Int from a non-finite Float",
         .{operation},

@@ -27,7 +27,7 @@ pub fn bytesMethod(ctx: *Context, bytes: []const u8, method: Method) Error!Value
     return ctx.heap.copyText(bytes);
 }
 
-pub fn bytesToHex(heap: *Heap, bytes: []const u8) std.mem.Allocator.Error!Value {
+fn bytesToHex(heap: *Heap, bytes: []const u8) std.mem.Allocator.Error!Value {
     const length = std.math.mul(usize, bytes.len, 2) catch return error.OutOfMemory;
     const out = try heap.gpa.alloc(u8, length);
     const digits = "0123456789abcdef";
