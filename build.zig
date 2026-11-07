@@ -13,11 +13,17 @@ pub fn build(b: *std.Build) void {
     // linked against glibc has; the release workflow builds for glibc 2.28.
     const link_libc: ?bool = if (target.result.os.tag == .linux and target.result.abi.isGnu()) true else null;
 
+    // The runtime is its own module so that it cannot import the front end or
+    // the interpreter: a compiled program links it alone
+    // (docs/compiler-design-plan.md, decision 4).
+    const runtime_module = runtimeModule(b, target, optimize, link_libc);
+
     const emerald_module = b.createModule(.{
         .root_source_file = b.path("src/emerald.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = link_libc,
+        .imports = &.{.{ .name = "runtime", .module = runtime_module }},
     });
 
     // The prelude's syntax tree is parsed when Emerald is built and compiled
@@ -28,6 +34,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/front.zig"),
         .target = b.graph.host,
         .optimize = .debug,
+        .imports = &.{.{ .name = "runtime", .module = runtimeModule(b, b.graph.host, .debug, null) }},
     });
     const prelude_ast_tool = b.addExecutable(.{
         .name = "prelude-ast",
@@ -140,6 +147,11 @@ pub fn build(b: *std.Build) void {
         .root_module = emerald_module,
     });
     const run_unit_tests = b.addRunArtifact(unit_tests);
+    const runtime_tests = b.addTest(.{
+        .name = "runtime-test",
+        .root_module = runtime_module,
+    });
+    const run_runtime_tests = b.addRunArtifact(runtime_tests);
     // `zig build session-execution-probe -Dsession-execution-runs=200` records
     // the timing distribution without making shared-runner noise a test failure.
     const session_probe = b.addTest(.{
@@ -268,6 +280,7 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_unit_tests.step);
+    test_step.dependOn(&run_runtime_tests.step);
     test_step.dependOn(&run_conformance.step);
     test_step.dependOn(&run_repl_tests.step);
     test_step.dependOn(&run_lsp_tests.step);
@@ -277,6 +290,18 @@ pub fn build(b: *std.Build) void {
 /// End-to-end coverage of the command-line contract. The exit codes in section
 /// 18.1 are a promised interface, so they are asserted against the real binary
 /// rather than only against library functions.
+/// The runtime module. It takes no imports, and must keep none: an import is the
+/// one way runtime code could reach the front end or the interpreter, since Zig
+/// refuses a file outside the module's own directory.
+fn runtimeModule(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, link_libc: ?bool) *std.Build.Module {
+    return b.createModule(.{
+        .root_source_file = b.path("src/runtime/runtime.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = link_libc,
+    });
+}
+
 fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Build.Step) void {
     const fixtures = b.addWriteFiles();
     // Written here rather than committed so the repository stays valid UTF-8.
@@ -612,7 +637,7 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
     // way glibc reads it. A POSIX rule needs no zoneinfo files, so the
     // result is the same on every Unix-like host; an empty `TZ` means UTC.
     // Windows describes its zone through the system instead, and ignores
-    // `TZ`. `src/TimeZone.zig` unit-tests every source and rule form.
+    // `TZ`. `src/runtime/TimeZone.zig` unit-tests every source and rule form.
     if (b.graph.host.result.os.tag != .windows) {
         const reports_zone = fixtures.add("reports-zone.em", "print(TimeZone.local, TimeZone.local.offset_at(Instant.parse(\"2026-07-01T00:00:00Z\")))\n");
         const zone_from_posix_rule = b.addRunArtifact(exe);

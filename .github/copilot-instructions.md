@@ -78,7 +78,7 @@ whole project. `.input` files supply standard input. Generate golden files from 
 committing it.
 
 Source text is UTF-8, with Unicode-aware identifiers, grapheme behavior, normalization, and
-case mapping. `src/unicode/tables.zig` is generated data: regenerate it with
+case mapping. `src/runtime/unicode/tables.zig` is generated data: regenerate it with
 `tools/unicode/fetch.sh` and `tools/unicode/generate.zig`, format it with `zig fmt`, and
 then run the Unicode conformance command rather than editing it by hand.
 

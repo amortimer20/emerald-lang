@@ -3,11 +3,11 @@
 # from. Section 19.1: the tables are regenerated deliberately, never implicitly.
 #
 #   bash tools/unicode/fetch.sh 17.0.0 .unicode/17.0.0
-#   zig run tools/unicode/generate.zig -- 17.0.0 .unicode/17.0.0 > src/unicode/tables.zig
-#   zig fmt src/unicode/tables.zig
+#   zig run tools/unicode/generate.zig -- 17.0.0 .unicode/17.0.0 > src/runtime/unicode/tables.zig
+#   zig fmt src/runtime/unicode/tables.zig
 #   zig build unicode-conformance -Doptimize=ReleaseSafe -- .unicode/17.0.0
 #
-# Then refresh src/unicode/test/ from the same download (see its header lines),
+# Then refresh src/runtime/unicode/test/ from the same download (see its header lines),
 # run `zig build test`, and record the new version in docs/rewrite-context.md.
 set -euo pipefail
 

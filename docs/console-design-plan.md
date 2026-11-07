@@ -95,11 +95,11 @@ Here we go, Ada!
   `Interpreter.evaluateCall`. Most of this plan can be Emerald code in the prelude too; only
   column width needs a new native (`Console._width`).
 - **Unicode data is generated, not hand-written.** `tools/unicode/fetch.sh` downloads the
-  Unicode Character Database, and `tools/unicode/generate.zig` writes `src/unicode/tables.zig`
+  Unicode Character Database, and `tools/unicode/generate.zig` writes `src/runtime/unicode/tables.zig`
   (Unicode 17.0.0), including `extended_pictographic`. East Asian Width
   (`EastAsianWidth.txt`) and emoji presentation (`emoji/emoji-data.txt`'s
   `Emoji_Presentation`) are not there yet; they are added through the same pipeline.
-- **Strings are grapheme-indexed** (`src/strings.zig` `characters`), so a width function can
+- **Strings are grapheme-indexed** (`src/runtime/strings.zig` `characters`), so a width function can
   walk graphemes and give each one a width.
 - **`Csv.encode` is a checker special case** (`Checker.csvEncodeIssue`, `typeOfTypedDecode`
   and its encode counterpart; `Interpreter.csvEncodeRecords`, `csvEncodeCell`) that accepts a
@@ -221,8 +221,8 @@ commits.
 ### Slice 1: Column width
 
 - Extend `tools/unicode/fetch.sh` and `generate.zig` with `EastAsianWidth.txt` and
-  `emoji/emoji-data.txt`, and regenerate `src/unicode/tables.zig` (still Unicode 17.0.0).
-- Add a width function over graphemes to `src/unicode.zig`:
+  `emoji/emoji-data.txt`, and regenerate `src/runtime/unicode/tables.zig` (still Unicode 17.0.0).
+- Add a width function over graphemes to `src/runtime/unicode.zig`:
   - 2 for a grapheme whose first scalar is East Asian Wide or Fullwidth, or that has emoji
     presentation (an `Emoji_Presentation` scalar, or any Extended_Pictographic scalar followed
     by U+FE0F);

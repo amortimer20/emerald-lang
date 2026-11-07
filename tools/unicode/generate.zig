@@ -1,4 +1,4 @@
-//! Generates `src/unicode/tables.zig` from the Unicode Character Database.
+//! Generates `src/runtime/unicode/tables.zig` from the Unicode Character Database.
 //!
 //! Section 19.1 makes Unicode Emerald's dependency rather than Zig's: the
 //! standard library has no grapheme segmentation, normalization, or case
@@ -8,8 +8,8 @@
 //! downloads and writes the tables to standard output:
 //!
 //!     bash tools/unicode/fetch.sh 17.0.0 .unicode/17.0.0
-//!     zig run tools/unicode/generate.zig -- 17.0.0 .unicode/17.0.0 > src/unicode/tables.zig
-//!     zig fmt src/unicode/tables.zig
+//!     zig run tools/unicode/generate.zig -- 17.0.0 .unicode/17.0.0 > src/runtime/unicode/tables.zig
+//!     zig fmt src/runtime/unicode/tables.zig
 //!
 //! Every table is sorted by code point and read by binary search.
 

@@ -45,7 +45,7 @@ def main():
     cases = [make_case(rng) for _ in range(count)]
     queries = "".join(json.dumps(query, ensure_ascii=False) + "\n" for query, _ in cases)
     result = subprocess.run(
-        ["zig", "run", "--dep", "csv", "-Mroot=tools/csv/probe.zig", "-Mcsv=src/Csv.zig"],
+        ["zig", "run", "--dep", "csv", "-Mroot=tools/csv/probe.zig", "-Mcsv=src/runtime/Csv.zig"],
         input=queries,
         capture_output=True,
         text=True,

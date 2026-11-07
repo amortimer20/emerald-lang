@@ -129,14 +129,19 @@ implemented and Claude reviewed.
   (`Parser.isDecodeCallee`); the checker records the static type in `json_encodes`, keyed by the
   call's callee node; the interpreter reads it back. Anything that copies or rewrites those AST
   nodes breaks the link.
-- **Ownership** is described in the header of `src/Heap.zig`: counts must never be too low but
+- **The runtime boundary:** `src/runtime/` (heap, values, strings, Unicode, the library code, the
+  scheduler, the module loader) builds as its own Zig module, `runtime`, and must never import the
+  front end or the interpreter. Zig refuses imports outside the module's directory, so the rule
+  holds as long as the module is given no imports in `build.zig`. A compiled program will link it alone
+  (`docs/compiler-design-plan.md`, decision 4). Code outside it imports `@import("runtime").X`.
+- **Ownership** is described in the header of `src/runtime/Heap.zig`: counts must never be too low but
   may be too high, an error unwinding can skip a release (`deinit` frees what is left), and
   closures make cycles, which the collector handles. A native pairs `evaluateBound` with
   `releaseBound`. Debug tests run under the testing allocator, so a leak fails them.
 - **Native routing** in `Interpreter.evaluateCall` is a chain of string-key comparisons, and the
   order matters.
-- **Generated files** are never edited by hand: `src/unicode/tables.zig` (from
-  `tools/unicode/`), `src/tzdata/` (from `tools/update-tzdata.py`), and the prelude's syntax
+- **Generated files** are never edited by hand: `src/runtime/unicode/tables.zig` (from
+  `tools/unicode/`), `src/runtime/tzdata/` (from `tools/update-tzdata.py`), and the prelude's syntax
   tree (from `tools/prelude_ast.zig`).
 - **Golden files:** diagnostic wording appears in many `conformance/**/*.expected` files. A
   `runtime-errors` case compares only the failure diagnostic, not standard output.

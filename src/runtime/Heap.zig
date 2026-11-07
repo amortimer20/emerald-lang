@@ -42,7 +42,6 @@
 //! say.
 
 const std = @import("std");
-const Ast = @import("Ast.zig");
 const Value = @import("Value.zig");
 
 const Heap = @This();
@@ -228,8 +227,10 @@ pub const Closure = struct {
         named: []const u8,
         /// The key of a struct method, called on `receiver`.
         method: []const u8,
-        /// The `.lambda` expression this runs.
-        lambda: *const Ast.Expression,
+        /// The code this runs, which only the engine that made the closure
+        /// reads: the interpreter stores its `.lambda` syntax-tree node here.
+        /// The runtime never looks inside, so it needs no front end.
+        lambda: *const anyopaque,
     };
 };
 

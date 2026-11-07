@@ -98,7 +98,7 @@ def main():
 
     queries = "".join(json.dumps({"pattern": p, "text": t, "ignore_case": i}) + "\n" for p, t, i, _ in cases)
     result = subprocess.run(
-        ["zig", "run", "--dep", "regex", "-Mroot=tools/regex_probe.zig", "-Mregex=src/Regex.zig"],
+        ["zig", "run", "--dep", "regex", "-Mroot=tools/regex_probe.zig", "-Mregex=src/runtime/Regex.zig"],
         input=queries, capture_output=True, text=True, cwd=ROOT, check=True,
     )
     answers = [json.loads(line) for line in result.stdout.splitlines()]

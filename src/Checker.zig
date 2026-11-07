@@ -38,13 +38,13 @@ const Builtins = @import("Builtins.zig");
 const Diagnostic = @import("Diagnostic.zig");
 const Lexer = @import("Lexer.zig");
 const Project = @import("Project.zig");
-const Regex = @import("Regex.zig");
+const Regex = @import("runtime").Regex;
 const Resolver = @import("Resolver.zig");
 const Spelling = @import("spelling.zig").Spelling;
 const Source = @import("Source.zig");
 const Token = @import("Token.zig");
 const Type = @import("Type.zig");
-const unicode = @import("unicode.zig");
+const unicode = @import("runtime").unicode;
 const call_arguments = @import("arguments.zig");
 
 const Checker = @This();

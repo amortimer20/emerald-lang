@@ -111,7 +111,7 @@ required fields and their value semantics, assignment through a path of indices 
 fields, custom constructors and the readiness of `self`, instance methods and which of them change `self`, computed properties, type-level functions and fields with their lazy setup, private members, method values, classes as shared objects, inheritance with overrides and abstract classes, type tests and `type_name`, traits, `Self`, annotated arithmetic operators and `Ordered` comparisons, custom equality and hashing through `Equatable`/`Hashable`, enums and `case`, nested functions, nested tuple patterns, field defaults, default parameters and named arguments, projects of several files with their namespaces, `using`, privacy and lazy module
 initialization, and stack traces for runtime errors raised inside functions and across
 files. Unicode's own
-conformance data is checked separately, by the unit tests in `src/unicode.zig`. What
+conformance data is checked separately, by the unit tests in `src/runtime/unicode.zig`. What
 remains at runtime is what cannot be known statically: integer overflow, division by zero,
 exceeding the recursion limit, an entry a dictionary does not have, and an initialization
 cycle between files or between a type's fields.

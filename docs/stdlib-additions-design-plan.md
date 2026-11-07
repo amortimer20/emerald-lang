@@ -73,7 +73,7 @@ print("A".upper?(), "é".letter?(), " ".whitespace?()) # true true true
   true and `"1".upper?()` is false, as in Python.
 - A "character" here is a grapheme, as everywhere in `String`. A grapheme passes when its first
   code point does: `"é"` written as `e` plus a combining accent is still a letter.
-- **Building it:** `src/unicode/tables.zig` needs the `Alphabetic`, `Uppercase`, and `Lowercase`
+- **Building it:** `src/runtime/unicode/tables.zig` needs the `Alphabetic`, `Uppercase`, and `Lowercase`
   derived properties. That means extending `tools/unicode/generate.zig` and regenerating
   deliberately (19.1), with conformance tests against the UCD's own lists.
 - *Rejected:* `alphanumeric?()` and `punctuation?()`. They are rarer, and `letter?() or digit?()`

@@ -135,7 +135,7 @@ Tasks.run { tasks =>
 - **Zig 0.16's fiber-based `std.Io.Evented` has no Windows backend** (`std/Io.zig`: Linux
   `Uring`, the BSDs `Kqueue`, Apple `Dispatch`, everything else `void`). Tasks cannot depend on
   it, and Windows is where most of the user's students are. Threads are the portable choice.
-- **The heap's reference counts are plain integers, not atomic** (`src/Heap.zig`). That is fine
+- **The heap's reference counts are plain integers, not atomic** (`src/runtime/Heap.zig`). That is fine
   while exactly one task runs Emerald code at a time (decision 3), and it is why true
   parallelism is a separate design.
 - **The collector is safe across tasks by construction.** It works from counts: a value held
@@ -289,7 +289,7 @@ the threads later without touching the language. Slice 2 measures what the threa
 conformance case, or documented behavior may change, and the tasks cap in slice 2 may only rise.
 That holds if these stay true from the first slice:
 
-- All thread-specific code lives in one file, `src/Scheduler.zig`, behind a few operations (start
+- All thread-specific code lives in one file, `src/runtime/Scheduler.zig`, behind a few operations (start
   a task, park the current one, wake another, switch to the next). Nothing else in the
   interpreter names a thread or a condition variable.
 - Blocking natives go through the runtime's own `std.Io`, not a hard-coded one. Today

@@ -22,7 +22,7 @@ const Lexer = @import("Lexer.zig");
 const Source = @import("Source.zig");
 const Token = @import("Token.zig");
 const Spelling = @import("spelling.zig").Spelling;
-const unicode = @import("unicode.zig");
+const unicode = @import("runtime").unicode;
 
 const Parser = @This();
 

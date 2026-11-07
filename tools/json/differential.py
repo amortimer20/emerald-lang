@@ -127,7 +127,7 @@ def main():
 
     queries = "".join(json.dumps({"text": text}) + "\n" for text, _, _ in cases)
     result = subprocess.run(
-        ["zig", "run", "--dep", "json", "-Mroot=tools/json/probe.zig", "-Mjson=src/Json.zig"],
+        ["zig", "run", "--dep", "json", "-Mroot=tools/json/probe.zig", "-Mjson=src/runtime/Json.zig"],
         input=queries, capture_output=True, text=True, cwd=ROOT, check=True,
     )
     answers = [json.loads(line) for line in result.stdout.splitlines()]
