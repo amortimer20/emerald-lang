@@ -57,6 +57,7 @@ const EncodingNatives = @import("runtime").EncodingNatives;
 const TimeNatives = @import("runtime").TimeNatives;
 const JsonNatives = @import("runtime").JsonNatives;
 const CsvNatives = @import("runtime").CsvNatives;
+const MathNatives = @import("runtime").MathNatives;
 const MapMethods = @import("runtime").MapMethods;
 const ListMethods = @import("runtime").ListMethods;
 const RangeMethods = @import("runtime").RangeMethods;
@@ -4145,10 +4146,7 @@ fn evaluateCallInner(
             return self.callDigest(expression.span, key[(Resolver.prelude_namespace ++ ".Digest::").len..], call);
         }
         if (isFilesystemKey(key)) return self.callFilesystem(expression.span, key, call);
-        if (Resolver.mathFunction(key)) |function| {
-            if (function.ordered) return self.callMathExtreme(expression.span, call, key);
-            return self.callMath(call, key);
-        }
+        if (Resolver.mathFunction(key) != null) return self.callMath(expression.span, call, key);
         try self.reach(key, call.callee.span);
         if (self.choices.get(key)) |choice| return self.constructChoice(call, choice);
         if (self.structs.get(key)) |descriptor| return self.constructStruct(expression.span, key, descriptor, call);
@@ -5559,43 +5557,6 @@ fn evaluateCountingBlock(self: *Interpreter, expression: *const Ast.Expression, 
     }
 }
 
-/// `Math.max` and `Math.min`: one of the two arguments, `first` when they are
-/// equal. An Int beside a Float is widened, as the checker typed the call.
-/// The checker allows only Ints, Floats, Strings, and `Ordered` values, so the
-/// ordering is the one `List.max` uses, and NaN raises as it does there.
-fn callMathExtreme(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call, key: []const u8) Error!Value {
-    const minimum = std.mem.eql(u8, key[Resolver.math_prefix.len..], "min");
-    var first = try self.evaluate(call.arguments[0]);
-    errdefer self.heap.release(first);
-    var second = try self.evaluate(call.arguments[1]);
-    errdefer self.heap.release(second);
-    if (first.data == .float or second.data == .float) {
-        first = widen(first, .float);
-        second = widen(second, .float);
-        if (std.math.isNan(first.data.float) or std.math.isNan(second.data.float)) return self.raiseFmt(
-            span,
-            "`Math.{s}` cannot compare NaN",
-            .{if (minimum) "min" else "max"},
-            "Check values with `nan?()` before choosing a minimum or maximum.",
-        );
-    }
-    const ordering = try self.runNative(span, ListMethods.orderListItems, .{ first.data, first, second, .ordinary });
-    const take_second = if (minimum) ordering == .gt else ordering == .lt;
-    if (take_second) {
-        self.heap.release(first);
-        return second;
-    }
-    self.heap.release(second);
-    return first;
-}
-
-fn callMath(self: *Interpreter, call: Ast.Expression.Call, key: []const u8) Error!Value {
-    var values: [2]f64 = undefined;
-    for (call.arguments, 0..) |argument, index| values[index] = toFloat(try self.evaluate(argument));
-    const name = key[Resolver.math_prefix.len..];
-    return .initFloat(if (std.mem.eql(u8, name, "sin")) std.math.sin(values[0]) else if (std.mem.eql(u8, name, "cos")) std.math.cos(values[0]) else if (std.mem.eql(u8, name, "tan")) std.math.tan(values[0]) else if (std.mem.eql(u8, name, "arc_sin")) std.math.asin(values[0]) else if (std.mem.eql(u8, name, "arc_cos")) std.math.acos(values[0]) else if (std.mem.eql(u8, name, "arc_tan")) std.math.atan(values[0]) else if (std.mem.eql(u8, name, "arc_tan2")) std.math.atan2(values[0], values[1]) else if (std.mem.eql(u8, name, "natural_log")) std.math.log(f64, std.math.e, values[0]) else if (std.mem.eql(u8, name, "log10")) std.math.log10(values[0]) else if (std.mem.eql(u8, name, "log")) if (values[1] <= 0 or values[1] == 1) std.math.nan(f64) else std.math.log(f64, values[1], values[0]) else FloatMath.power(values[0], values[1]));
-}
-
 fn callJson(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Error!?Value {
     const Entry = enum { _parse, _problem, _write, _key_path, encode, decode };
     const native = std.meta.stringToEnum(Entry, name) orelse return null;
@@ -6719,6 +6680,14 @@ fn callZoneSuggestion(self: *Interpreter, span: Source.Span, call: Ast.Expressio
     const name = try self.evaluate(call.arguments[0]);
     defer self.heap.release(name);
     return self.runNative(span, TimeNatives.zoneSuggestion, .{name.data.string.bytes});
+}
+
+/// Section 9.3's `Math` functions (`runtime/MathNatives.zig`).
+fn callMath(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call, key: []const u8) Error!Value {
+    var values: [2]Value = .{ Value.nothing, Value.nothing };
+    defer for (values) |value| self.heap.release(value);
+    for (call.arguments, 0..) |argument, index| values[index] = try self.evaluate(argument);
+    return self.runNative(span, MathNatives.call, .{ key[Resolver.math_prefix.len..], values[0..call.arguments.len] });
 }
 
 /// A clock reading in nanoseconds: since 1970 for `.real`, which fits `Int`
