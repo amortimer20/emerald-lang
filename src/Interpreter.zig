@@ -51,6 +51,7 @@ const unicode = @import("runtime").unicode;
 const call_arguments = @import("arguments.zig");
 const Scheduler = @import("runtime").Scheduler;
 const Native = @import("runtime").Native;
+const ListMethods = @import("runtime").ListMethods;
 const RangeMethods = @import("runtime").RangeMethods;
 const NumberMethods = @import("runtime").NumberMethods;
 const BytesMethods = @import("runtime").BytesMethods;
@@ -3689,7 +3690,7 @@ fn evaluateSlice(self: *Interpreter, expression: *const Ast.Expression, slice: A
     return switch (base.data) {
         .list => |list| blk: {
             const bounds = try self.sliceBounds(expression.span, "list", @intCast(list.items.items.len), start, end, slice.inclusive);
-            break :blk self.copyList(list.element, list.items.items[bounds.start..bounds.end]);
+            break :blk ListMethods.copyList(&self.heap, list.element, list.items.items[bounds.start..bounds.end]);
         },
         .string => |text| blk: {
             const count: i64 = @intCast(unicode.graphemeCount(text.bytes));
@@ -5696,7 +5697,7 @@ fn callMathExtreme(self: *Interpreter, span: Source.Span, call: Ast.Expression.C
             "Check values with `nan?()` before choosing a minimum or maximum.",
         );
     }
-    const ordering = try self.orderListItems(span, first.data, first, second, .ordinary);
+    const ordering = try self.runNative(span, ListMethods.orderListItems, .{ first.data, first, second, .ordinary });
     const take_second = if (minimum) ordering == .gt else ordering == .lt;
     if (take_second) {
         self.heap.release(first);
@@ -9243,13 +9244,13 @@ fn callExtremeBy(
     const first_argument = [_]Value{Heap.retain(items[0])};
     var chosen_key = try self.invokeClosure(expression.span, closure, callable, &first_argument);
     errdefer self.heap.release(chosen_key);
-    if (chosen_key.data == .float and std.math.isNan(chosen_key.data.float)) return self.raiseExtremeNaN(expression.span, .keyed);
+    if (chosen_key.data == .float and std.math.isNan(chosen_key.data.float)) return self.runNative(expression.span, ListMethods.raiseExtremeNaN, .{.keyed});
 
     for (items[1..]) |item| {
         const argument = [_]Value{Heap.retain(item)};
         const key = try self.invokeClosure(expression.span, closure, callable, &argument);
         errdefer self.heap.release(key);
-        const ordering = try self.orderListItems(expression.span, chosen_key.data, chosen_key, key, .keyed);
+        const ordering = try self.runNative(expression.span, ListMethods.orderListItems, .{ chosen_key.data, chosen_key, key, .keyed });
         const replace = if (minimum) ordering == .gt else ordering == .lt;
         if (!replace) {
             self.heap.release(key);
@@ -9316,10 +9317,10 @@ fn callSortBy(
         keys[built] = try self.invokeClosure(expression.span, closure, callable, &argument);
         built += 1;
     }
-    if (key_kind == .float and std.math.isNan(keys[0].data.float)) return self.raiseExtremeNaN(expression.span, .sort_by);
+    if (key_kind == .float and std.math.isNan(keys[0].data.float)) return self.runNative(expression.span, ListMethods.raiseExtremeNaN, .{.sort_by});
 
     for (items) |item| result.items.appendAssumeCapacity(Heap.retain(item));
-    try self.sortItemsByKeys(expression.span, key_kind, result.items.items, keys, .sort_by);
+    try self.runNative(expression.span, ListMethods.sortItemsByKeys, .{ key_kind, result.items.items, keys, .sort_by });
     return value;
 }
 
@@ -9567,7 +9568,7 @@ fn callMethod(
                 "Pass another List to pair the items up.",
             );
         }
-        return self.readListMethod(expression.span, receiver.data.list, member.name, arguments);
+        return self.runNative(expression.span, ListMethods.readListMethod, .{ receiver.data.list, member.name, arguments });
     }
 
     const list_method = Type.list_methods.get(member.name);
@@ -9694,7 +9695,7 @@ fn callReadingMethod(
 
     self.beginCallback(&guard, member.name);
     defer self.endCallback(&guard);
-    return self.readListMethod(expression.span, receiver.data.list, member.name, arguments);
+    return self.runNative(expression.span, ListMethods.readListMethod, .{ receiver.data.list, member.name, arguments });
 }
 
 fn callMapTransform(
@@ -9764,424 +9765,12 @@ fn callMapTransform(
     return .{ .data = .{ .map = result } };
 }
 
-/// A list method that does not change its receiver. Value-producing methods
-/// retain their items into a fresh list, preserving list value semantics even
-/// when an item is itself a collection or object.
-fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List, name: []const u8, arguments: []const Value) Error!Value {
-    const items = list.items.items;
-    const Method = enum { @"empty?", @"contains?", index_of, chain, chunks, windows, pairs, take, drop, repeat, reverse, unique, zip, sum, average, min, max, sort, shuffle, random, join };
-    return switch (std.meta.stringToEnum(Method, name).?) {
-        .@"empty?" => .initBool(items.len == 0),
-        .@"contains?" => blk: {
-            for (items) |item| {
-                if (try Value.equals(self.gpa, item, arguments[0], self.equatable(span))) break :blk .initBool(true);
-            }
-            break :blk .initBool(false);
-        },
-        .index_of => blk: {
-            for (items, 0..) |item, position| {
-                if (try Value.equals(self.gpa, item, arguments[0], self.equatable(span))) break :blk .initInt(@intCast(position));
-            }
-            break :blk Value.nothing;
-        },
-        .chain => blk: {
-            const other = arguments[0];
-            if (other.kind() != .list) return self.raise(
-                span,
-                "`chain` needs a List, but this is not a List",
-                "Pass another List to keep the same element type and append it on the end.",
-            );
-            const right = other.data.list;
-            const result = try self.heap.createList(list.element, items.len + right.items.items.len);
-            const value: Value = .{ .data = .{ .list = result } };
-            errdefer self.heap.release(value);
-            for (items) |item| result.items.appendAssumeCapacity(Heap.retain(item));
-            for (right.items.items) |item| result.items.appendAssumeCapacity(Heap.retain(item));
-            break :blk value;
-        },
-        .chunks => blk: {
-            const width = arguments[0].data.int;
-            if (width < 1) return self.raiseFmt(
-                span,
-                "`chunks` cannot use size {d}",
-                .{width},
-                "Pass a whole number greater than 0, as in `items.chunks(3)`.",
-            );
-            const result = try self.heap.createList(.list, if (items.len == 0) 0 else (items.len + @as(usize, @intCast(width)) - 1) / @as(usize, @intCast(width)));
-            const value: Value = .{ .data = .{ .list = result } };
-            errdefer self.heap.release(value);
-            var start: usize = 0;
-            while (start < items.len) : (start += @as(usize, @intCast(width))) {
-                const end = @min(start + @as(usize, @intCast(width)), items.len);
-                const chunk = try self.copyList(list.element, items[start..end]);
-                result.items.appendAssumeCapacity(chunk);
-            }
-            break :blk value;
-        },
-        .windows => blk: {
-            const width = arguments[0].data.int;
-            if (width < 1) return self.raiseFmt(
-                span,
-                "`windows` cannot use size {d}",
-                .{width},
-                "Pass a whole number greater than 0, as in `items.windows(2)`.",
-            );
-            const count: usize = if (width > items.len) 0 else items.len - @as(usize, @intCast(width)) + 1;
-            const result = try self.heap.createList(.list, count);
-            const value: Value = .{ .data = .{ .list = result } };
-            errdefer self.heap.release(value);
-            var start: usize = 0;
-            while (start + @as(usize, @intCast(width)) <= items.len) : (start += 1) {
-                const chunk = try self.copyList(list.element, items[start .. start + @as(usize, @intCast(width))]);
-                result.items.appendAssumeCapacity(chunk);
-            }
-            break :blk value;
-        },
-        .pairs => blk: {
-            const count: usize = if (items.len == 0) 0 else items.len - 1;
-            const result = try self.heap.createList(.tuple, count);
-            const value: Value = .{ .data = .{ .list = result } };
-            errdefer self.heap.release(value);
-            if (count > 0) {
-                for (items[0..count], items[1..]) |left, right| {
-                    const tuple_items = try self.gpa.alloc(Value, 2);
-                    const tuple_kinds = self.gpa.alloc(Value.Kind, 2) catch |err| {
-                        self.gpa.free(tuple_items);
-                        return err;
-                    };
-                    tuple_items[0] = Heap.retain(left);
-                    tuple_items[1] = Heap.retain(right);
-                    tuple_kinds[0] = list.element;
-                    tuple_kinds[1] = list.element;
-                    const tuple = try self.heap.createTuple(tuple_items, tuple_kinds);
-                    result.items.appendAssumeCapacity(.{ .data = .{ .tuple = tuple } });
-                }
-            }
-            break :blk value;
-        },
-        .take, .drop => blk: {
-            const requested = arguments[0].data.int;
-            if (requested < 0) return self.raiseFmt(
-                span,
-                "`{s}` cannot use count {d}",
-                .{ name, requested },
-                "Pass 0 or more items to take or drop.",
-            );
-            // A count larger than the machine can address still means "all"
-            // here, so this stays independent of the interpreter's word size.
-            const boundary = if (std.math.cast(usize, requested)) |count| @min(count, items.len) else items.len;
-            break :blk if (std.mem.eql(u8, name, "take"))
-                self.copyList(list.element, items[0..boundary])
-            else
-                self.copyList(list.element, items[boundary..]);
-        },
-        .repeat => blk: {
-            const times = arguments[0].data.int;
-            if (times < 0) return self.raiseFmt(
-                span,
-                "a List cannot be repeated {d} times",
-                .{times},
-                "Repeat it 0 or more times; 0 gives an empty List.",
-            );
-            // As for `String.repeat`, a result too large to address is as
-            // unrepresentable as one too large to allocate. An empty List
-            // repeated any number of times is still empty, without counting.
-            if (items.len == 0) break :blk self.copyList(list.element, items);
-            const size = std.math.mul(usize, items.len, @intCast(times)) catch return error.OutOfMemory;
-            const result = try self.heap.createList(list.element, size);
-            const value: Value = .{ .data = .{ .list = result } };
-            errdefer self.heap.release(value);
-            for (0..@intCast(times)) |_| {
-                for (items) |item| result.items.appendAssumeCapacity(Heap.retain(item));
-            }
-            break :blk value;
-        },
-        .reverse => blk: {
-            const result = try self.heap.createList(list.element, items.len);
-            const value: Value = .{ .data = .{ .list = result } };
-            errdefer self.heap.release(value);
-            var index = items.len;
-            while (index > 0) {
-                index -= 1;
-                result.items.appendAssumeCapacity(Heap.retain(items[index]));
-            }
-            break :blk value;
-        },
-        .unique => blk: {
-            const result = try self.heap.createList(list.element, items.len);
-            const value: Value = .{ .data = .{ .list = result } };
-            errdefer self.heap.release(value);
-            outer: for (items) |item| {
-                for (result.items.items) |previous| {
-                    if (try Value.equals(self.gpa, item, previous, self.equatable(span))) continue :outer;
-                }
-                result.items.appendAssumeCapacity(Heap.retain(item));
-            }
-            break :blk value;
-        },
-        .zip => blk: {
-            const other = arguments[0];
-            if (other.kind() != .list) return self.raise(
-                span,
-                "`zip` needs a List, but this is not a List",
-                "Pass another List to pair the items up.",
-            );
-            const right = other.data.list;
-            const limit = @min(items.len, right.items.items.len);
-            const result = try self.heap.createList(.tuple, limit);
-            const value: Value = .{ .data = .{ .list = result } };
-            errdefer self.heap.release(value);
-            for (items[0..limit], right.items.items[0..limit]) |left, right_item| {
-                const tuple_items = try self.gpa.alloc(Value, 2);
-                const tuple_kinds = self.gpa.alloc(Value.Kind, 2) catch |err| {
-                    self.gpa.free(tuple_items);
-                    return err;
-                };
-                tuple_items[0] = Heap.retain(left);
-                tuple_items[1] = Heap.retain(right_item);
-                tuple_kinds[0] = list.element;
-                tuple_kinds[1] = right.element;
-                const tuple = try self.heap.createTuple(tuple_items, tuple_kinds);
-                result.items.appendAssumeCapacity(.{ .data = .{ .tuple = tuple } });
-            }
-            break :blk value;
-        },
-        .sum => self.sumList(span, list),
-        .join => blk: {
-            const separator = if (arguments.len == 1) arguments[0].data.string.bytes else "";
-            var joined: std.ArrayList(u8) = .empty;
-            errdefer joined.deinit(self.gpa);
-            for (items, 0..) |item, index| {
-                if (index > 0) try joined.appendSlice(self.gpa, separator);
-                try joined.appendSlice(self.gpa, item.data.string.bytes);
-            }
-            break :blk self.ownedText(try joined.toOwnedSlice(self.gpa));
-        },
-        .average => averageList(list),
-        .min, .max => self.listExtreme(span, list, std.mem.eql(u8, name, "min")),
-        .sort => blk: {
-            if (list.element == .float and items.len > 0 and std.math.isNan(items[0].data.float)) return self.raiseExtremeNaN(span, .sort);
-            const result = try self.heap.createList(list.element, items.len);
-            const value: Value = .{ .data = .{ .list = result } };
-            errdefer self.heap.release(value);
-            for (items) |item| result.items.appendAssumeCapacity(Heap.retain(item));
-            try self.sortItemsByKeys(span, list.element, result.items.items, null, .sort);
-            break :blk value;
-        },
-        .shuffle => blk: {
-            const result = try self.heap.createList(list.element, items.len);
-            const value: Value = .{ .data = .{ .list = result } };
-            errdefer self.heap.release(value);
-            for (items) |item| result.items.appendAssumeCapacity(Heap.retain(item));
-            self.random().shuffle(Value, result.items.items);
-            break :blk value;
-        },
-        .random => if (items.len == 0) Value.nothing else Heap.retain(items[self.random().uintLessThan(usize, items.len)]),
-    };
-}
-
-/// Section 8.6's first aggregation. Empty numeric Lists have the additive
-/// identity, and Int accumulation uses the same checked arithmetic as `+`.
-fn sumList(self: *Interpreter, span: Source.Span, list: *const Heap.List) Error!Value {
-    return switch (list.element) {
-        .int => blk: {
-            var total: i64 = 0;
-            for (list.items.items) |item| {
-                const added = @addWithOverflow(total, item.data.int);
-                if (added[1] != 0) return self.raiseFmt(
-                    span,
-                    "`sum` overflows Int while adding {d} and {d}",
-                    .{ total, item.data.int },
-                    integer_range_help,
-                );
-                total = added[0];
-            }
-            break :blk .initInt(total);
-        },
-        .float => blk: {
-            var total: f64 = 0.0;
-            for (list.items.items) |item| total += item.data.float;
-            break :blk .initFloat(total);
-        },
-        else => unreachable, // The checker permits `sum` only on numeric Lists.
-    };
-}
-
-/// Section 8.6's numeric average. Its result is always Float so a fractional
-/// answer from an Int List stays visible; no items have no average. Each item
-/// widens as an ordinary Float operation would, then Float arithmetic supplies
-/// the established Infinity and NaN behavior.
-fn averageList(list: *const Heap.List) Error!Value {
-    if (list.items.items.len == 0) return Value.nothing;
-    var total: f64 = 0.0;
-    switch (list.element) {
-        .int => {
-            for (list.items.items) |item| total += @floatFromInt(item.data.int);
-        },
-        .float => {
-            for (list.items.items) |item| total += item.data.float;
-        },
-        else => unreachable, // The checker permits `average` only on numeric Lists.
-    }
-    return .initFloat(total / @as(f64, @floatFromInt(list.items.items.len)));
-}
-
-/// Section 8.6's extrema. Ties retain the first item, and an empty List has no
-/// result. The checker has already limited this to the same orderable types as
-/// ordinary comparisons; NaN is the one numeric value with no order at all.
-fn listExtreme(self: *Interpreter, span: Source.Span, list: *const Heap.List, minimum: bool) Error!Value {
-    const items = list.items.items;
-    if (items.len == 0) return Value.nothing;
-    if (list.element == .float and std.math.isNan(items[0].data.float)) return self.raise(
-        span,
-        "`min` and `max` cannot order a List containing NaN",
-        "Check values with `nan?()` before choosing a minimum or maximum.",
-    );
-
-    var chosen = Heap.retain(items[0]);
-    errdefer self.heap.release(chosen);
-    for (items[1..]) |item| {
-        const ordering = try self.orderListItems(span, chosen.data, chosen, item, .ordinary);
-        const replace = if (minimum) ordering == .gt else ordering == .lt;
-        if (!replace) continue;
-        self.heap.release(chosen);
-        chosen = Heap.retain(item);
-    }
-    return chosen;
-}
-
-const ExtremeKind = enum { ordinary, keyed, pair, sort, sort_by };
-
-fn raiseExtremeNaN(self: *Interpreter, span: Source.Span, kind: ExtremeKind) Error {
-    return self.raise(
-        span,
-        switch (kind) {
-            .ordinary => "`min` and `max` cannot order a List containing NaN",
-            .keyed => "`min_by` and `max_by` cannot order a key of NaN",
-            .pair => "`min_max` cannot order a List containing NaN",
-            .sort => "`sort` cannot order a List containing NaN",
-            .sort_by => "`sort_by` cannot order a key of NaN",
-        },
-        switch (kind) {
-            .ordinary, .keyed, .pair => "Check values with `nan?()` before choosing a minimum or maximum.",
-            .sort => "Check values with `nan?()` before sorting the List.",
-            .sort_by => "Return a key that is not NaN, checking it with `nan?()` when needed.",
-        },
-    );
-}
-
-fn orderListItems(self: *Interpreter, span: Source.Span, kind: Value.Kind, left: Value, right: Value, extreme: ExtremeKind) Error!std.math.Order {
-    return switch (kind) {
-        .int => std.math.order(left.data.int, right.data.int),
-        .float => {
-            if (std.math.isNan(left.data.float) or std.math.isNan(right.data.float)) return self.raiseExtremeNaN(span, extreme);
-            return std.math.order(left.data.float, right.data.float);
-        },
-        .string => unicode.order(self.gpa, left.data.string.bytes, right.data.string.bytes),
-        .struct_value => blk: {
-            const compared = try self.callOperator(span, Ast.OperatorContract.ordered.method, left, right);
-            defer self.heap.release(compared);
-            break :blk std.math.order(compared.data.int, 0);
-        },
-        else => unreachable, // The checker permits ordering only Ints, Floats, Strings, and `Ordered` structs.
-    };
-}
-
-/// A stable sort for `sort`, `sort!`, and `sort_by`, whose comparisons may
-/// themselves fail — a `NaN` float, or a user `Ordered.compare` that raises.
-/// `keys`, when given, is reordered in lock step with `items`, so `sort_by`'s
-/// already-computed keys stay lined up with the items they came from; without
-/// one, `items` is compared directly. It is stable, so items whose keys tie
-/// keep their input order, matching every other List traversal (8.6).
-///
-/// Short runs are insertion-sorted, then merged in rounds of doubling width,
-/// so a long list costs O(n log n) comparisons rather than insertion sort's
-/// O(n²). Values only move, never gain or lose a reference, and a merge
-/// writes to scratch space before copying back, so a comparison that fails
-/// partway leaves `items` a complete permutation of what it held.
-fn sortItemsByKeys(
-    self: *Interpreter,
-    span: Source.Span,
-    kind: Value.Kind,
-    items: []Value,
-    keys: ?[]Value,
-    extreme: ExtremeKind,
-) Error!void {
-    const run_length: usize = 16;
-    var start: usize = 0;
-    while (start < items.len) : (start += run_length) {
-        const end = @min(start + run_length, items.len);
-        try self.insertionSort(span, kind, items[start..end], if (keys) |k| k[start..end] else null, extreme);
-    }
-    if (items.len <= run_length) return;
-
-    const scratch = try self.gpa.alloc(Value, items.len);
-    defer self.gpa.free(scratch);
-    const key_scratch: ?[]Value = if (keys != null) try self.gpa.alloc(Value, items.len) else null;
-    defer if (key_scratch) |spare| self.gpa.free(spare);
-
-    var width: usize = run_length;
-    while (width < items.len) : (width *= 2) {
-        var left: usize = 0;
-        while (left + width < items.len) : (left += 2 * width) {
-            const middle = left + width;
-            const right = @min(left + 2 * width, items.len);
-            var a = left;
-            var b = middle;
-            var out = left;
-            while (a < middle and b < right) : (out += 1) {
-                const first = if (keys) |k| k[a] else items[a];
-                const second = if (keys) |k| k[b] else items[b];
-                // Take from the right half only when it is strictly smaller,
-                // so equal keys keep their order.
-                const from = if (try self.orderListItems(span, kind, first, second, extreme) == .gt) &b else &a;
-                scratch[out] = items[from.*];
-                if (keys) |k| key_scratch.?[out] = k[from.*];
-                from.* += 1;
-            }
-            for (a..middle) |index| {
-                scratch[out] = items[index];
-                if (keys) |k| key_scratch.?[out] = k[index];
-                out += 1;
-            }
-            for (b..right) |index| {
-                scratch[out] = items[index];
-                if (keys) |k| key_scratch.?[out] = k[index];
-                out += 1;
-            }
-            @memcpy(items[left..right], scratch[left..right]);
-            if (keys) |k| @memcpy(k[left..right], key_scratch.?[left..right]);
-        }
-    }
-}
-
-/// The stable insertion sort `sortItemsByKeys` runs on each short run.
-fn insertionSort(
-    self: *Interpreter,
-    span: Source.Span,
-    kind: Value.Kind,
-    items: []Value,
-    keys: ?[]Value,
-    extreme: ExtremeKind,
-) Error!void {
-    var i: usize = 1;
-    while (i < items.len) : (i += 1) {
-        var j = i;
-        while (j > 0) {
-            const left = if (keys) |k| k[j - 1] else items[j - 1];
-            const right = if (keys) |k| k[j] else items[j];
-            if (try self.orderListItems(span, kind, left, right, extreme) != .gt) break;
-            std.mem.swap(Value, &items[j - 1], &items[j]);
-            if (keys) |k| std.mem.swap(Value, &k[j - 1], &k[j]);
-            j -= 1;
-        }
-    }
-}
+const ExtremeKind = ListMethods.ExtremeKind;
 
 fn listMinMax(self: *Interpreter, span: Source.Span, list: *const Heap.List) Error!Value {
     const items = list.items.items;
     if (items.len == 0) return self.extremePair(.nothing, .nothing, .nothing);
-    if (list.element == .float and std.math.isNan(items[0].data.float)) return self.raiseExtremeNaN(span, .pair);
+    if (list.element == .float and std.math.isNan(items[0].data.float)) return self.runNative(span, ListMethods.raiseExtremeNaN, .{.pair});
 
     var minimum = Heap.retain(items[0]);
     var maximum = Heap.retain(items[0]);
@@ -10193,11 +9782,11 @@ fn listMinMax(self: *Interpreter, span: Source.Span, list: *const Heap.List) Err
         self.heap.release(maximum);
     };
     for (items[1..]) |item| {
-        if ((try self.orderListItems(span, minimum.data, minimum, item, .pair)) == .gt) {
+        if ((try self.runNative(span, ListMethods.orderListItems, .{ minimum.data, minimum, item, .pair })) == .gt) {
             self.heap.release(minimum);
             minimum = Heap.retain(item);
         }
-        if ((try self.orderListItems(span, maximum.data, maximum, item, .pair)) == .lt) {
+        if ((try self.runNative(span, ListMethods.orderListItems, .{ maximum.data, maximum, item, .pair })) == .lt) {
             self.heap.release(maximum);
             maximum = Heap.retain(item);
         }
@@ -10226,15 +9815,6 @@ fn extremePair(self: *Interpreter, kind: Value.Kind, minimum: Value, maximum: Va
     kinds[1] = kind;
     // `createTuple` takes both values over, even when it fails.
     return .{ .data = .{ .tuple = try self.heap.createTuple(items, kinds) } };
-}
-
-/// A new list containing one held copy of each value in `items`.
-fn copyList(self: *Interpreter, element: Value.Kind, items: []const Value) Error!Value {
-    const list = try self.heap.createList(element, items.len);
-    const result: Value = .{ .data = .{ .list = list } };
-    errdefer self.heap.release(result);
-    for (items) |item| list.items.appendAssumeCapacity(Heap.retain(item));
-    return result;
 }
 
 /// A method that changes its receiver. Section 4.3 and 7.1 let the checker
@@ -10381,7 +9961,7 @@ fn callChangingMethod(
         std.mem.eql(u8, member.name, "remove_if") or std.mem.eql(u8, member.name, "unique!") or
         std.mem.eql(u8, member.name, "sort!"))
     {
-        const copy = try self.copyList(slot.data.list.element, slot.data.list.items.items);
+        const copy = try ListMethods.copyList(&self.heap, slot.data.list.element, slot.data.list.items.items);
         var owned_copy = true;
         defer if (owned_copy) self.heap.release(copy);
         self.beginCallback(&guard, member.name);
@@ -10993,8 +10573,8 @@ fn mutateList(self: *Interpreter, span: Source.Span, list: *Heap.List, name: []c
             self.compactList(list, keep);
         },
         .@"sort!" => {
-            if (list.element == .float and items.items.len > 0 and std.math.isNan(items.items[0].data.float)) return self.raiseExtremeNaN(span, .sort);
-            try self.sortItemsByKeys(span, list.element, items.items, null, .sort);
+            if (list.element == .float and items.items.len > 0 and std.math.isNan(items.items[0].data.float)) return self.runNative(span, ListMethods.raiseExtremeNaN, .{.sort});
+            try self.runNative(span, ListMethods.sortItemsByKeys, .{ list.element, items.items, null, .sort });
         },
         .@"shuffle!" => self.random().shuffle(Value, items.items),
     }
