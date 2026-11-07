@@ -109,6 +109,11 @@ fn context() Native.Context {
 fn call(site: *const Site, comptime function: anytype, arguments: anytype, result: anytype) c_int {
     var ctx = context();
     const outcome = @call(.auto, function, .{&ctx} ++ arguments);
+    // A native that only explains a failure gives an error set, not a union.
+    if (@typeInfo(@TypeOf(outcome)) == .error_set) {
+        fail(site, &ctx, outcome);
+        return 1;
+    }
     if (outcome) |value| {
         if (@TypeOf(result) != void) result.* = value;
         return 0;
@@ -224,5 +229,175 @@ export fn em_compare_int_float(left: i64, right: f64) c_int {
         .lt => -1,
         .eq => 0,
         .gt => 1,
+    };
+}
+
+// Strings (slice 3a). A `String` in generated C is a `*Heap.Text`, the
+// interpreter's own representation, and a null one in a slot that holds
+// nothing yet. Every slot owns one reference; generated C retains what it
+// stores and releases what it overwrites, and each function releases its
+// locals as it returns. What a function here gives back is owned by the
+// caller; what it is passed is only borrowed.
+
+fn textValue(text: *Heap.Text) Value {
+    return .{ .data = .{ .string = text } };
+}
+
+export fn em_retain(text: ?*Heap.Text) void {
+    if (text) |held| _ = Heap.retain(textValue(held));
+}
+
+export fn em_release(text: ?*Heap.Text) void {
+    if (text) |held| heap.release(textValue(held));
+}
+
+/// The text of a string literal, made once and cached in `cell`. A literal is
+/// never counted, so retaining and releasing it costs nothing.
+export fn em_literal(cell: *?*Heap.Text, bytes: [*]const u8, len: usize) *Heap.Text {
+    if (cell.*) |text| return text;
+    const text = heap.literalText(bytes[0..len]) catch outOfMemory();
+    cell.* = text;
+    return text;
+}
+
+export fn em_write_string(text: *Heap.Text) void {
+    write(text.bytes);
+}
+
+/// Section 9's `+`: a new string holding both.
+export fn em_concat(left: *Heap.Text, right: *Heap.Text) *Heap.Text {
+    const joined = std.mem.concat(gpa, u8, &.{ left.bytes, right.bytes }) catch outOfMemory();
+    return heap.createText(joined) catch outOfMemory();
+}
+
+/// Section 9.2's comparison, by the code points of the normalized forms:
+/// -1, 0 or 1.
+export fn em_compare_strings(left: *Heap.Text, right: *Heap.Text) c_int {
+    const order = @import("unicode.zig").order(gpa, left.bytes, right.bytes) catch outOfMemory();
+    return switch (order) {
+        .lt => -1,
+        .eq => 0,
+        .gt => 1,
+    };
+}
+
+export fn em_equal_strings(left: *Heap.Text, right: *Heap.Text) bool {
+    return @import("unicode.zig").equal(gpa, left.bytes, right.bytes) catch outOfMemory();
+}
+
+/// Section 9.2's `count`: the characters, not the bytes.
+export fn em_string_count(text: *Heap.Text) i64 {
+    return @intCast(@import("unicode.zig").graphemeCount(text.bytes));
+}
+
+/// Section 9.1's `text[position]`, a one-character string.
+export fn em_string_index(text: *Heap.Text, position: i64, result: **Heap.Text, site: *const Site) c_int {
+    if (@import("strings.zig").characterAt(text.bytes, position)) |character| {
+        result.* = (heap.copyText(character) catch outOfMemory()).data.string;
+        return 0;
+    }
+    const count = @import("unicode.zig").graphemeCount(text.bytes);
+    return call(site, Operations.outsideIndex, .{ Operations.Collection.string, count, position }, {});
+}
+
+/// Section 5.4's `text[start..end]` or `text[start..=end]`; a bound that was
+/// not written is passed as `has_start` or `has_end` false.
+export fn em_string_slice(text: *Heap.Text, has_start: bool, start: i64, has_end: bool, end: i64, inclusive: bool, result: **Heap.Text, site: *const Site) c_int {
+    const count: i64 = @intCast(@import("unicode.zig").graphemeCount(text.bytes));
+    var bounds: Operations.Bounds = undefined;
+    const status = call(site, Operations.sliceBounds, .{ Operations.Collection.string, count, if (has_start) start else null, if (has_end) end else null, inclusive }, &bounds);
+    if (status != 0) return status;
+    const piece = @import("strings.zig").substring(text.bytes, @intCast(bounds.start), @intCast(bounds.end - bounds.start)) catch unreachable;
+    result.* = (heap.copyText(piece) catch outOfMemory()).data.string;
+    return 0;
+}
+
+/// Builds a string from parts, for an interpolation or a `to_string`.
+const Builder = std.Io.Writer.Allocating;
+
+export fn em_builder_new() *Builder {
+    const builder = gpa.create(Builder) catch outOfMemory();
+    builder.* = .init(gpa);
+    return builder;
+}
+
+export fn em_builder_text(builder: *Builder, bytes: [*]const u8, len: usize) void {
+    builder.writer.writeAll(bytes[0..len]) catch outOfMemory();
+}
+
+export fn em_builder_string(builder: *Builder, text: *Heap.Text) void {
+    builder.writer.writeAll(text.bytes) catch outOfMemory();
+}
+
+export fn em_builder_int(builder: *Builder, value: i64) void {
+    builder.writer.print("{d}", .{value}) catch outOfMemory();
+}
+
+export fn em_builder_float(builder: *Builder, value: f64) void {
+    Value.displayFloat(value, &builder.writer) catch outOfMemory();
+}
+
+export fn em_builder_bool(builder: *Builder, value: bool) void {
+    builder.writer.writeAll(if (value) "true" else "false") catch outOfMemory();
+}
+
+export fn em_builder_finish(builder: *Builder) *Heap.Text {
+    const bytes = builder.toOwnedSlice() catch outOfMemory();
+    gpa.destroy(builder);
+    return heap.createText(bytes) catch outOfMemory();
+}
+
+/// A value crossing to a native: one of the kinds generated C holds so far,
+/// in the order of `Value.Kind`.
+pub const EmValue = extern struct {
+    kind: u8,
+    as: extern union {
+        int: i64,
+        float: f64,
+        boolean: bool,
+        text: ?*Heap.Text,
+    },
+};
+
+fn fromC(value: EmValue) Value {
+    return switch (@as(Value.Kind, @fromBackingInt(@intCast(value.kind)))) {
+        .nothing => Value.nothing,
+        .bool => .initBool(value.as.boolean),
+        .int => .initInt(value.as.int),
+        .float => .initFloat(value.as.float),
+        .string => textValue(value.as.text.?),
+        else => unreachable, // generated C holds no other kind yet
+    };
+}
+
+fn toC(value: Value) EmValue {
+    return switch (value.data) {
+        .nothing => .{ .kind = @backingInt(Value.Kind.nothing), .as = .{ .int = 0 } },
+        .bool => |truth| .{ .kind = @backingInt(Value.Kind.bool), .as = .{ .boolean = truth } },
+        .int => |number| .{ .kind = @backingInt(Value.Kind.int), .as = .{ .int = number } },
+        .float => |number| .{ .kind = @backingInt(Value.Kind.float), .as = .{ .float = number } },
+        .string => |text| .{ .kind = @backingInt(Value.Kind.string), .as = .{ .text = text } },
+        else => unreachable, // the compiler asks only for natives giving these
+    };
+}
+
+/// A method of `Natives.zig`, by the index of its family in `Natives.Id`
+/// and of the method in that family's enum, on `receiver` with `arguments`.
+/// The result is the caller's to own.
+export fn em_native(family: c_int, method: c_int, receiver: EmValue, arguments: [*]const EmValue, count: usize, result: *EmValue, site: *const Site) c_int {
+    const Natives = @import("Natives.zig");
+    const id = idOf(Natives, @intCast(family), @intCast(method));
+    var values: [8]Value = undefined;
+    for (arguments[0..count], values[0..count]) |argument, *value| value.* = fromC(argument);
+    var answer: Value = undefined;
+    const status = call(site, Natives.call, .{ id, fromC(receiver), values[0..count] }, &answer);
+    if (status == 0) result.* = toC(answer);
+    return status;
+}
+
+fn idOf(comptime Natives: type, family: usize, method: usize) Natives.Id {
+    const tag: Natives.Family = @fromBackingInt(@intCast(family));
+    return switch (tag) {
+        inline else => |known| @unionInit(Natives.Id, @tagName(known), @fromBackingInt(@intCast(method))),
     };
 }
