@@ -136,6 +136,25 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(exe);
 
+    // The runtime a compiled program links (docs/compiler-design-plan.md,
+    // decisions 2 and 4): a static library per target, installed where
+    // `emerald build` looks for it, `build-tools/runtime/<arch-os-abi>/`.
+    // The release's build-tools archive will carry one per target (slice 7).
+    const compiled_runtime = b.addLibrary(.{
+        .linkage = .static,
+        .name = "emerald_runtime",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/runtime/compiled.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const runtime_triple = b.fmt("{s}-{s}-{s}", .{ @tagName(target.result.cpu.arch), @tagName(target.result.os.tag), @tagName(target.result.abi) });
+    const install_compiled_runtime = b.addInstallArtifact(compiled_runtime, .{
+        .dest_dir = .{ .override = .{ .custom = b.fmt("build-tools/runtime/{s}", .{runtime_triple}) } },
+    });
+    b.getInstallStep().dependOn(&install_compiled_runtime.step);
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
     run_cmd.addPassthruArgs();
