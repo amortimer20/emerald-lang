@@ -8,8 +8,8 @@
 //! An emitter only translates; it decides nothing about the language.
 //!
 //! Slice 2 has the scalars (`Int`, `Float`, `Bool`), functions, control flow
-//! and `print`; slice 3a adds `String`, the first value on the heap, and 3b
-//! lists.
+//! and `print`; slice 3a adds `String`, the first value on the heap, 3b
+//! lists, and 3c optionals and tuples.
 //!
 //! A heap value is owned by the slot that holds it. Every local and global of
 //! a heap type owns one reference, or holds nothing yet; storing into one
@@ -43,10 +43,19 @@ pub const Type = enum {
     /// A list of any element these types can hold; the instructions that
     /// read or build one carry the element's type.
     list,
+    /// Section 4.2's `T?`: a value of the runtime's tagged kind, absent
+    /// when its kind is `nothing`. Reading one the checker has narrowed
+    /// unwraps it, with the payload's type.
+    optional,
+    /// Section 8.2's `(String, Int)`, which never changes once built.
+    tuple,
 
     /// Whether a slot of this type owns a reference on the heap.
     pub fn counted(self: Type) bool {
-        return self == .string or self == .list;
+        return switch (self) {
+            .string, .list, .optional, .tuple => true,
+            .nothing, .int, .float, .bool => false,
+        };
     }
 };
 
@@ -99,6 +108,8 @@ pub const Operand = union(enum) {
     bool: bool,
     /// A string literal, by its index in `Program.literals`.
     literal: u32,
+    /// `nothing`, as an optional.
+    nothing,
 };
 
 /// An operand with its type, where an instruction takes values of several.
@@ -161,6 +172,17 @@ pub const Instruction = struct {
         /// One of `ListMethods.Mutation`'s methods on the list `target`
         /// holds, copied first as `list_set`'s is.
         list_mutate: struct { target: Place, method: u32, arguments: []const Typed, destination: ?Place, result: Type, site: Site },
+        /// A value as an optional that holds it.
+        wrap: struct { destination: Place, value: Typed },
+        /// The value an optional holds, which the checker has proved is
+        /// there, as `payload`.
+        unwrap: struct { destination: Place, operand: Operand, payload: Type },
+        /// Whether an optional holds a value.
+        present: struct { destination: Place, operand: Operand },
+        /// Section 8.2's `(a, b)`.
+        tuple_new: struct { destination: Place, items: []const Typed },
+        /// Section 8.2's `entry.0`, a `type`.
+        tuple_get: struct { destination: Place, tuple: Operand, position: u32, type: Type },
     };
 
     pub const Comparison = enum {
@@ -169,8 +191,10 @@ pub const Instruction = struct {
         bool,
         /// Two strings, by their normalized forms.
         string,
-        /// Two lists, element by element; only `==` and `!=`.
-        list,
+        /// Two optionals, which every other value compared by `==` and
+        /// `!=` alone (lists, tuples) is wrapped as, compared as the
+        /// interpreter compares values.
+        value,
         /// An `Int` on the left and a `Float` on the right, compared exactly.
         int_float,
         float_int,

@@ -93,17 +93,29 @@ fn cType(type_: Ir.Type) []const u8 {
         .bool => "bool",
         .string => "em_text *",
         .list => "em_list *",
+        .optional => "em_value ",
+        .tuple => "em_tuple *",
         .nothing => "void",
     };
 }
 
 /// The runtime's functions that retain and release a heap value of `type_`.
 fn retainName(type_: Ir.Type) []const u8 {
-    return if (type_ == .list) "em_retain_list" else "em_retain";
+    return switch (type_) {
+        .list => "em_retain_list",
+        .optional => "em_retain_value",
+        .tuple => "em_retain_tuple",
+        else => "em_retain",
+    };
 }
 
 fn releaseName(type_: Ir.Type) []const u8 {
-    return if (type_ == .list) "em_release_list" else "em_release";
+    return switch (type_) {
+        .list => "em_release_list",
+        .optional => "em_release_value",
+        .tuple => "em_release_tuple",
+        else => "em_release",
+    };
 }
 
 /// The tag and the `em_value` field for a value of `type_`.
@@ -115,7 +127,16 @@ fn kindName(type_: Ir.Type) []const u8 {
         .bool => "EM_KIND_BOOL",
         .string => "EM_KIND_STRING",
         .list => "EM_KIND_LIST",
+        .tuple => "EM_KIND_TUPLE",
+        // An optional is an `em_value` already, and passes as itself.
+        .optional => unreachable,
     };
+}
+
+/// The kind a native's result is widened to: none for an optional, whose
+/// value keeps the kind it has.
+fn expectedKind(type_: Ir.Type) []const u8 {
+    return if (type_ == .optional) "EM_KIND_NOTHING" else kindName(type_);
 }
 
 fn fieldName(type_: Ir.Type) []const u8 {
@@ -125,7 +146,8 @@ fn fieldName(type_: Ir.Type) []const u8 {
         .bool => "boolean",
         .string => "text",
         .list => "list",
-        .nothing => unreachable, // no `nothing` crosses as a value
+        .tuple => "tuple",
+        .nothing, .optional => unreachable, // these cross as whole values
     };
 }
 
@@ -202,7 +224,7 @@ const FunctionEmitter = struct {
         for (self.function.locals[self.function.parameter_count..], self.function.parameter_count..) |local, position| {
             // Zeroed, so C never reads an indeterminate value; the checker
             // has proved the program assigns each before it reads it.
-            try out.print("    {s} em_local_{d} = 0;", .{ cType(local.type), position });
+            try out.print("    {s} em_local_{d} = {{0}};", .{ cType(local.type), position });
             if (local.name.len != 0) try out.print(" /* {s} */", .{local.name});
             try out.writeAll("\n");
         }
@@ -238,6 +260,7 @@ const FunctionEmitter = struct {
             // A hexadecimal literal is exact, where decimal would round.
             .float => |number| try out.print("{x}", .{number}),
             .bool => |truth| try out.writeAll(if (truth) "true" else "false"),
+            .nothing => try out.writeAll("(em_value){0}"),
             .literal => |index| {
                 const text = self.program.literals[index];
                 try out.print("em_literal(&em_literal_{d}, ", .{index});
@@ -287,6 +310,10 @@ const FunctionEmitter = struct {
             } else try self.out.writeByte(character);
         }
         try self.out.writeAll("\n");
+    }
+
+    fn positionText(buffer: []u8, position: u32) []const u8 {
+        return std.fmt.bufPrint(buffer, "{d}", .{position}) catch unreachable;
     }
 
     fn siteName(buffer: []u8, site: Ir.Site) []const u8 {
@@ -364,6 +391,33 @@ const FunctionEmitter = struct {
                 try self.out.writeAll(" }\n");
             },
             .list_count => |counted| try self.line_("@ = em_list_count(@);", .{ counted.destination, counted.list }),
+            .wrap => |wrapped| {
+                try self.out.writeAll("    { em_value t = ");
+                try self.emValue(wrapped.value);
+                try self.out.writeAll("; em_retain_value(t);");
+                try self.takeInto(wrapped.destination);
+                try self.out.writeAll(" }\n");
+            },
+            .unwrap => |unwrapped| {
+                try self.line_("{ em_value r = @; em_retain_value(r);", .{unwrapped.operand});
+                try self.storeResult(unwrapped.destination, unwrapped.payload);
+                try self.out.writeAll(" }\n");
+            },
+            .present => |checked| try self.line_("@ = @.kind != EM_KIND_NOTHING;", .{ checked.destination, checked.operand }),
+            .tuple_new => |built| {
+                try self.out.writeAll("    {");
+                try self.valueArray(built.items);
+                try self.out.writeAll(" em_tuple *t = em_tuple_new(");
+                try self.arrayArguments(built.items.len);
+                try self.out.writeAll(");");
+                try self.takeInto(built.destination);
+                try self.out.writeAll(" }\n");
+            },
+            .tuple_get => |got| {
+                try self.line_("{ em_value r = em_tuple_get(@, " ++ "@);", .{ got.tuple, positionText(&site_buffer, got.position) });
+                try self.storeResult(got.destination, got.type);
+                try self.out.writeAll(" }\n");
+            },
             .list_get => |got| {
                 try self.line_("{ em_value r; if (em_list_get(@, @, &r, @)) EM_FAIL;", .{ got.list, got.position, siteName(&site_buffer, got.site) });
                 try self.storeResult(got.destination, got.element);
@@ -385,7 +439,7 @@ const FunctionEmitter = struct {
                 try self.place(changed.target);
                 try self.out.print(", {d}, ", .{changed.method});
                 try self.arrayArguments(changed.arguments.len);
-                try self.out.print(", {s}, &r, {s})) EM_FAIL;", .{ kindName(changed.result), siteName(&site_buffer, changed.site) });
+                try self.out.print(", {s}, &r, {s})) EM_FAIL;", .{ expectedKind(changed.result), siteName(&site_buffer, changed.site) });
                 try self.storeResult(changed.destination, changed.result);
                 try self.out.writeAll(" }\n");
             },
@@ -443,6 +497,7 @@ const FunctionEmitter = struct {
 
     /// A value as the runtime's `em_value`, for a native.
     fn emValue(self: *FunctionEmitter, typed: Ir.Typed) Writer.Error!void {
+        if (typed.type == .optional) return self.operand(typed.operand);
         try self.out.print("(em_value){{ {s}, {{ .{s} = ", .{ kindName(typed.type), fieldName(typed.type) });
         try self.operand(typed.operand);
         try self.out.writeAll(" } }");
@@ -455,7 +510,7 @@ const FunctionEmitter = struct {
         try out.print(" if (em_native({d}, {d}, ", .{ native.family, native.method });
         try self.emValue(native.receiver);
         if (native.arguments.len != 0) try out.print(", a, {d}", .{native.arguments.len}) else try out.writeAll(", 0, 0");
-        try out.print(", {s}, &r, {s})) EM_FAIL;", .{ kindName(native.result), site });
+        try out.print(", {s}, &r, {s})) EM_FAIL;", .{ expectedKind(native.result), site });
         try self.storeResult(native.destination, native.result);
         try out.writeAll(" }\n");
     }
@@ -466,7 +521,10 @@ const FunctionEmitter = struct {
         const out = self.out;
         if (type_ == .nothing) return;
         if (destination) |into| {
-            if (type_.counted()) {
+            if (type_ == .optional) {
+                try out.writeAll(" em_value t = r;");
+                try self.takeInto(into);
+            } else if (type_.counted()) {
                 try out.print(" {s}t = r.as.{s};", .{ cType(type_), fieldName(type_) });
                 try self.takeInto(into);
             } else {
@@ -474,6 +532,8 @@ const FunctionEmitter = struct {
                 try self.place(into);
                 try out.print(" = r.as.{s};", .{fieldName(type_)});
             }
+        } else if (type_ == .optional) {
+            try out.writeAll(" em_release_value(r);");
         } else if (type_.counted()) try out.print(" {s}(r.as.{s});", .{ releaseName(type_), fieldName(type_) });
     }
 
@@ -505,15 +565,7 @@ const FunctionEmitter = struct {
             // C's comparisons of doubles are IEEE's, as section 5.3 asks:
             // every comparison with NaN is false except `!=`.
             .int, .float, .bool => try self.line_("@ = @ @ @;", .{ comparison.destination, comparison.left, symbol, comparison.right }),
-            .list => {
-                try self.out.writeAll("    ");
-                try self.place(comparison.destination);
-                try self.out.writeAll(if (comparison.operator == .equal) " = em_equal_values(" else " = !em_equal_values(");
-                try self.emValue(.{ .operand = comparison.left, .type = .list });
-                try self.out.writeAll(", ");
-                try self.emValue(.{ .operand = comparison.right, .type = .list });
-                try self.out.writeAll(");\n");
-            },
+            .value => try self.line_("@ = @em_equal_values(@, @);", .{ comparison.destination, if (comparison.operator == .equal) "" else "!", comparison.left, comparison.right }),
             // Section 9.2: by the code points of the normalized forms.
             .string => switch (comparison.operator) {
                 .equal => try self.line_("@ = em_equal_strings(@, @);", .{ comparison.destination, comparison.left, comparison.right }),
@@ -541,7 +593,7 @@ const FunctionEmitter = struct {
         const out = self.out;
         const callee = self.program.functions[called.function];
         if (callee.result != .nothing) {
-            try out.print("    {{ {s} t = 0;", .{cType(callee.result)});
+            try out.print("    {{ {s} t = {{0}};", .{cType(callee.result)});
         } else try out.writeAll("    {");
         try out.print(" if (em_function_{d}(", .{called.function});
         for (called.arguments, 0..) |argument, position| {
