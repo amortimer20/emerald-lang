@@ -17,6 +17,7 @@ const Resolver = @import("../Resolver.zig");
 const Ir = @import("Ir.zig");
 const Arithmetic = @import("runtime").Operations.Arithmetic;
 const Natives = @import("runtime").Natives;
+const ListMethods = @import("runtime").ListMethods;
 
 const Lower = @This();
 
@@ -31,6 +32,9 @@ globals: std.ArrayList(Ir.Global) = .empty,
 global_keys: std.StringHashMapUnmanaged(Ir.GlobalIndex) = .empty,
 sites: std.ArrayList(Source.Span) = .empty,
 literals: std.ArrayList([]const u8) = .empty,
+/// The element type of each module-level list variable, by key, for an
+/// assignment into one of its elements.
+global_elements: std.StringHashMapUnmanaged(Ir.Type) = .empty,
 /// What stopped lowering, once something has.
 unsupported: ?Unsupported = null,
 
@@ -45,6 +49,8 @@ pub const Error = error{ OutOfMemory, Unsupported };
 const FunctionInfo = struct {
     index: Ir.FunctionIndex,
     parameters: []const Ir.Type,
+    /// For each parameter that is a list, its element type.
+    elements: []const ?Ir.Type,
     result: Ir.Type,
 };
 
@@ -104,6 +110,8 @@ fn irType(checked: Type) ?Ir.Type {
         .bool => .bool,
         .string => .string,
         .nothing => .nothing,
+        // A list of anything the compiler holds, lists of them included.
+        .list => if (irType(checked.element.?.*) != null and irType(checked.element.?.*) != .nothing) .list else null,
         else => null,
     };
 }
@@ -118,7 +126,34 @@ fn annotationType(self: *Lower, annotation: Ast.TypeExpression) Error!Ir.Type {
         if (std.mem.eql(u8, annotation.name, "Bool")) return .bool;
         if (std.mem.eql(u8, annotation.name, "String")) return .string;
     }
+    // `List[T]`: an element, and nothing marking another collection.
+    if (annotation.element) |element| {
+        if (annotation.key == null and !annotation.set and !annotation.task and !annotation.channel and annotation.question_span == null) {
+            const inner = try self.annotationType(element.*);
+            if (inner != .nothing) return .list;
+        }
+    }
     return self.fail(annotation.span, "a value of this type");
+}
+
+/// The element type a `List[T]` annotation names, or null for any other.
+fn annotationElement(self: *Lower, annotation: Ast.TypeExpression) Error!?Ir.Type {
+    if (try self.annotationType(annotation) != .list) return null;
+    return try self.annotationType(annotation.element.?.*);
+}
+
+/// The element type of the list an expression gives, from the checker.
+fn listElement(self: *Lower, expression: *const Ast.Expression) ?Ir.Type {
+    const found = self.checked.expression_types.get(expression) orelse return null;
+    if (found.type.kind != .list) return null;
+    return irType(found.type.element.?.*);
+}
+
+/// The element type of a list variable `declaration` declares.
+fn declaredElement(self: *Lower, declaration: Ast.Declaration) Error!?Ir.Type {
+    if (declaration.annotation) |annotation| return self.annotationElement(annotation);
+    if (declaration.initializer) |initializer| return self.listElement(initializer);
+    return null;
 }
 
 fn expressionType(self: *Lower, expression: *const Ast.Expression) Error!Ir.Type {
@@ -130,14 +165,17 @@ fn declareFunction(self: *Lower, function: Ast.FunctionDeclaration) Error!void {
     if (function.type_parameters.len != 0) return self.fail(function.name_span, "a generic function");
     if (function.test_span != null) return self.fail(function.name_span, "a test");
     const parameters = try self.arena.alloc(Ir.Type, function.parameters.len);
-    for (function.parameters, parameters) |parameter, *type_| {
+    const elements = try self.arena.alloc(?Ir.Type, function.parameters.len);
+    for (function.parameters, parameters, elements) |parameter, *type_, *element| {
         if (parameter.default != null) return self.fail(parameter.name_span, "a parameter with a default");
         type_.* = try self.annotationType(parameter.annotation);
+        element.* = try self.annotationElement(parameter.annotation);
     }
     const result: Ir.Type = if (function.return_annotation) |annotation| try self.annotationType(annotation) else .nothing;
     try self.function_keys.put(self.arena, self.keyOf(function.name), .{
         .index = @intCast(self.functions.items.len),
         .parameters = parameters,
+        .elements = elements,
         .result = result,
     });
     try self.functions.append(self.arena, undefined);
@@ -150,6 +188,7 @@ fn declareGlobal(self: *Lower, declaration: Ast.Declaration) Error!void {
         try self.expressionType(initializer)
     else
         return self.fail(declaration.name_span, "a declaration without a type");
+    if (try self.declaredElement(declaration)) |element| try self.global_elements.put(self.arena, self.keyOf(declaration.name), element);
     try self.global_keys.put(self.arena, self.keyOf(declaration.name), @intCast(self.globals.items.len));
     try self.globals.append(self.arena, .{ .name = declaration.name, .type = type_ });
 }
@@ -159,6 +198,9 @@ fn lowerFunction(self: *Lower, function: Ast.FunctionDeclaration) Error!void {
     const names = try self.arena.alloc([]const u8, function.parameters.len);
     for (function.parameters, names) |parameter, *name| name.* = parameter.name;
     var builder: Builder = try .init(self, function.name, info.result, info.parameters, names);
+    for (info.elements, 0..) |element, position| {
+        if (element) |known| try builder.element_types.put(self.arena, @intCast(position), known);
+    }
     try builder.block(function.body);
     self.functions.items[info.index] = try builder.finish();
 }
@@ -191,6 +233,8 @@ const Builder = struct {
     /// Each scope maps a name written in it to its local, innermost last.
     scopes: std.ArrayList(std.StringHashMapUnmanaged(Ir.Local)) = .empty,
     loops: std.ArrayList(Loop) = .empty,
+    /// The element type of each local that holds a list, where it is known.
+    element_types: std.AutoHashMapUnmanaged(Ir.Local, Ir.Type) = .empty,
     /// Whether this is the entry, whose outermost declarations are the
     /// module's variables.
     top_level: bool = false,
@@ -350,12 +394,13 @@ const Builder = struct {
         else
             null;
         const local = try self.newLocal(declaration_.name, type_);
+        if (try self.owner.declaredElement(declaration_)) |element| try self.element_types.put(self.arena(), local, element);
         try self.scopes.items[self.scopes.items.len - 1].put(self.arena(), declaration_.name, local);
         if (initial) |value| try self.emit(declaration_.name_span, .{ .move = .{ .destination = .{ .local = local }, .source = value } });
     }
 
     fn assignment(self: *Builder, span: Source.Span, assignment_: Ast.Assignment) Error!void {
-        if (assignment_.steps.len != 0) return self.owner.fail(assignment_.target_span, "assigning into a collection or a field");
+        if (assignment_.steps.len != 0) return self.elementAssignment(span, assignment_);
         const target = try self.place(assignment_.name, assignment_.name_span);
         if (assignment_.operation) |operation| {
             // Read once, before the right side runs, which could change it.
@@ -413,7 +458,10 @@ const Builder = struct {
     /// ends at the largest `Int` does not overflow, as `Range` itself does.
     fn forLoop(self: *Builder, loop: Ast.For) Error!void {
         if (loop.pattern != null) return self.owner.fail(loop.name_span, "a `for` with a pattern");
-        if (loop.iterable.data != .range) return self.owner.fail(loop.iterable.span, "a `for` over anything but a written range");
+        if (loop.iterable.data != .range) {
+            if (self.checkedType(loop.iterable) == .list) return self.forList(loop);
+            return self.owner.fail(loop.iterable.span, "a `for` over this");
+        }
         const range = loop.iterable.data.range;
         const start = try self.convert(try self.expression(range.start), .int, range.start.span);
         const end = try self.convert(try self.expression(range.end), .int, range.end.span);
@@ -518,7 +566,7 @@ const Builder = struct {
             .string_literal => |text| .{ .operand = try self.owner.literal(text), .type = .string },
             .interpolation => |pieces| self.interpolation(expression_, pieces),
             .nothing_literal => self.owner.fail(expression_.span, "`nothing`"),
-            .list_literal => self.owner.fail(expression_.span, "a list"),
+            .list_literal => |items| self.listLiteral(expression_, items),
             .dictionary_literal => self.owner.fail(expression_.span, "a dictionary"),
             .tuple_literal => self.owner.fail(expression_.span, "a tuple"),
             .range => self.owner.fail(expression_.span, "a range outside a `for`"),
@@ -614,6 +662,7 @@ const Builder = struct {
                 },
                 .bool => if (right.type == .bool and operator.isEquality()) .bool else return self.owner.fail(expression_.span, "this comparison"),
                 .string => if (right.type == .string) .string else return self.owner.fail(expression_.span, "this comparison"),
+                .list => if (right.type == .list and operator.isEquality()) .list else return self.owner.fail(expression_.span, "this comparison"),
                 .nothing => return self.owner.fail(expression_.span, "this comparison"),
             };
             try self.emit(expression_.span, .{ .compare = .{ .operator = operator, .kind = kind, .destination = .{ .local = result }, .left = left.operand, .right = right.operand } });
@@ -714,8 +763,33 @@ const Builder = struct {
             .float => .{ .float = value.operand },
             .bool => .{ .bool = value.operand },
             .string => .{ .string = value.operand },
+            .list => .{ .value = .{ .operand = value.operand, .type = .list } },
             .nothing => .{ .text = "nothing" },
         };
+    }
+
+    /// The element type of the list `expression_` gives, from the checker.
+    fn elementType(self: *Builder, expression_: *const Ast.Expression) ?Ir.Type {
+        const found = self.owner.checked.expression_types.get(expression_) orelse return null;
+        if (found.type.kind != .list) return null;
+        return irType(found.type.element.?.*);
+    }
+
+    /// Section 8.2's list literal, whose element type the checker settled:
+    /// whole numbers in a `[Float]` are widened as they are stored.
+    fn listLiteral(self: *Builder, expression_: *const Ast.Expression, items: []const *const Ast.Expression) Error!Value {
+        const checked_type = self.owner.checked.literal_types.get(expression_) orelse
+            (self.owner.checked.expression_types.get(expression_) orelse return self.owner.fail(expression_.span, "this list")).type;
+        if (checked_type.kind != .list) return self.owner.fail(expression_.span, "this list");
+        const element = irType(checked_type.element.?.*) orelse return self.owner.fail(expression_.span, "a list of this type");
+        if (element == .nothing) return self.owner.fail(expression_.span, "a list of this type");
+        const typed = try self.arena().alloc(Ir.Typed, items.len);
+        for (items, typed) |item, *out| {
+            out.* = .{ .operand = try self.convert(try self.expression(item), element, item.span), .type = element };
+        }
+        const result = try self.temporary(.list);
+        try self.emit(expression_.span, .{ .list_new = .{ .destination = .{ .local = result }, .element = element, .items = typed } });
+        return .{ .operand = .{ .local = result }, .type = .list };
     }
 
     /// Section 5.1's interpolation, as a value: a new string built from its
@@ -740,14 +814,28 @@ const Builder = struct {
     /// A property: section 9.2's `count` of a string's characters.
     fn memberAccess(self: *Builder, expression_: *const Ast.Expression, member_: Ast.Expression.Member) Error!Value {
         if (member_.optional or member_.position != null) return self.owner.fail(expression_.span, "this member");
-        if (self.checkedType(member_.base) != .string or !std.mem.eql(u8, member_.name, "count")) return self.owner.fail(expression_.span, "this member");
+        const base_type = self.checkedType(member_.base);
+        if ((base_type != .string and base_type != .list) or !std.mem.eql(u8, member_.name, "count")) return self.owner.fail(expression_.span, "this member");
         const base = try self.expression(member_.base);
+        if (base_type == .list) {
+            const counted = try self.temporary(.int);
+            try self.emit(expression_.span, .{ .list_count = .{ .destination = .{ .local = counted }, .list = base.operand } });
+            return .{ .operand = .{ .local = counted }, .type = .int };
+        }
         const result = try self.temporary(.int);
         try self.emit(expression_.span, .{ .string_count = .{ .destination = .{ .local = result }, .operand = base.operand } });
         return .{ .operand = .{ .local = result }, .type = .int };
     }
 
     fn indexing(self: *Builder, expression_: *const Ast.Expression, index_: Ast.Expression.Index) Error!Value {
+        if (self.checkedType(index_.base) == .list) {
+            const element = self.checkedType(expression_) orelse return self.owner.fail(expression_.span, "indexing this");
+            const list = try self.expression(index_.base);
+            const at = try self.convert(try self.expression(index_.index), .int, index_.index.span);
+            const result = try self.temporary(element);
+            try self.emit(expression_.span, .{ .list_get = .{ .destination = .{ .local = result }, .list = list.operand, .position = at, .element = element, .site = try self.owner.site(expression_.span) } });
+            return .{ .operand = .{ .local = result }, .type = element };
+        }
         if (self.checkedType(index_.base) != .string) return self.owner.fail(expression_.span, "indexing this");
         const base = try self.expression(index_.base);
         const position = try self.convert(try self.expression(index_.index), .int, index_.index.span);
@@ -771,6 +859,98 @@ const Builder = struct {
             .site = try self.owner.site(expression_.span),
         } });
         return .{ .operand = .{ .local = result }, .type = .string };
+    }
+
+    /// One of section 8's methods that change a list, on a variable that holds
+    /// one; the runtime copies the list first if anything else shares it.
+    fn listMutation(self: *Builder, expression_: *const Ast.Expression, call_: Ast.Expression.Call, member_: Ast.Expression.Member, mutation: ListMethods.Mutation, result_type: Ir.Type, discarded: bool) Error!?Value {
+        if (member_.base.data != .name) return self.owner.fail(expression_.span, "changing a list that is not a variable");
+        if (call_.arguments.len > 8) return self.owner.fail(expression_.span, "this many arguments");
+        const target = try self.place(member_.base.data.name, member_.base.span);
+        const arguments = try self.arena().alloc(Ir.Typed, call_.arguments.len);
+        for (call_.arguments, arguments) |argument, *out| {
+            const value = try self.expression(argument);
+            if (value.type == .nothing) return self.owner.fail(argument.span, "this argument");
+            out.* = .{ .operand = value.operand, .type = value.type };
+        }
+        const destination: ?Ir.Local = if (discarded or result_type == .nothing) null else try self.temporary(result_type);
+        try self.emit(expression_.span, .{ .list_mutate = .{
+            .target = target.place,
+            .method = @backingInt(mutation),
+            .arguments = arguments,
+            .destination = if (destination) |local| .{ .local = local } else null,
+            .result = result_type,
+            .site = try self.owner.site(expression_.span),
+        } });
+        return if (destination) |local| .{ .operand = .{ .local = local }, .type = result_type } else null;
+    }
+
+    /// `items[position] = value`, or `items[position] += value`, on a list a
+    /// variable holds.
+    fn elementAssignment(self: *Builder, span: Source.Span, assignment_: Ast.Assignment) Error!void {
+        if (assignment_.steps.len != 1 or assignment_.steps[0] != .index) return self.owner.fail(assignment_.target_span, "assigning into a nested collection or a field");
+        const target = try self.place(assignment_.name, assignment_.name_span);
+        if (target.type != .list) return self.owner.fail(assignment_.target_span, "assigning into this");
+        const index_expression = assignment_.steps[0].index;
+        const at = try self.convert(try self.expression(index_expression), .int, index_expression.span);
+        // The element's type, which the checker knows as the value's target.
+        const element = self.elementOfPlace(assignment_) orelse return self.owner.fail(assignment_.target_span, "assigning into this");
+        const value: Ir.Operand = if (assignment_.operation) |operation| blk: {
+            const current = try self.temporary(element);
+            try self.emit(span, .{ .list_get = .{ .destination = .{ .local = current }, .list = operandOf(target.place), .position = at, .element = element, .site = try self.owner.site(assignment_.target_span) } });
+            const right = try self.expression(assignment_.value);
+            const result = try self.binary(span, operation, .{ .operand = .{ .local = current }, .type = element }, right);
+            break :blk try self.convert(result, element, span);
+        } else try self.convert(try self.expression(assignment_.value), element, assignment_.value.span);
+        try self.emit(span, .{ .list_set = .{ .target = target.place, .position = at, .value = .{ .operand = value, .type = element }, .site = try self.owner.site(assignment_.target_span) } });
+    }
+
+    /// The element type of the list variable an element assignment changes,
+    /// as its declaration settled it.
+    fn elementOfPlace(self: *Builder, assignment_: Ast.Assignment) ?Ir.Type {
+        if (self.find(assignment_.name)) |local| return self.element_types.get(local);
+        return self.owner.global_elements.get(self.owner.keyOf(assignment_.name));
+    }
+
+    /// Section 6.4's `for` over a list: over the list as it was when the loop
+    /// began, which the loop holds, so changing the variable inside does not
+    /// change what it visits.
+    fn forList(self: *Builder, loop: Ast.For) Error!void {
+        const element = self.elementType(loop.iterable) orelse return self.owner.fail(loop.iterable.span, "a `for` over this list");
+        const span = loop.iterable.span;
+        const iterated = try self.expression(loop.iterable);
+        const list = try self.temporary(.list);
+        try self.emit(span, .{ .move = .{ .destination = .{ .local = list }, .source = iterated.operand } });
+        const count = try self.temporary(.int);
+        try self.emit(span, .{ .list_count = .{ .destination = .{ .local = count }, .list = .{ .local = list } } });
+        const position = try self.temporary(.int);
+        try self.emit(span, .{ .move = .{ .destination = .{ .local = position }, .source = .{ .int = 0 } } });
+
+        const head = try self.newBlock();
+        const body = try self.newBlock();
+        const step = try self.newBlock();
+        const after = try self.newBlock();
+        self.terminate(.{ .jump = head });
+        self.switchTo(head);
+        const more = try self.temporary(.bool);
+        try self.emit(span, .{ .compare = .{ .operator = .less, .kind = .int, .destination = .{ .local = more }, .left = .{ .local = position }, .right = .{ .local = count } } });
+        self.terminate(.{ .branch = .{ .condition = .{ .local = more }, .then = body, .otherwise = after } });
+
+        self.switchTo(body);
+        try self.pushScope();
+        const variable = try self.newLocal(loop.name, element);
+        try self.scopes.items[self.scopes.items.len - 1].put(self.arena(), loop.name, variable);
+        try self.emit(loop.name_span, .{ .list_get = .{ .destination = .{ .local = variable }, .list = .{ .local = list }, .position = .{ .local = position }, .element = element, .site = try self.owner.site(span) } });
+        try self.loops.append(self.arena(), .{ .break_to = after, .continue_to = step });
+        try self.block(loop.body);
+        _ = self.loops.pop();
+        self.popScope();
+        self.terminate(.{ .jump = step });
+
+        self.switchTo(step);
+        try self.emit(span, .{ .int_arithmetic = .{ .operator = .add, .destination = .{ .local = position }, .left = .{ .local = position }, .right = .{ .int = 1 }, .site = try self.owner.site(span) } });
+        self.terminate(.{ .jump = head });
+        self.switchTo(after);
     }
 
     /// A method on a string or a number, which the runtime's `Natives.zig`
@@ -801,7 +981,11 @@ const Builder = struct {
         }
         if (std.mem.eql(u8, name, "format")) return self.owner.fail(expression_.span, "`format`");
 
+        if (receiver_type == .list) {
+            if (std.meta.stringToEnum(ListMethods.Mutation, name)) |mutation| return self.listMutation(expression_, call_, member_, mutation, result_type, discarded);
+        }
         const id: Natives.Id = switch (receiver_type) {
+            .list => Natives.lookup(.list, name),
             .string => Natives.lookup(.string, name),
             .int => Natives.lookup(.int, name),
             .float => Natives.lookup(.float, name),

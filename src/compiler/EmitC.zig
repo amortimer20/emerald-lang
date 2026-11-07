@@ -92,7 +92,40 @@ fn cType(type_: Ir.Type) []const u8 {
         .float => "double",
         .bool => "bool",
         .string => "em_text *",
+        .list => "em_list *",
         .nothing => "void",
+    };
+}
+
+/// The runtime's functions that retain and release a heap value of `type_`.
+fn retainName(type_: Ir.Type) []const u8 {
+    return if (type_ == .list) "em_retain_list" else "em_retain";
+}
+
+fn releaseName(type_: Ir.Type) []const u8 {
+    return if (type_ == .list) "em_release_list" else "em_release";
+}
+
+/// The tag and the `em_value` field for a value of `type_`.
+fn kindName(type_: Ir.Type) []const u8 {
+    return switch (type_) {
+        .nothing => "EM_KIND_NOTHING",
+        .int => "EM_KIND_INT",
+        .float => "EM_KIND_FLOAT",
+        .bool => "EM_KIND_BOOL",
+        .string => "EM_KIND_STRING",
+        .list => "EM_KIND_LIST",
+    };
+}
+
+fn fieldName(type_: Ir.Type) []const u8 {
+    return switch (type_) {
+        .int => "integer",
+        .float => "number",
+        .bool => "boolean",
+        .string => "text",
+        .list => "list",
+        .nothing => unreachable, // no `nothing` crosses as a value
     };
 }
 
@@ -164,7 +197,7 @@ const FunctionEmitter = struct {
         // A parameter is borrowed from the caller; retaining it lets the exit
         // release every local alike.
         for (self.function.locals[0..self.function.parameter_count], 0..) |parameter, position| {
-            if (parameter.type.counted()) try out.print("    em_retain(em_local_{d});\n", .{position});
+            if (parameter.type.counted()) try out.print("    {s}(em_local_{d});\n", .{ retainName(parameter.type), position });
         }
         for (self.function.locals[self.function.parameter_count..], self.function.parameter_count..) |local, position| {
             // Zeroed, so C never reads an indeterminate value; the checker
@@ -180,7 +213,7 @@ const FunctionEmitter = struct {
         }
         try out.writeAll("em_exit:;\n");
         for (self.function.locals, 0..) |local, position| {
-            if (local.type.counted()) try out.print("    em_release(em_local_{d});\n", .{position});
+            if (local.type.counted()) try out.print("    {s}(em_local_{d});\n", .{ releaseName(local.type), position });
         }
         try out.writeAll("    return em_status;\n}\n\n");
     }
@@ -224,7 +257,7 @@ const FunctionEmitter = struct {
     /// Stores a new reference, `t` in the C, into `destination`, releasing
     /// what it held.
     fn takeInto(self: *FunctionEmitter, destination: Ir.Place) Writer.Error!void {
-        try self.out.writeAll(" em_release(");
+        try self.out.print(" {s}(", .{releaseName(self.placeType(destination))});
         try self.place(destination);
         try self.out.writeAll("); ");
         try self.place(destination);
@@ -265,7 +298,7 @@ const FunctionEmitter = struct {
         var site_buffer: [32]u8 = undefined;
         switch (one.data) {
             .move => |move| if (self.placeType(move.destination).counted())
-                try self.line_("{ em_text *t = @; em_retain(t); em_release(@); @ = t; }", .{ move.source, move.destination, move.destination })
+                try self.line_("{ @t = @; @(t); @(@); @ = t; }", .{ cType(self.placeType(move.destination)), move.source, retainName(self.placeType(move.destination)), releaseName(self.placeType(move.destination)), move.destination, move.destination })
             else
                 try self.line_("@ = @;", .{ move.destination, move.source }),
             .int_arithmetic => |arithmetic| {
@@ -315,6 +348,46 @@ const FunctionEmitter = struct {
                 .float => |value| try self.line_("em_write_float(@);", .{value}),
                 .bool => |value| try self.line_("em_write_bool(@);", .{value}),
                 .string => |value| try self.line_("em_write_string(@);", .{value}),
+                .value => |value| {
+                    try self.out.writeAll("    em_write_value(");
+                    try self.emValue(value);
+                    try self.out.writeAll(");\n");
+                },
+            },
+            .list_new => |built| {
+                try self.out.writeAll("    {");
+                try self.valueArray(built.items);
+                try self.out.print(" em_list *t = em_list_new({s}, ", .{kindName(built.element)});
+                try self.arrayArguments(built.items.len);
+                try self.out.writeAll(");");
+                try self.takeInto(built.destination);
+                try self.out.writeAll(" }\n");
+            },
+            .list_count => |counted| try self.line_("@ = em_list_count(@);", .{ counted.destination, counted.list }),
+            .list_get => |got| {
+                try self.line_("{ em_value r; if (em_list_get(@, @, &r, @)) EM_FAIL;", .{ got.list, got.position, siteName(&site_buffer, got.site) });
+                try self.storeResult(got.destination, got.element);
+                try self.out.writeAll(" }\n");
+            },
+            .list_set => |set| {
+                try self.out.writeAll("    if (em_list_set(&");
+                try self.place(set.target);
+                try self.out.writeAll(", ");
+                try self.operand(set.position);
+                try self.out.writeAll(", ");
+                try self.emValue(set.value);
+                try self.out.print(", {s})) EM_FAIL;\n", .{siteName(&site_buffer, set.site)});
+            },
+            .list_mutate => |changed| {
+                try self.out.writeAll("    { em_value r;");
+                try self.valueArray(changed.arguments);
+                try self.out.writeAll(" if (em_list_mutate(&");
+                try self.place(changed.target);
+                try self.out.print(", {d}, ", .{changed.method});
+                try self.arrayArguments(changed.arguments.len);
+                try self.out.print(", {s}, &r, {s})) EM_FAIL;", .{ kindName(changed.result), siteName(&site_buffer, changed.site) });
+                try self.storeResult(changed.destination, changed.result);
+                try self.out.writeAll(" }\n");
             },
             .concat => |joined| {
                 try self.line_("{ em_text *t = em_concat(@, @);", .{ joined.left, joined.right });
@@ -333,6 +406,11 @@ const FunctionEmitter = struct {
                     .float => |value| try self.line_("em_builder_float(b, @);", .{value}),
                     .bool => |value| try self.line_("em_builder_bool(b, @);", .{value}),
                     .string => |value| try self.line_("em_builder_string(b, @);", .{value}),
+                    .value => |value| {
+                        try self.out.writeAll("    em_builder_value(b, ");
+                        try self.emValue(value);
+                        try self.out.writeAll(");\n");
+                    },
                 };
                 try self.out.writeAll("    em_text *t = em_builder_finish(b);");
                 try self.takeInto(built.destination);
@@ -365,14 +443,7 @@ const FunctionEmitter = struct {
 
     /// A value as the runtime's `em_value`, for a native.
     fn emValue(self: *FunctionEmitter, typed: Ir.Typed) Writer.Error!void {
-        const kind, const field = switch (typed.type) {
-            .int => .{ "EM_KIND_INT", "integer" },
-            .float => .{ "EM_KIND_FLOAT", "number" },
-            .bool => .{ "EM_KIND_BOOL", "boolean" },
-            .string => .{ "EM_KIND_STRING", "text" },
-            .nothing => unreachable, // lowering passes no `nothing`
-        };
-        try self.out.print("(em_value){{ {s}, {{ .{s} = ", .{ kind, field });
+        try self.out.print("(em_value){{ {s}, {{ .{s} = ", .{ kindName(typed.type), fieldName(typed.type) });
         try self.operand(typed.operand);
         try self.out.writeAll(" } }");
     }
@@ -380,43 +451,45 @@ const FunctionEmitter = struct {
     fn nativeCall(self: *FunctionEmitter, native: anytype, site: []const u8) Writer.Error!void {
         const out = self.out;
         try out.writeAll("    { em_value r;");
-        if (native.arguments.len != 0) {
-            try out.writeAll(" em_value a[] = { ");
-            for (native.arguments, 0..) |argument, position| {
-                if (position != 0) try out.writeAll(", ");
-                try self.emValue(argument);
-            }
-            try out.writeAll(" };");
-        }
+        try self.valueArray(native.arguments);
         try out.print(" if (em_native({d}, {d}, ", .{ native.family, native.method });
         try self.emValue(native.receiver);
         if (native.arguments.len != 0) try out.print(", a, {d}", .{native.arguments.len}) else try out.writeAll(", 0, 0");
-        try out.print(", {s}, &r, {s})) EM_FAIL;", .{ switch (native.result) {
-            .nothing => "EM_KIND_NOTHING",
-            .int => "EM_KIND_INT",
-            .float => "EM_KIND_FLOAT",
-            .bool => "EM_KIND_BOOL",
-            .string => "EM_KIND_STRING",
-        }, site });
-        if (native.destination) |destination| {
-            switch (native.result) {
-                .string => {
-                    try out.writeAll(" em_text *t = r.as.text;");
-                    try self.takeInto(destination);
-                },
-                .int, .float, .bool => {
-                    try out.writeAll(" ");
-                    try self.place(destination);
-                    try out.writeAll(switch (native.result) {
-                        .int => " = r.as.integer;",
-                        .float => " = r.as.number;",
-                        else => " = r.as.boolean;",
-                    });
-                },
-                .nothing => {},
-            }
-        } else if (native.result.counted()) try out.writeAll(" em_release(r.as.text);");
+        try out.print(", {s}, &r, {s})) EM_FAIL;", .{ kindName(native.result), site });
+        try self.storeResult(native.destination, native.result);
         try out.writeAll(" }\n");
+    }
+
+    /// Stores `r`, an `em_value` of `type_` the runtime gave, into
+    /// `destination`, or releases it when nothing keeps it.
+    fn storeResult(self: *FunctionEmitter, destination: ?Ir.Place, type_: Ir.Type) Writer.Error!void {
+        const out = self.out;
+        if (type_ == .nothing) return;
+        if (destination) |into| {
+            if (type_.counted()) {
+                try out.print(" {s}t = r.as.{s};", .{ cType(type_), fieldName(type_) });
+                try self.takeInto(into);
+            } else {
+                try out.writeAll(" ");
+                try self.place(into);
+                try out.print(" = r.as.{s};", .{fieldName(type_)});
+            }
+        } else if (type_.counted()) try out.print(" {s}(r.as.{s});", .{ releaseName(type_), fieldName(type_) });
+    }
+
+    /// `em_value a[] = { ... };`, or nothing for no values.
+    fn valueArray(self: *FunctionEmitter, values: []const Ir.Typed) Writer.Error!void {
+        if (values.len == 0) return;
+        try self.out.writeAll(" em_value a[] = { ");
+        for (values, 0..) |one, position| {
+            if (position != 0) try self.out.writeAll(", ");
+            try self.emValue(one);
+        }
+        try self.out.writeAll(" };");
+    }
+
+    fn arrayArguments(self: *FunctionEmitter, count: usize) Writer.Error!void {
+        if (count != 0) try self.out.print("a, {d}", .{count}) else try self.out.writeAll("0, 0");
     }
 
     fn compare(self: *FunctionEmitter, comparison: anytype) Writer.Error!void {
@@ -432,6 +505,15 @@ const FunctionEmitter = struct {
             // C's comparisons of doubles are IEEE's, as section 5.3 asks:
             // every comparison with NaN is false except `!=`.
             .int, .float, .bool => try self.line_("@ = @ @ @;", .{ comparison.destination, comparison.left, symbol, comparison.right }),
+            .list => {
+                try self.out.writeAll("    ");
+                try self.place(comparison.destination);
+                try self.out.writeAll(if (comparison.operator == .equal) " = em_equal_values(" else " = !em_equal_values(");
+                try self.emValue(.{ .operand = comparison.left, .type = .list });
+                try self.out.writeAll(", ");
+                try self.emValue(.{ .operand = comparison.right, .type = .list });
+                try self.out.writeAll(");\n");
+            },
             // Section 9.2: by the code points of the normalized forms.
             .string => switch (comparison.operator) {
                 .equal => try self.line_("@ = em_equal_strings(@, @);", .{ comparison.destination, comparison.left, comparison.right }),
@@ -479,7 +561,7 @@ const FunctionEmitter = struct {
                 try self.place(destination);
                 try out.writeAll(" = t;");
             }
-        } else if (callee.result.counted()) try out.writeAll(" em_release(t);");
+        } else if (callee.result.counted()) try out.print(" {s}(t);", .{releaseName(callee.result)});
         try out.writeAll(" }\n");
     }
 
@@ -499,7 +581,7 @@ const FunctionEmitter = struct {
                     try out.writeAll("    *em_result = ");
                     try self.operand(returned);
                     try out.writeAll(";\n");
-                    if (self.function.result.counted()) try out.writeAll("    em_retain(*em_result);\n");
+                    if (self.function.result.counted()) try out.print("    {s}(*em_result);\n", .{retainName(self.function.result)});
                 }
                 try out.writeAll("    goto em_exit;\n");
             },

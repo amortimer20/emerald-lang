@@ -8,7 +8,8 @@
 //! An emitter only translates; it decides nothing about the language.
 //!
 //! Slice 2 has the scalars (`Int`, `Float`, `Bool`), functions, control flow
-//! and `print`; slice 3a adds `String`, the first value on the heap.
+//! and `print`; slice 3a adds `String`, the first value on the heap, and 3b
+//! lists.
 //!
 //! A heap value is owned by the slot that holds it. Every local and global of
 //! a heap type owns one reference, or holds nothing yet; storing into one
@@ -39,10 +40,13 @@ pub const Type = enum {
     float,
     bool,
     string,
+    /// A list of any element these types can hold; the instructions that
+    /// read or build one carry the element's type.
+    list,
 
     /// Whether a slot of this type owns a reference on the heap.
     pub fn counted(self: Type) bool {
-        return self == .string;
+        return self == .string or self == .list;
     }
 };
 
@@ -146,6 +150,17 @@ pub const Instruction = struct {
         string_index: struct { destination: Place, operand: Operand, position: Operand, site: Site },
         /// Section 5.4's `text[start..end]`, with either bound left out.
         string_slice: struct { destination: Place, operand: Operand, start: ?Operand, end: ?Operand, inclusive: bool, site: Site },
+        /// Section 8.2's `[a, b, c]`, each item widened to `element`.
+        list_new: struct { destination: Place, element: Type, items: []const Typed },
+        list_count: struct { destination: Place, list: Operand },
+        /// Section 5.4's `list[position]`, an `element`.
+        list_get: struct { destination: Place, list: Operand, position: Operand, element: Type, site: Site },
+        /// `list[position] = value`, changing the list `target` holds, which
+        /// is copied first if anything else shares it.
+        list_set: struct { target: Place, position: Operand, value: Typed, site: Site },
+        /// One of `ListMethods.Mutation`'s methods on the list `target`
+        /// holds, copied first as `list_set`'s is.
+        list_mutate: struct { target: Place, method: u32, arguments: []const Typed, destination: ?Place, result: Type, site: Site },
     };
 
     pub const Comparison = enum {
@@ -154,6 +169,8 @@ pub const Instruction = struct {
         bool,
         /// Two strings, by their normalized forms.
         string,
+        /// Two lists, element by element; only `==` and `!=`.
+        list,
         /// An `Int` on the left and a `Float` on the right, compared exactly.
         int_float,
         float_int,
@@ -165,6 +182,8 @@ pub const Instruction = struct {
         float: Operand,
         bool: Operand,
         string: Operand,
+        /// Any other value, as `print` shows it.
+        value: Typed,
     };
 };
 
