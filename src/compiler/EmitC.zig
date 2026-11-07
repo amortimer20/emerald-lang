@@ -391,7 +391,13 @@ const FunctionEmitter = struct {
         try out.print(" if (em_native({d}, {d}, ", .{ native.family, native.method });
         try self.emValue(native.receiver);
         if (native.arguments.len != 0) try out.print(", a, {d}", .{native.arguments.len}) else try out.writeAll(", 0, 0");
-        try out.print(", &r, {s})) EM_FAIL;", .{site});
+        try out.print(", {s}, &r, {s})) EM_FAIL;", .{ switch (native.result) {
+            .nothing => "EM_KIND_NOTHING",
+            .int => "EM_KIND_INT",
+            .float => "EM_KIND_FLOAT",
+            .bool => "EM_KIND_BOOL",
+            .string => "EM_KIND_STRING",
+        }, site });
         if (native.destination) |destination| {
             switch (native.result) {
                 .string => {

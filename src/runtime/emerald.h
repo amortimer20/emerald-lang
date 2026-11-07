@@ -102,6 +102,6 @@ typedef struct {
     } as;
 } em_value;
 
-int em_native(int family, int method, em_value receiver, const em_value *arguments, size_t count, em_value *result, const em_site *site);
+int em_native(int family, int method, em_value receiver, const em_value *arguments, size_t count, uint8_t expected, em_value *result, const em_site *site);
 
 #endif

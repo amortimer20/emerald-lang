@@ -383,15 +383,17 @@ fn toC(value: Value) EmValue {
 
 /// A method of `Natives.zig`, by the index of its family in `Natives.Id`
 /// and of the method in that family's enum, on `receiver` with `arguments`.
-/// The result is the caller's to own.
-export fn em_native(family: c_int, method: c_int, receiver: EmValue, arguments: [*]const EmValue, count: usize, result: *EmValue, site: *const Site) c_int {
+/// The result is the caller's to own, with the kind `expected` names, which
+/// is the checker's type: an `Int` where a `Float` is expected is widened, as
+/// the interpreter widens what it stores (section 4.4).
+export fn em_native(family: c_int, method: c_int, receiver: EmValue, arguments: [*]const EmValue, count: usize, expected: u8, result: *EmValue, site: *const Site) c_int {
     const Natives = @import("Natives.zig");
     const id = idOf(Natives, @intCast(family), @intCast(method));
     var values: [8]Value = undefined;
     for (arguments[0..count], values[0..count]) |argument, *value| value.* = fromC(argument);
     var answer: Value = undefined;
     const status = call(site, Natives.call, .{ id, fromC(receiver), values[0..count] }, &answer);
-    if (status == 0) result.* = toC(answer);
+    if (status == 0) result.* = toC(Native.widen(answer, @enumFromInt(expected)));
     return status;
 }
 
