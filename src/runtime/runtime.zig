@@ -17,6 +17,14 @@ pub const Http = @import("Http.zig");
 pub const TimeZone = @import("TimeZone.zig");
 pub const Scheduler = @import("Scheduler.zig");
 pub const Module = @import("Module.zig");
+pub const Native = @import("Native.zig");
+pub const Natives = @import("Natives.zig");
+pub const MapMethods = @import("MapMethods.zig");
+pub const ListMethods = @import("ListMethods.zig");
+pub const RangeMethods = @import("RangeMethods.zig");
+pub const NumberMethods = @import("NumberMethods.zig");
+pub const BytesMethods = @import("BytesMethods.zig");
+pub const StringMethods = @import("StringMethods.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());

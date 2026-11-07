@@ -50,6 +50,17 @@ const strings = @import("runtime").strings;
 const unicode = @import("runtime").unicode;
 const call_arguments = @import("arguments.zig");
 const Scheduler = @import("runtime").Scheduler;
+const Native = @import("runtime").Native;
+const Natives = @import("runtime").Natives;
+const MapMethods = @import("runtime").MapMethods;
+const ListMethods = @import("runtime").ListMethods;
+const RangeMethods = @import("runtime").RangeMethods;
+const NumberMethods = @import("runtime").NumberMethods;
+const BytesMethods = @import("runtime").BytesMethods;
+const StringMethods = @import("runtime").StringMethods;
+const widen = Native.widen;
+const holdsNan = Native.holdsNan;
+const toFloat = Native.toFloat;
 
 const Interpreter = @This();
 
@@ -2069,7 +2080,7 @@ fn elementValue(self: *Interpreter, span: Source.Span, root: *Value, steps: []co
                 const map = at.data.map;
                 const key = widen(Heap.retain(index.value), map.key_kind);
                 defer self.heap.release(key);
-                const hash = try self.hashKey(index.span, key);
+                const hash = try self.runNative(index.span, MapMethods.hashKey, .{key});
                 const entry = try Heap.lookupIn(self.gpa, map, hash, key, self.equatable(index.span)) orelse
                     return self.raiseMissingKey(index.span, key);
                 at = entry.value;
@@ -2124,7 +2135,7 @@ fn storeElement(self: *Interpreter, span: Source.Span, root: *Value, steps: []co
                     // dictionary whose keys are `Float`.
                     const key = widen(Heap.retain(index.value), map.key_kind);
                     defer self.heap.release(key);
-                    const hash = try self.hashKey(index.span, key);
+                    const hash = try self.runNative(index.span, MapMethods.hashKey, .{key});
                     if (last) {
                         // Section 8.3: this inserts or replaces. It can now
                         // fail where it could not before this key's type
@@ -2205,7 +2216,7 @@ fn containerSlotTracking(self: *Interpreter, span: Source.Span, root: *Value, st
                     const map = try self.heap.uniqueMap(slot);
                     const key = widen(Heap.retain(index.value), map.key_kind);
                     defer self.heap.release(key);
-                    const hash = try self.hashKey(index.span, key);
+                    const hash = try self.runNative(index.span, MapMethods.hashKey, .{key});
                     const found = switch (try self.heap.locate(map, hash, key, self.equatable(index.span))) {
                         .entry => |at| at,
                         .vacancy => return self.raiseMissingKey(index.span, key),
@@ -2360,7 +2371,7 @@ fn executeForList(self: *Interpreter, loop: Ast.For) Error!void {
             const entry = entries[pending];
             pending += 1;
             // A set's value is `nothing`, which holds nothing to release.
-            const item = if (map.is_set) entry.key else try self.entryTuple(map, entry);
+            const item = if (map.is_set) entry.key else try MapMethods.entryTuple(&self.heap, map, entry);
             if (!try self.executeIteration(loop, item)) return;
         }
         return;
@@ -2369,27 +2380,6 @@ fn executeForList(self: *Interpreter, loop: Ast.For) Error!void {
     for (iterable.data.list.items.items) |item| {
         if (!try self.executeIteration(loop, Heap.retain(item))) return;
     }
-}
-
-/// Section 8.6's `(key, value)`, which is the one item a dictionary's block and
-/// `for` loop receive. Takes over one holder of each half.
-fn entryTuple(self: *Interpreter, map: *const Heap.Map, entry: Heap.Map.Entry) Error!Value {
-    const items = self.gpa.alloc(Value, 2) catch |err| {
-        self.heap.release(entry.key);
-        self.heap.release(entry.value);
-        return err;
-    };
-    items[0] = entry.key;
-    items[1] = entry.value;
-    const kinds = self.gpa.alloc(Value.Kind, 2) catch |err| {
-        for (items) |item| self.heap.release(item);
-        self.gpa.free(items);
-        return err;
-    };
-    kinds[0] = map.key_kind;
-    kinds[1] = map.value_kind;
-    // `createTuple` takes over both halves even when it fails.
-    return .{ .data = .{ .tuple = try self.heap.createTuple(items, kinds) } };
 }
 
 /// One pass through a `for` body with the loop variable bound to `value`, in a
@@ -2507,16 +2497,6 @@ fn condition(self: *Interpreter, expression: *const Ast.Expression) Error!bool {
             .{value.typeName()},
             "Compare it to something, as in `count > 0`. Emerald has no truthy or falsey values.",
         ),
-    };
-}
-
-/// Applies section 4.4's widening, which is the only implicit conversion in the
-/// language. Anything else is already a type error the checker reported.
-fn widen(value: Value, kind: Value.Kind) Value {
-    if (kind != .float) return value;
-    return switch (value.data) {
-        .int => |number| .initFloat(@floatFromInt(number)),
-        else => value,
     };
 }
 
@@ -3414,6 +3394,94 @@ const EquatableDispatch = struct {
     }
 };
 
+/// The engine's side of a native call (`runtime/Native.zig`): callbacks that
+/// run the program's own `equals()`, `hash()` and `compare()`, reporting any
+/// failure of theirs at `span`, and the interpreter's source of randomness.
+const NativeEngine = struct {
+    interpreter: *Interpreter,
+    span: Source.Span,
+
+    const vtable: Native.Engine.VTable = .{
+        .custom_equals = engineEquals,
+        .custom_hash = engineHash,
+        .compare = engineCompare,
+        .random = engineRandom,
+    };
+
+    fn of(ptr: *anyopaque) *NativeEngine {
+        return @ptrCast(@alignCast(ptr));
+    }
+
+    fn engineEquals(ptr: *anyopaque, left: Value, right: Value) Native.Error!?bool {
+        const self = of(ptr);
+        return self.interpreter.equatable(self.span).customEquals(left, right);
+    }
+
+    fn engineHash(ptr: *anyopaque, value: Value) Native.Error!?u64 {
+        const self = of(ptr);
+        return self.interpreter.equatable(self.span).customHash(value);
+    }
+
+    fn engineCompare(ptr: *anyopaque, left: Value, right: Value) Native.Error!Value {
+        const self = of(ptr);
+        return self.interpreter.callOperator(self.span, "compare", left, right);
+    }
+
+    fn engineRandom(ptr: *anyopaque) std.Random {
+        return of(ptr).interpreter.random();
+    }
+};
+
+/// A context for one native call. `engine` must outlive it.
+fn nativeContext(self: *Interpreter, engine: *NativeEngine) Native.Context {
+    return .{
+        .gpa = self.gpa,
+        .arena = self.arena,
+        .heap = &self.heap,
+        .engine = .{ .ptr = engine, .vtable = &NativeEngine.vtable },
+    };
+}
+
+/// Runs a runtime native, `function(ctx, arguments...)`, raising any failure
+/// it records at `span`. A native that only fails (a shared message) gives
+/// `Error`; any other gives `Error!` its result.
+fn runNative(self: *Interpreter, span: Source.Span, comptime function: anytype, arguments: anytype) NativeReturn(@TypeOf(function)) {
+    var engine: NativeEngine = .{ .interpreter = self, .span = span };
+    var ctx = self.nativeContext(&engine);
+    if (@typeInfo(@typeInfo(@TypeOf(function)).@"fn".return_type.?) == .error_set) {
+        return self.nativeFailure(span, &ctx, @call(.auto, function, .{&ctx} ++ arguments));
+    }
+    return @call(.auto, function, .{&ctx} ++ arguments) catch |err| self.nativeFailure(span, &ctx, err);
+}
+
+fn NativeReturn(comptime Function: type) type {
+    return switch (@typeInfo(@typeInfo(Function).@"fn".return_type.?)) {
+        .error_set => Error,
+        .error_union => |result| Error!result.payload,
+        else => @compileError("a runtime native returns an error union or an error set"),
+    };
+}
+
+/// A native's failure raised at `span`. A `Raised` with no recorded failure
+/// came from the program's own code, which a callback ran and which has
+/// already reported.
+fn nativeFailure(self: *Interpreter, span: Source.Span, ctx: *const Native.Context, err: Native.Error) Error {
+    if (err == error.Raised) {
+        if (ctx.failure) |failure| return self.raiseFailure(span, failure);
+        // Otherwise the program's own code raised inside a callback, and has
+        // reported; a native that returned `Raised` without `ctx.raise` is a bug.
+        std.debug.assert(self.task.state.failure != null);
+    }
+    return err;
+}
+
+fn raiseFailure(self: *Interpreter, span: Source.Span, failure: Native.Failure) Error {
+    if (failure.type_name.len == 0) return self.raise(span, failure.message, failure.help);
+    const key = try std.fmt.allocPrint(self.arena, Resolver.prelude_namespace ++ ".{s}", .{failure.type_name});
+    self.task.state.raised_value = try self.makeError(key, failure.message);
+    return self.raiseTyped(span, failure.type_name, failure.message, failure.help);
+}
+
 /// The `EquatableDispatch` for `span`, built fresh at each call site rather
 /// than threaded as a field: every place `Value.equals`/`Value.hash` is
 /// reached from already has its own most-relevant span in scope.
@@ -3468,41 +3536,11 @@ fn evaluateDictionary(
 
     for (entries) |entry| {
         const key = widen(try self.evaluate(entry.key), key_kind);
-        const hash = try self.hashKey(entry.key.span, key);
+        const hash = try self.runNative(entry.key.span, MapMethods.hashKey, .{key});
         const value = widen(try self.evaluate(entry.value), value_kind);
         try self.heap.put(map, hash, key, value, self.equatable(entry.key.span));
     }
     return result;
-}
-
-/// Section 8.3: NaN is rejected as a key, directly or inside a tuple, because
-/// it is not equal to itself and so could never be found again.
-fn hashKey(self: *Interpreter, span: Source.Span, key: Value) Error!u64 {
-    if (holdsNan(key)) return self.raise(
-        span,
-        "a not-a-number value cannot be a key",
-        "`nan?` is never equal to anything, including itself, so nothing stored under it could be found again.",
-    );
-    return Value.hash(self.gpa, key, self.equatable(span));
-}
-
-fn holdsNan(value: Value) bool {
-    return switch (value.data) {
-        .float => |number| std.math.isNan(number),
-        .tuple => |tuple| blk: {
-            for (tuple.items) |item| {
-                if (holdsNan(item)) break :blk true;
-            }
-            break :blk false;
-        },
-        .struct_value => |instance| blk: {
-            for (instance.fields) |field| {
-                if (holdsNan(field)) break :blk true;
-            }
-            break :blk false;
-        },
-        else => false,
-    };
 }
 
 fn evaluateList(self: *Interpreter, expression: *const Ast.Expression, elements: []const *const Ast.Expression) Error!Value {
@@ -3576,7 +3614,7 @@ fn evaluateSet(
 
     for (elements) |element| {
         const member = widen(try self.evaluate(element), member_kind);
-        const hash = try self.hashKey(element.span, member);
+        const hash = try self.runNative(element.span, MapMethods.hashKey, .{member});
         try self.heap.put(map, hash, member, Value.nothing, self.equatable(element.span));
     }
     return result;
@@ -3596,7 +3634,7 @@ fn readIndex(self: *Interpreter, expression: *const Ast.Expression, base: Value,
         const map = base.data.map;
         const key = widen(try self.evaluate(index.index), map.key_kind);
         defer self.heap.release(key);
-        const hash = try self.hashKey(index.index.span, key);
+        const hash = try self.runNative(index.index.span, MapMethods.hashKey, .{key});
         const entry = try Heap.lookupIn(self.gpa, map, hash, key, self.equatable(index.index.span)) orelse return Value.nothing;
         return Heap.retain(entry.value);
     }
@@ -3625,7 +3663,7 @@ fn evaluateSlice(self: *Interpreter, expression: *const Ast.Expression, slice: A
     return switch (base.data) {
         .list => |list| blk: {
             const bounds = try self.sliceBounds(expression.span, "list", @intCast(list.items.items.len), start, end, slice.inclusive);
-            break :blk self.copyList(list.element, list.items.items[bounds.start..bounds.end]);
+            break :blk ListMethods.copyList(&self.heap, list.element, list.items.items[bounds.start..bounds.end]);
         },
         .string => |text| blk: {
             const count: i64 = @intCast(unicode.graphemeCount(text.bytes));
@@ -5493,7 +5531,7 @@ fn base64Decode(self: *Interpreter, span: Source.Span, text: []const u8, url_saf
         }
         if (first_padding) |padding_index| {
             if (maybe) return Value.nothing;
-            return self.raiseEncodingMessage(span, try std.fmt.allocPrint(self.arena, "Base64 text has `=` at index {d}, before its end", .{padding_index}));
+            return self.runNative(span, BytesMethods.raiseEncodingMessage, .{try std.fmt.allocPrint(self.arena, "Base64 text has `=` at index {d}, before its end", .{padding_index})});
         }
         const known = character.len == 1 and base64Index(alphabet, character[0]) != null;
         if (!known) {
@@ -5509,7 +5547,7 @@ fn base64Decode(self: *Interpreter, span: Source.Span, text: []const u8, url_saf
                 self.task.state.raised_value = self.makeError(Resolver.preludeKey("EncodingError"), message) catch return error.OutOfMemory;
                 return self.raiseTyped(span, "EncodingError", message, help);
             }
-            return self.raiseEncodingMessage(span, try std.fmt.allocPrint(self.arena, "Base64 text has `{s}` at index {d}, which is not a Base64 character", .{ character, index }));
+            return self.runNative(span, BytesMethods.raiseEncodingMessage, .{try std.fmt.allocPrint(self.arena, "Base64 text has `{s}` at index {d}, which is not a Base64 character", .{ character, index })});
         }
         try clean.append(self.gpa, character[0]);
         try positions.append(self.gpa, index);
@@ -5519,7 +5557,7 @@ fn base64Decode(self: *Interpreter, span: Source.Span, text: []const u8, url_saf
     const encoded = clean.items[0 .. clean.items.len - padding];
     if (encoded.len % 4 == 1) {
         if (maybe) return Value.nothing;
-        return self.raiseEncodingMessage(span, "Base64 text ends partway through a group: it has 1 character too many, or is missing some");
+        return self.runNative(span, BytesMethods.raiseEncodingMessage, .{"Base64 text ends partway through a group: it has 1 character too many, or is missing some"});
     }
     // Four characters make a group; a last group of two or three is padded
     // with two or one `=`, and a complete group with none.
@@ -5530,7 +5568,7 @@ fn base64Decode(self: *Interpreter, span: Source.Span, text: []const u8, url_saf
             try std.fmt.allocPrint(self.arena, "Base64 text ends with {d} `=`, but its last group is already complete and needs none", .{padding})
         else
             try std.fmt.allocPrint(self.arena, "Base64 text ends with {d} `=`, but its last group needs {d}", .{ padding, needed });
-        return self.raiseEncodingMessage(span, message);
+        return self.runNative(span, BytesMethods.raiseEncodingMessage, .{message});
     }
     if (encoded.len % 4 != 0) {
         const last = encoded[encoded.len - 1];
@@ -5539,7 +5577,7 @@ fn base64Decode(self: *Interpreter, span: Source.Span, text: []const u8, url_saf
         if ((value & mask) != 0) {
             if (maybe) return Value.nothing;
             const canonical = alphabet[value & ~mask];
-            return self.raiseEncodingMessage(span, try std.fmt.allocPrint(self.arena, "Base64 text's last character, `{c}` at index {d}, is not a possible final character; write `{c}` instead", .{ last, positions.items[encoded.len - 1], canonical }));
+            return self.runNative(span, BytesMethods.raiseEncodingMessage, .{try std.fmt.allocPrint(self.arena, "Base64 text's last character, `{c}` at index {d}, is not a possible final character; write `{c}` instead", .{ last, positions.items[encoded.len - 1], canonical })});
         }
     }
     const decoder = if (url_safe) std.base64.url_safe_no_pad.Decoder else std.base64.standard_no_pad.Decoder;
@@ -5562,11 +5600,6 @@ fn base64Index(alphabet: [64]u8, character: u8) ?u8 {
     return null;
 }
 
-fn raiseEncodingMessage(self: *Interpreter, span: Source.Span, message: []const u8) Error {
-    self.task.state.raised_value = self.makeError(Resolver.preludeKey("EncodingError"), message) catch return error.OutOfMemory;
-    return self.raiseTyped(span, "EncodingError", message, "Check that this text uses the expected encoding.");
-}
-
 fn evaluateRangeCall(self: *Interpreter, expression: *const Ast.Expression, call: Ast.Expression.Call) Error!Value {
     const member = call.callee.data.member;
     if (std.mem.eql(u8, member.name, "up_to") or std.mem.eql(u8, member.name, "down_to")) {
@@ -5577,7 +5610,7 @@ fn evaluateRangeCall(self: *Interpreter, expression: *const Ast.Expression, call
     const base = (try self.evaluate(member.base)).data.range;
     if (std.mem.eql(u8, member.name, "reverse")) return .{ .data = .{ .range = base.reverse() } };
     const distance = (try self.evaluate(call.arguments[0])).data.int;
-    return self.rangeMethod(expression.span, base, "step", &.{.initInt(distance)});
+    return self.runNative(expression.span, RangeMethods.rangeMethod, .{ base, .step, &[_]Value{.initInt(distance)} });
 }
 
 /// The block spelling is a convenience on Int, not a second Range iteration
@@ -5637,7 +5670,7 @@ fn callMathExtreme(self: *Interpreter, span: Source.Span, call: Ast.Expression.C
             "Check values with `nan?()` before choosing a minimum or maximum.",
         );
     }
-    const ordering = try self.orderListItems(span, first.data, first, second, .ordinary);
+    const ordering = try self.runNative(span, ListMethods.orderListItems, .{ first.data, first, second, .ordinary });
     const take_second = if (minimum) ordering == .gt else ordering == .lt;
     if (take_second) {
         self.heap.release(first);
@@ -5725,8 +5758,8 @@ const CompiledRegex = struct {
 /// and its options first. Null for a name that is not one of them, such as a
 /// method the prelude writes in Emerald.
 fn callRegex(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Error!?Value {
-    const Native = enum { escape, _problem, @"_whole?", _find, _replace, _split, _splice };
-    const native = std.meta.stringToEnum(Native, name) orelse return null;
+    const Entry = enum { escape, _problem, @"_whole?", _find, _replace, _split, _splice };
+    const native = std.meta.stringToEnum(Entry, name) orelse return null;
     const values = try self.evaluateArguments(call.arguments);
     defer {
         for (values) |value| self.heap.release(value);
@@ -5762,8 +5795,8 @@ fn callRegex(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Er
 }
 
 fn callJson(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Error!?Value {
-    const Native = enum { _parse, _problem, _write, _key_path, encode, decode };
-    const native = std.meta.stringToEnum(Native, name) orelse return null;
+    const Entry = enum { _parse, _problem, _write, _key_path, encode, decode };
+    const native = std.meta.stringToEnum(Entry, name) orelse return null;
     if (native == .encode) {
         const bound = try self.evaluateBound(call, &.{ "value", "pretty" }, &.{ false, true });
         defer self.gpa.free(bound.values);
@@ -5827,8 +5860,8 @@ fn callJson(self: *Interpreter, name: []const u8, call: Ast.Expression.Call) Err
 /// turns parser failures into the ordinary, typed `CsvError` values programs
 /// can catch.
 fn callCsv(self: *Interpreter, span: Source.Span, name: []const u8, call: Ast.Expression.Call) Error!?Value {
-    const Native = enum { _parse, _parse_records, _format, encode, decode };
-    const native = std.meta.stringToEnum(Native, name) orelse return null;
+    const Entry = enum { _parse, _parse_records, _format, encode, decode };
+    const native = std.meta.stringToEnum(Entry, name) orelse return null;
     if (native == .encode) return @as(?Value, try self.csvEncode(span, call));
     if (native == .decode) return @as(?Value, try self.csvDecode(span, call));
     const parameter_names: []const []const u8 = switch (native) {
@@ -6136,7 +6169,7 @@ fn csvRecords(self: *Interpreter, span: Source.Span, text: []const u8, separator
         for (header.fields, row.fields) |name, field| {
             const key = try self.heap.copyText(name);
             const field_value = try self.heap.copyText(field);
-            const hash = try self.hashKey(span, key);
+            const hash = try self.runNative(span, MapMethods.hashKey, .{key});
             try self.heap.put(record, hash, key, field_value, self.equatable(span));
         }
         records.items.appendAssumeCapacity(value);
@@ -6209,8 +6242,8 @@ fn makeCsvError(self: *Interpreter, message: []const u8, line: ?u32) RunError!Va
 /// their beginner-facing defaults; these few private helpers own transport,
 /// conversion to Emerald values, and the error vocabulary.
 fn callHttp(self: *Interpreter, span: Source.Span, name: []const u8, call: Ast.Expression.Call) Error!?Value {
-    const Native = enum { _request, _body_request, _header, _text, _json, encode_component };
-    const native = std.meta.stringToEnum(Native, name) orelse return null;
+    const Entry = enum { _request, _body_request, _header, _text, _json, encode_component };
+    const native = std.meta.stringToEnum(Entry, name) orelse return null;
     switch (native) {
         .encode_component => {
             const values = try self.evaluateArguments(call.arguments);
@@ -6653,7 +6686,7 @@ fn httpHeaders(self: *Interpreter, span: Source.Span, raw: []const Http.Header) 
         const lowered = try std.ascii.allocLowerString(self.gpa, header.name);
         defer self.gpa.free(lowered);
         const key = try self.heap.copyText(lowered);
-        const hash = try self.hashKey(span, key);
+        const hash = try self.runNative(span, MapMethods.hashKey, .{key});
         const existing = try Heap.lookupIn(self.gpa, headers, hash, key, self.equatable(span));
         const value: Value = if (existing) |old| blk: {
             const separator = if (std.mem.eql(u8, lowered, "set-cookie")) "\n" else ", ";
@@ -6670,7 +6703,7 @@ fn httpHeader(self: *Interpreter, span: Source.Span, headers: *const Heap.Map, n
     defer self.gpa.free(lowered);
     const key = try self.heap.copyText(lowered);
     defer self.heap.release(key);
-    const hash = try self.hashKey(span, key);
+    const hash = try self.runNative(span, MapMethods.hashKey, .{key});
     const found = try Heap.lookupIn(self.gpa, headers, hash, key, self.equatable(span)) orelse return .nothing;
     return Heap.retain(found.value);
 }
@@ -6828,7 +6861,7 @@ const JsonBuilder = struct {
             fields[at.entries] = .{ .data = .{ .map = map } };
             for (json.entries) |entry| {
                 const key = try heap.copyText(entry.key);
-                const hash = interpreter.hashKey(self.span, key) catch |err| {
+                const hash = interpreter.runNative(self.span, MapMethods.hashKey, .{key}) catch |err| {
                     heap.release(key);
                     return err;
                 };
@@ -6926,7 +6959,7 @@ fn jsonDecodeDictionary(self: *Interpreter, span: Source.Span, json: Json.Value,
         const entry_path = try self.jsonObjectPath(path, entry.key);
         defer self.gpa.free(entry_path);
         const key = try self.heap.copyText(entry.key);
-        const hash = self.hashKey(span, key) catch |err| {
+        const hash = self.runNative(span, MapMethods.hashKey, .{key}) catch |err| {
             self.heap.release(key);
             return err;
         };
@@ -8531,170 +8564,6 @@ fn callOr(
     return widen(try self.evaluate(call.arguments[0]), kindOf(present));
 }
 
-/// Section 8.5's `each` and section 8.6's callback collection methods.
-///
-/// The receiver is held for the whole traversal, so the list being visited
-/// cannot change underneath it: a block that changes the same variable finds
-/// the buffer shared and copies it first, which is section 8.1's value
-/// semantics doing exactly what it promises.
-/// One value per entry: the member for a set, a `(key, value)` tuple for a
-/// dictionary. The caller owns one holder of each.
-fn collectItems(self: *Interpreter, map: *const Heap.Map) Error![]Value {
-    const items = try self.gpa.alloc(Value, map.entries.items.len);
-    var built: usize = 0;
-    errdefer {
-        for (items[0..built]) |item| self.heap.release(item);
-        self.gpa.free(items);
-    }
-    while (built < items.len) : (built += 1) {
-        const entry = map.entries.items[built];
-        items[built] = if (map.is_set)
-            Heap.retain(entry.key)
-        else
-            try self.entryTuple(map, .{
-                .hash = entry.hash,
-                .key = Heap.retain(entry.key),
-                .value = Heap.retain(entry.value),
-            });
-    }
-    return items;
-}
-
-/// Section 8.5's dictionary and set methods that only look.
-fn readMap(
-    self: *Interpreter,
-    call: Ast.Expression.Call,
-    member: Ast.Expression.Member,
-    map: *const Heap.Map,
-    arguments: []const Value,
-) Error!Value {
-    const name = member.name;
-
-    if (std.mem.eql(u8, name, "empty?")) return .initBool(map.count() == 0);
-
-    if (map.is_set) {
-        if (std.mem.eql(u8, name, "union") or
-            std.mem.eql(u8, name, "intersection") or
-            std.mem.eql(u8, name, "difference") or
-            std.mem.eql(u8, name, "symmetric_difference"))
-        {
-            const other = arguments[0];
-            if (other.kind() != .map or !other.data.map.is_set) {
-                return self.raiseFmt(
-                    call.arguments[0].span,
-                    "`{s}` needs a Set",
-                    .{name},
-                    "Pass a set with the same element type.",
-                );
-            }
-            const result = try self.heap.createMap(map.key_kind, .nothing, true);
-            const value: Value = .{ .data = .{ .map = result } };
-            errdefer self.heap.release(value);
-            if (std.mem.eql(u8, name, "union")) {
-                for (map.entries.items) |entry| {
-                    const key = Heap.retain(entry.key);
-                    const hash = try self.hashKey(call.arguments[0].span, key);
-                    try self.heap.put(result, hash, key, Value.nothing, self.equatable(call.arguments[0].span));
-                }
-                for (other.data.map.entries.items) |entry| {
-                    const key = Heap.retain(entry.key);
-                    const hash = try self.hashKey(call.arguments[0].span, key);
-                    try self.heap.put(result, hash, key, Value.nothing, self.equatable(call.arguments[0].span));
-                }
-                return value;
-            }
-            if (std.mem.eql(u8, name, "intersection")) {
-                for (map.entries.items) |entry| {
-                    const key = Heap.retain(entry.key);
-                    const hash = try self.hashKey(call.arguments[0].span, key);
-                    if (try Heap.lookupIn(self.gpa, other.data.map, hash, key, self.equatable(call.arguments[0].span)) == null) continue;
-                    try self.heap.put(result, hash, key, Value.nothing, self.equatable(call.arguments[0].span));
-                }
-                return value;
-            }
-            if (std.mem.eql(u8, name, "difference")) {
-                for (map.entries.items) |entry| {
-                    const key = Heap.retain(entry.key);
-                    const hash = try self.hashKey(call.arguments[0].span, key);
-                    if (try Heap.lookupIn(self.gpa, other.data.map, hash, key, self.equatable(call.arguments[0].span)) != null) continue;
-                    try self.heap.put(result, hash, key, Value.nothing, self.equatable(call.arguments[0].span));
-                }
-                return value;
-            }
-            for (map.entries.items) |entry| {
-                const key = Heap.retain(entry.key);
-                const hash = try self.hashKey(call.arguments[0].span, key);
-                if (try Heap.lookupIn(self.gpa, other.data.map, hash, key, self.equatable(call.arguments[0].span)) == null) {
-                    try self.heap.put(result, hash, key, Value.nothing, self.equatable(call.arguments[0].span));
-                }
-            }
-            for (other.data.map.entries.items) |entry| {
-                const key = Heap.retain(entry.key);
-                const hash = try self.hashKey(call.arguments[0].span, key);
-                if (try Heap.lookupIn(self.gpa, map, hash, key, self.equatable(call.arguments[0].span)) == null) {
-                    try self.heap.put(result, hash, key, Value.nothing, self.equatable(call.arguments[0].span));
-                }
-            }
-            return value;
-        }
-
-        if (std.mem.eql(u8, name, "subset?") or std.mem.eql(u8, name, "superset?") or std.mem.eql(u8, name, "disjoint?")) {
-            const other = arguments[0];
-            if (other.kind() != .map or !other.data.map.is_set) {
-                return self.raiseFmt(
-                    call.arguments[0].span,
-                    "`{s}` needs a Set",
-                    .{name},
-                    "Pass a set with the same element type.",
-                );
-            }
-            if (std.mem.eql(u8, name, "subset?")) {
-                for (map.entries.items) |entry| {
-                    const hash = try self.hashKey(call.arguments[0].span, entry.key);
-                    if (try Heap.lookupIn(self.gpa, other.data.map, hash, entry.key, self.equatable(call.arguments[0].span)) == null) return .initBool(false);
-                }
-                return .initBool(true);
-            }
-            if (std.mem.eql(u8, name, "superset?")) {
-                for (other.data.map.entries.items) |entry| {
-                    const hash = try self.hashKey(call.arguments[0].span, entry.key);
-                    if (try Heap.lookupIn(self.gpa, map, hash, entry.key, self.equatable(call.arguments[0].span)) == null) return .initBool(false);
-                }
-                return .initBool(true);
-            }
-            for (map.entries.items) |entry| {
-                const hash = try self.hashKey(call.arguments[0].span, entry.key);
-                if (try Heap.lookupIn(self.gpa, other.data.map, hash, entry.key, self.equatable(call.arguments[0].span)) != null) return .initBool(false);
-            }
-            return .initBool(true);
-        }
-    }
-
-    if (std.mem.eql(u8, name, "contains_key?") or std.mem.eql(u8, name, "contains?")) {
-        const key = widen(Heap.retain(arguments[0]), map.key_kind);
-        defer self.heap.release(key);
-        const hash = try self.hashKey(call.arguments[0].span, key);
-        return .initBool(try Heap.lookupIn(self.gpa, map, hash, key, self.equatable(call.arguments[0].span)) != null);
-    }
-
-    if (std.mem.eql(u8, name, "contains_value?")) {
-        for (map.entries.items) |entry| {
-            if (try Value.equals(self.gpa, entry.value, arguments[0], self.equatable(call.arguments[0].span))) return .initBool(true);
-        }
-        return .initBool(false);
-    }
-
-    if (std.mem.eql(u8, name, "keys")) return self.mapHalf(map, .key);
-    if (std.mem.eql(u8, name, "values")) return self.mapHalf(map, .value);
-
-    // `entries`
-    const items = try self.collectItems(map);
-    defer self.gpa.free(items);
-    const list = try self.heap.createList(.tuple, items.len);
-    for (items) |item| list.items.appendAssumeCapacity(item);
-    return .{ .data = .{ .list = list } };
-}
-
 /// Section 8.5's dictionary and set methods that change what they are called
 /// on. `map` has already been made safe to change.
 fn changeMap(
@@ -8708,7 +8577,7 @@ fn changeMap(
 
     if (std.mem.eql(u8, name, "add")) {
         const held = widen(Heap.retain(arguments[0]), map.key_kind);
-        const hash = try self.hashKey(call.arguments[0].span, held);
+        const hash = try self.runNative(call.arguments[0].span, MapMethods.hashKey, .{held});
         try self.heap.put(map, hash, held, Value.nothing, self.equatable(call.arguments[0].span));
         return Value.nothing;
     }
@@ -8716,7 +8585,7 @@ fn changeMap(
     if (std.mem.eql(u8, name, "remove")) {
         const key = widen(Heap.retain(arguments[0]), map.key_kind);
         defer self.heap.release(key);
-        const hash = try self.hashKey(call.arguments[0].span, key);
+        const hash = try self.runNative(call.arguments[0].span, MapMethods.hashKey, .{key});
         const removed = try self.heap.removeKey(map, hash, key, self.equatable(call.arguments[0].span));
         // A set reports nothing; a dictionary answers with what was there, and
         // absence when the key was not (4.5).
@@ -8744,21 +8613,7 @@ fn changeMap(
     return Value.nothing;
 }
 
-const Half = enum { key, value };
-
-/// Section 8.5's `keys` and `values`, each a list in insertion order.
-fn mapHalf(self: *Interpreter, map: *const Heap.Map, half: Half) Error!Value {
-    const list = try self.heap.createList(
-        if (half == .key) map.key_kind else map.value_kind,
-        map.entries.items.len,
-    );
-    const result: Value = .{ .data = .{ .list = list } };
-    errdefer self.heap.release(result);
-    for (map.entries.items) |entry| {
-        list.items.appendAssumeCapacity(Heap.retain(if (half == .key) entry.key else entry.value));
-    }
-    return result;
-}
+const Half = MapMethods.Half;
 
 fn callHigherOrder(
     self: *Interpreter,
@@ -8784,7 +8639,7 @@ fn callHigherOrder(
         self.gpa.free(owned);
     };
     const items: []const Value = if (receiver.data == .map) blk: {
-        built = try self.collectItems(receiver.data.map);
+        built = try MapMethods.collectItems(&self.heap, receiver.data.map);
         break :blk built.?;
     } else receiver.data.list.items.items;
 
@@ -8821,13 +8676,13 @@ fn callHigherOrder(
             const accepted = produced.data.bool;
             if ((kind == .filter and accepted) or (kind == .reject and !accepted)) {
                 if (map.is_set) {
-                    const hash = try self.hashKey(expression.span, item);
+                    const hash = try self.runNative(expression.span, MapMethods.hashKey, .{item});
                     try self.heap.put(result, hash, Heap.retain(item), Value.nothing, self.equatable(expression.span));
                 } else {
                     const tuple = item.data.tuple;
                     const key = tuple.items[0];
                     const value_for_key = tuple.items[1];
-                    const hash = try self.hashKey(expression.span, key);
+                    const hash = try self.runNative(expression.span, MapMethods.hashKey, .{key});
                     try self.heap.put(result, hash, Heap.retain(key), Heap.retain(value_for_key), self.equatable(expression.span));
                 }
             }
@@ -9107,7 +8962,7 @@ fn callGroupBy(
     for (list.items.items) |item| {
         const argument = [_]Value{Heap.retain(item)};
         const key = try self.invokeClosure(expression.span, closure, callable, &argument);
-        const hash = try self.hashKey(expression.span, key);
+        const hash = try self.runNative(expression.span, MapMethods.hashKey, .{key});
         switch (try self.heap.locate(groups, hash, key, self.equatable(expression.span))) {
             .entry => |index| {
                 // A group grows past the one slot it was made with, so room
@@ -9142,7 +8997,7 @@ fn callFrequencies(
     errdefer self.heap.release(result);
 
     for (list.items.items) |item| {
-        const hash = try self.hashKey(expression.span, item);
+        const hash = try self.runNative(expression.span, MapMethods.hashKey, .{item});
         switch (try self.heap.locate(counts, hash, item, self.equatable(expression.span))) {
             .entry => |index| {
                 const current = counts.entries.items[index].value.data.int;
@@ -9184,13 +9039,13 @@ fn callExtremeBy(
     const first_argument = [_]Value{Heap.retain(items[0])};
     var chosen_key = try self.invokeClosure(expression.span, closure, callable, &first_argument);
     errdefer self.heap.release(chosen_key);
-    if (chosen_key.data == .float and std.math.isNan(chosen_key.data.float)) return self.raiseExtremeNaN(expression.span, .keyed);
+    if (chosen_key.data == .float and std.math.isNan(chosen_key.data.float)) return self.runNative(expression.span, ListMethods.raiseExtremeNaN, .{.keyed});
 
     for (items[1..]) |item| {
         const argument = [_]Value{Heap.retain(item)};
         const key = try self.invokeClosure(expression.span, closure, callable, &argument);
         errdefer self.heap.release(key);
-        const ordering = try self.orderListItems(expression.span, chosen_key.data, chosen_key, key, .keyed);
+        const ordering = try self.runNative(expression.span, ListMethods.orderListItems, .{ chosen_key.data, chosen_key, key, .keyed });
         const replace = if (minimum) ordering == .gt else ordering == .lt;
         if (!replace) {
             self.heap.release(key);
@@ -9257,10 +9112,10 @@ fn callSortBy(
         keys[built] = try self.invokeClosure(expression.span, closure, callable, &argument);
         built += 1;
     }
-    if (key_kind == .float and std.math.isNan(keys[0].data.float)) return self.raiseExtremeNaN(expression.span, .sort_by);
+    if (key_kind == .float and std.math.isNan(keys[0].data.float)) return self.runNative(expression.span, ListMethods.raiseExtremeNaN, .{.sort_by});
 
     for (items) |item| result.items.appendAssumeCapacity(Heap.retain(item));
-    try self.sortItemsByKeys(expression.span, key_kind, result.items.items, keys, .sort_by);
+    try self.runNative(expression.span, ListMethods.sortItemsByKeys, .{ key_kind, result.items.items, keys, .sort_by });
     return value;
 }
 
@@ -9299,7 +9154,7 @@ fn callUniqueBy(
     for (items) |item| {
         const argument = [_]Value{Heap.retain(item)};
         const key = try self.invokeClosure(expression.span, closure, callable, &argument);
-        const hash = try self.hashKey(expression.span, key);
+        const hash = try self.runNative(expression.span, MapMethods.hashKey, .{key});
         switch (try self.heap.locate(seen, hash, key, self.equatable(expression.span))) {
             .entry => self.heap.release(key),
             .vacancy => {
@@ -9349,14 +9204,14 @@ fn callAssociate(
         const produced_value = try self.invokeClosure(expression.span, closure, callable, &argument);
         if (by_key_only) {
             const key = widen(produced_value, key_kind);
-            const hash = try self.hashKey(expression.span, key);
+            const hash = try self.runNative(expression.span, MapMethods.hashKey, .{key});
             try self.heap.put(map, hash, key, Heap.retain(item), self.equatable(expression.span));
         } else {
             defer self.heap.release(produced_value);
             const tuple = produced_value.data.tuple;
             const key = widen(Heap.retain(tuple.items[0]), key_kind);
             const value = widen(Heap.retain(tuple.items[1]), value_kind);
-            const hash = try self.hashKey(expression.span, key);
+            const hash = try self.runNative(expression.span, MapMethods.hashKey, .{key});
             try self.heap.put(map, hash, key, value, self.equatable(expression.span));
         }
     }
@@ -9387,7 +9242,7 @@ fn callToDictionary(self: *Interpreter, expression: *const Ast.Expression, membe
         const tuple = item.data.tuple;
         const key = widen(Heap.retain(tuple.items[0]), key_kind);
         const value = widen(Heap.retain(tuple.items[1]), value_kind);
-        const hash = try self.hashKey(expression.span, key);
+        const hash = try self.runNative(expression.span, MapMethods.hashKey, .{key});
         try self.heap.put(map, hash, key, value, self.equatable(expression.span));
     }
     return result;
@@ -9508,7 +9363,7 @@ fn callMethod(
                 "Pass another List to pair the items up.",
             );
         }
-        return self.readListMethod(expression.span, receiver.data.list, member.name, arguments);
+        return self.runNative(expression.span, Natives.call, .{ Natives.lookup(.list, member.name).?, receiver, arguments });
     }
 
     const list_method = Type.list_methods.get(member.name);
@@ -9624,18 +9479,18 @@ fn callReadingMethod(
 
     // `empty?` and `contains?` belong to strings, lists, and sets alike.
     if (receiver.data == .string) {
-        return self.stringMethod(expression.span, receiver.data.string.bytes, member.name, arguments);
+        return self.runNative(expression.span, Natives.call, .{ Natives.lookup(.string, member.name).?, receiver, arguments });
     }
     if (receiver.data == .range) {
-        return self.rangeMethod(expression.span, receiver.data.range, member.name, arguments);
+        return self.runNative(expression.span, Natives.call, .{ Natives.lookup(.range, member.name).?, receiver, arguments });
     }
     if (receiver.data == .map) {
-        return self.readMap(call, member, receiver.data.map, arguments);
+        return self.runNative(if (call.arguments.len > 0) call.arguments[0].span else member.name_span, Natives.call, .{ Natives.lookup(.map, member.name).?, receiver, arguments });
     }
 
     self.beginCallback(&guard, member.name);
     defer self.endCallback(&guard);
-    return self.readListMethod(expression.span, receiver.data.list, member.name, arguments);
+    return self.runNative(expression.span, Natives.call, .{ Natives.lookup(.list, member.name).?, receiver, arguments });
 }
 
 fn callMapTransform(
@@ -9672,7 +9527,7 @@ fn callMapTransform(
         errdefer self.heap.release(produced);
         const key = if (changing) widen(produced, key_kind) else widen(Heap.retain(entry.key), key_kind);
         const value = if (changing) widen(Heap.retain(entry.value), value_kind) else widen(produced, value_kind);
-        const hash = try self.hashKey(member.name_span, key);
+        const hash = try self.runNative(member.name_span, MapMethods.hashKey, .{key});
         if (changing) {
             // Two entries must not collapse into one: the result would be
             // smaller than the receiver and one value would vanish silently.
@@ -9705,424 +9560,12 @@ fn callMapTransform(
     return .{ .data = .{ .map = result } };
 }
 
-/// A list method that does not change its receiver. Value-producing methods
-/// retain their items into a fresh list, preserving list value semantics even
-/// when an item is itself a collection or object.
-fn readListMethod(self: *Interpreter, span: Source.Span, list: *const Heap.List, name: []const u8, arguments: []const Value) Error!Value {
-    const items = list.items.items;
-    const Method = enum { @"empty?", @"contains?", index_of, chain, chunks, windows, pairs, take, drop, repeat, reverse, unique, zip, sum, average, min, max, sort, shuffle, random, join };
-    return switch (std.meta.stringToEnum(Method, name).?) {
-        .@"empty?" => .initBool(items.len == 0),
-        .@"contains?" => blk: {
-            for (items) |item| {
-                if (try Value.equals(self.gpa, item, arguments[0], self.equatable(span))) break :blk .initBool(true);
-            }
-            break :blk .initBool(false);
-        },
-        .index_of => blk: {
-            for (items, 0..) |item, position| {
-                if (try Value.equals(self.gpa, item, arguments[0], self.equatable(span))) break :blk .initInt(@intCast(position));
-            }
-            break :blk Value.nothing;
-        },
-        .chain => blk: {
-            const other = arguments[0];
-            if (other.kind() != .list) return self.raise(
-                span,
-                "`chain` needs a List, but this is not a List",
-                "Pass another List to keep the same element type and append it on the end.",
-            );
-            const right = other.data.list;
-            const result = try self.heap.createList(list.element, items.len + right.items.items.len);
-            const value: Value = .{ .data = .{ .list = result } };
-            errdefer self.heap.release(value);
-            for (items) |item| result.items.appendAssumeCapacity(Heap.retain(item));
-            for (right.items.items) |item| result.items.appendAssumeCapacity(Heap.retain(item));
-            break :blk value;
-        },
-        .chunks => blk: {
-            const width = arguments[0].data.int;
-            if (width < 1) return self.raiseFmt(
-                span,
-                "`chunks` cannot use size {d}",
-                .{width},
-                "Pass a whole number greater than 0, as in `items.chunks(3)`.",
-            );
-            const result = try self.heap.createList(.list, if (items.len == 0) 0 else (items.len + @as(usize, @intCast(width)) - 1) / @as(usize, @intCast(width)));
-            const value: Value = .{ .data = .{ .list = result } };
-            errdefer self.heap.release(value);
-            var start: usize = 0;
-            while (start < items.len) : (start += @as(usize, @intCast(width))) {
-                const end = @min(start + @as(usize, @intCast(width)), items.len);
-                const chunk = try self.copyList(list.element, items[start..end]);
-                result.items.appendAssumeCapacity(chunk);
-            }
-            break :blk value;
-        },
-        .windows => blk: {
-            const width = arguments[0].data.int;
-            if (width < 1) return self.raiseFmt(
-                span,
-                "`windows` cannot use size {d}",
-                .{width},
-                "Pass a whole number greater than 0, as in `items.windows(2)`.",
-            );
-            const count: usize = if (width > items.len) 0 else items.len - @as(usize, @intCast(width)) + 1;
-            const result = try self.heap.createList(.list, count);
-            const value: Value = .{ .data = .{ .list = result } };
-            errdefer self.heap.release(value);
-            var start: usize = 0;
-            while (start + @as(usize, @intCast(width)) <= items.len) : (start += 1) {
-                const chunk = try self.copyList(list.element, items[start .. start + @as(usize, @intCast(width))]);
-                result.items.appendAssumeCapacity(chunk);
-            }
-            break :blk value;
-        },
-        .pairs => blk: {
-            const count: usize = if (items.len == 0) 0 else items.len - 1;
-            const result = try self.heap.createList(.tuple, count);
-            const value: Value = .{ .data = .{ .list = result } };
-            errdefer self.heap.release(value);
-            if (count > 0) {
-                for (items[0..count], items[1..]) |left, right| {
-                    const tuple_items = try self.gpa.alloc(Value, 2);
-                    const tuple_kinds = self.gpa.alloc(Value.Kind, 2) catch |err| {
-                        self.gpa.free(tuple_items);
-                        return err;
-                    };
-                    tuple_items[0] = Heap.retain(left);
-                    tuple_items[1] = Heap.retain(right);
-                    tuple_kinds[0] = list.element;
-                    tuple_kinds[1] = list.element;
-                    const tuple = try self.heap.createTuple(tuple_items, tuple_kinds);
-                    result.items.appendAssumeCapacity(.{ .data = .{ .tuple = tuple } });
-                }
-            }
-            break :blk value;
-        },
-        .take, .drop => blk: {
-            const requested = arguments[0].data.int;
-            if (requested < 0) return self.raiseFmt(
-                span,
-                "`{s}` cannot use count {d}",
-                .{ name, requested },
-                "Pass 0 or more items to take or drop.",
-            );
-            // A count larger than the machine can address still means "all"
-            // here, so this stays independent of the interpreter's word size.
-            const boundary = if (std.math.cast(usize, requested)) |count| @min(count, items.len) else items.len;
-            break :blk if (std.mem.eql(u8, name, "take"))
-                self.copyList(list.element, items[0..boundary])
-            else
-                self.copyList(list.element, items[boundary..]);
-        },
-        .repeat => blk: {
-            const times = arguments[0].data.int;
-            if (times < 0) return self.raiseFmt(
-                span,
-                "a List cannot be repeated {d} times",
-                .{times},
-                "Repeat it 0 or more times; 0 gives an empty List.",
-            );
-            // As for `String.repeat`, a result too large to address is as
-            // unrepresentable as one too large to allocate. An empty List
-            // repeated any number of times is still empty, without counting.
-            if (items.len == 0) break :blk self.copyList(list.element, items);
-            const size = std.math.mul(usize, items.len, @intCast(times)) catch return error.OutOfMemory;
-            const result = try self.heap.createList(list.element, size);
-            const value: Value = .{ .data = .{ .list = result } };
-            errdefer self.heap.release(value);
-            for (0..@intCast(times)) |_| {
-                for (items) |item| result.items.appendAssumeCapacity(Heap.retain(item));
-            }
-            break :blk value;
-        },
-        .reverse => blk: {
-            const result = try self.heap.createList(list.element, items.len);
-            const value: Value = .{ .data = .{ .list = result } };
-            errdefer self.heap.release(value);
-            var index = items.len;
-            while (index > 0) {
-                index -= 1;
-                result.items.appendAssumeCapacity(Heap.retain(items[index]));
-            }
-            break :blk value;
-        },
-        .unique => blk: {
-            const result = try self.heap.createList(list.element, items.len);
-            const value: Value = .{ .data = .{ .list = result } };
-            errdefer self.heap.release(value);
-            outer: for (items) |item| {
-                for (result.items.items) |previous| {
-                    if (try Value.equals(self.gpa, item, previous, self.equatable(span))) continue :outer;
-                }
-                result.items.appendAssumeCapacity(Heap.retain(item));
-            }
-            break :blk value;
-        },
-        .zip => blk: {
-            const other = arguments[0];
-            if (other.kind() != .list) return self.raise(
-                span,
-                "`zip` needs a List, but this is not a List",
-                "Pass another List to pair the items up.",
-            );
-            const right = other.data.list;
-            const limit = @min(items.len, right.items.items.len);
-            const result = try self.heap.createList(.tuple, limit);
-            const value: Value = .{ .data = .{ .list = result } };
-            errdefer self.heap.release(value);
-            for (items[0..limit], right.items.items[0..limit]) |left, right_item| {
-                const tuple_items = try self.gpa.alloc(Value, 2);
-                const tuple_kinds = self.gpa.alloc(Value.Kind, 2) catch |err| {
-                    self.gpa.free(tuple_items);
-                    return err;
-                };
-                tuple_items[0] = Heap.retain(left);
-                tuple_items[1] = Heap.retain(right_item);
-                tuple_kinds[0] = list.element;
-                tuple_kinds[1] = right.element;
-                const tuple = try self.heap.createTuple(tuple_items, tuple_kinds);
-                result.items.appendAssumeCapacity(.{ .data = .{ .tuple = tuple } });
-            }
-            break :blk value;
-        },
-        .sum => self.sumList(span, list),
-        .join => blk: {
-            const separator = if (arguments.len == 1) arguments[0].data.string.bytes else "";
-            var joined: std.ArrayList(u8) = .empty;
-            errdefer joined.deinit(self.gpa);
-            for (items, 0..) |item, index| {
-                if (index > 0) try joined.appendSlice(self.gpa, separator);
-                try joined.appendSlice(self.gpa, item.data.string.bytes);
-            }
-            break :blk self.ownedText(try joined.toOwnedSlice(self.gpa));
-        },
-        .average => averageList(list),
-        .min, .max => self.listExtreme(span, list, std.mem.eql(u8, name, "min")),
-        .sort => blk: {
-            if (list.element == .float and items.len > 0 and std.math.isNan(items[0].data.float)) return self.raiseExtremeNaN(span, .sort);
-            const result = try self.heap.createList(list.element, items.len);
-            const value: Value = .{ .data = .{ .list = result } };
-            errdefer self.heap.release(value);
-            for (items) |item| result.items.appendAssumeCapacity(Heap.retain(item));
-            try self.sortItemsByKeys(span, list.element, result.items.items, null, .sort);
-            break :blk value;
-        },
-        .shuffle => blk: {
-            const result = try self.heap.createList(list.element, items.len);
-            const value: Value = .{ .data = .{ .list = result } };
-            errdefer self.heap.release(value);
-            for (items) |item| result.items.appendAssumeCapacity(Heap.retain(item));
-            self.random().shuffle(Value, result.items.items);
-            break :blk value;
-        },
-        .random => if (items.len == 0) Value.nothing else Heap.retain(items[self.random().uintLessThan(usize, items.len)]),
-    };
-}
-
-/// Section 8.6's first aggregation. Empty numeric Lists have the additive
-/// identity, and Int accumulation uses the same checked arithmetic as `+`.
-fn sumList(self: *Interpreter, span: Source.Span, list: *const Heap.List) Error!Value {
-    return switch (list.element) {
-        .int => blk: {
-            var total: i64 = 0;
-            for (list.items.items) |item| {
-                const added = @addWithOverflow(total, item.data.int);
-                if (added[1] != 0) return self.raiseFmt(
-                    span,
-                    "`sum` overflows Int while adding {d} and {d}",
-                    .{ total, item.data.int },
-                    integer_range_help,
-                );
-                total = added[0];
-            }
-            break :blk .initInt(total);
-        },
-        .float => blk: {
-            var total: f64 = 0.0;
-            for (list.items.items) |item| total += item.data.float;
-            break :blk .initFloat(total);
-        },
-        else => unreachable, // The checker permits `sum` only on numeric Lists.
-    };
-}
-
-/// Section 8.6's numeric average. Its result is always Float so a fractional
-/// answer from an Int List stays visible; no items have no average. Each item
-/// widens as an ordinary Float operation would, then Float arithmetic supplies
-/// the established Infinity and NaN behavior.
-fn averageList(list: *const Heap.List) Error!Value {
-    if (list.items.items.len == 0) return Value.nothing;
-    var total: f64 = 0.0;
-    switch (list.element) {
-        .int => {
-            for (list.items.items) |item| total += @floatFromInt(item.data.int);
-        },
-        .float => {
-            for (list.items.items) |item| total += item.data.float;
-        },
-        else => unreachable, // The checker permits `average` only on numeric Lists.
-    }
-    return .initFloat(total / @as(f64, @floatFromInt(list.items.items.len)));
-}
-
-/// Section 8.6's extrema. Ties retain the first item, and an empty List has no
-/// result. The checker has already limited this to the same orderable types as
-/// ordinary comparisons; NaN is the one numeric value with no order at all.
-fn listExtreme(self: *Interpreter, span: Source.Span, list: *const Heap.List, minimum: bool) Error!Value {
-    const items = list.items.items;
-    if (items.len == 0) return Value.nothing;
-    if (list.element == .float and std.math.isNan(items[0].data.float)) return self.raise(
-        span,
-        "`min` and `max` cannot order a List containing NaN",
-        "Check values with `nan?()` before choosing a minimum or maximum.",
-    );
-
-    var chosen = Heap.retain(items[0]);
-    errdefer self.heap.release(chosen);
-    for (items[1..]) |item| {
-        const ordering = try self.orderListItems(span, chosen.data, chosen, item, .ordinary);
-        const replace = if (minimum) ordering == .gt else ordering == .lt;
-        if (!replace) continue;
-        self.heap.release(chosen);
-        chosen = Heap.retain(item);
-    }
-    return chosen;
-}
-
-const ExtremeKind = enum { ordinary, keyed, pair, sort, sort_by };
-
-fn raiseExtremeNaN(self: *Interpreter, span: Source.Span, kind: ExtremeKind) Error {
-    return self.raise(
-        span,
-        switch (kind) {
-            .ordinary => "`min` and `max` cannot order a List containing NaN",
-            .keyed => "`min_by` and `max_by` cannot order a key of NaN",
-            .pair => "`min_max` cannot order a List containing NaN",
-            .sort => "`sort` cannot order a List containing NaN",
-            .sort_by => "`sort_by` cannot order a key of NaN",
-        },
-        switch (kind) {
-            .ordinary, .keyed, .pair => "Check values with `nan?()` before choosing a minimum or maximum.",
-            .sort => "Check values with `nan?()` before sorting the List.",
-            .sort_by => "Return a key that is not NaN, checking it with `nan?()` when needed.",
-        },
-    );
-}
-
-fn orderListItems(self: *Interpreter, span: Source.Span, kind: Value.Kind, left: Value, right: Value, extreme: ExtremeKind) Error!std.math.Order {
-    return switch (kind) {
-        .int => std.math.order(left.data.int, right.data.int),
-        .float => {
-            if (std.math.isNan(left.data.float) or std.math.isNan(right.data.float)) return self.raiseExtremeNaN(span, extreme);
-            return std.math.order(left.data.float, right.data.float);
-        },
-        .string => unicode.order(self.gpa, left.data.string.bytes, right.data.string.bytes),
-        .struct_value => blk: {
-            const compared = try self.callOperator(span, Ast.OperatorContract.ordered.method, left, right);
-            defer self.heap.release(compared);
-            break :blk std.math.order(compared.data.int, 0);
-        },
-        else => unreachable, // The checker permits ordering only Ints, Floats, Strings, and `Ordered` structs.
-    };
-}
-
-/// A stable sort for `sort`, `sort!`, and `sort_by`, whose comparisons may
-/// themselves fail — a `NaN` float, or a user `Ordered.compare` that raises.
-/// `keys`, when given, is reordered in lock step with `items`, so `sort_by`'s
-/// already-computed keys stay lined up with the items they came from; without
-/// one, `items` is compared directly. It is stable, so items whose keys tie
-/// keep their input order, matching every other List traversal (8.6).
-///
-/// Short runs are insertion-sorted, then merged in rounds of doubling width,
-/// so a long list costs O(n log n) comparisons rather than insertion sort's
-/// O(n²). Values only move, never gain or lose a reference, and a merge
-/// writes to scratch space before copying back, so a comparison that fails
-/// partway leaves `items` a complete permutation of what it held.
-fn sortItemsByKeys(
-    self: *Interpreter,
-    span: Source.Span,
-    kind: Value.Kind,
-    items: []Value,
-    keys: ?[]Value,
-    extreme: ExtremeKind,
-) Error!void {
-    const run_length: usize = 16;
-    var start: usize = 0;
-    while (start < items.len) : (start += run_length) {
-        const end = @min(start + run_length, items.len);
-        try self.insertionSort(span, kind, items[start..end], if (keys) |k| k[start..end] else null, extreme);
-    }
-    if (items.len <= run_length) return;
-
-    const scratch = try self.gpa.alloc(Value, items.len);
-    defer self.gpa.free(scratch);
-    const key_scratch: ?[]Value = if (keys != null) try self.gpa.alloc(Value, items.len) else null;
-    defer if (key_scratch) |spare| self.gpa.free(spare);
-
-    var width: usize = run_length;
-    while (width < items.len) : (width *= 2) {
-        var left: usize = 0;
-        while (left + width < items.len) : (left += 2 * width) {
-            const middle = left + width;
-            const right = @min(left + 2 * width, items.len);
-            var a = left;
-            var b = middle;
-            var out = left;
-            while (a < middle and b < right) : (out += 1) {
-                const first = if (keys) |k| k[a] else items[a];
-                const second = if (keys) |k| k[b] else items[b];
-                // Take from the right half only when it is strictly smaller,
-                // so equal keys keep their order.
-                const from = if (try self.orderListItems(span, kind, first, second, extreme) == .gt) &b else &a;
-                scratch[out] = items[from.*];
-                if (keys) |k| key_scratch.?[out] = k[from.*];
-                from.* += 1;
-            }
-            for (a..middle) |index| {
-                scratch[out] = items[index];
-                if (keys) |k| key_scratch.?[out] = k[index];
-                out += 1;
-            }
-            for (b..right) |index| {
-                scratch[out] = items[index];
-                if (keys) |k| key_scratch.?[out] = k[index];
-                out += 1;
-            }
-            @memcpy(items[left..right], scratch[left..right]);
-            if (keys) |k| @memcpy(k[left..right], key_scratch.?[left..right]);
-        }
-    }
-}
-
-/// The stable insertion sort `sortItemsByKeys` runs on each short run.
-fn insertionSort(
-    self: *Interpreter,
-    span: Source.Span,
-    kind: Value.Kind,
-    items: []Value,
-    keys: ?[]Value,
-    extreme: ExtremeKind,
-) Error!void {
-    var i: usize = 1;
-    while (i < items.len) : (i += 1) {
-        var j = i;
-        while (j > 0) {
-            const left = if (keys) |k| k[j - 1] else items[j - 1];
-            const right = if (keys) |k| k[j] else items[j];
-            if (try self.orderListItems(span, kind, left, right, extreme) != .gt) break;
-            std.mem.swap(Value, &items[j - 1], &items[j]);
-            if (keys) |k| std.mem.swap(Value, &k[j - 1], &k[j]);
-            j -= 1;
-        }
-    }
-}
+const ExtremeKind = ListMethods.ExtremeKind;
 
 fn listMinMax(self: *Interpreter, span: Source.Span, list: *const Heap.List) Error!Value {
     const items = list.items.items;
     if (items.len == 0) return self.extremePair(.nothing, .nothing, .nothing);
-    if (list.element == .float and std.math.isNan(items[0].data.float)) return self.raiseExtremeNaN(span, .pair);
+    if (list.element == .float and std.math.isNan(items[0].data.float)) return self.runNative(span, ListMethods.raiseExtremeNaN, .{.pair});
 
     var minimum = Heap.retain(items[0]);
     var maximum = Heap.retain(items[0]);
@@ -10134,11 +9577,11 @@ fn listMinMax(self: *Interpreter, span: Source.Span, list: *const Heap.List) Err
         self.heap.release(maximum);
     };
     for (items[1..]) |item| {
-        if ((try self.orderListItems(span, minimum.data, minimum, item, .pair)) == .gt) {
+        if ((try self.runNative(span, ListMethods.orderListItems, .{ minimum.data, minimum, item, .pair })) == .gt) {
             self.heap.release(minimum);
             minimum = Heap.retain(item);
         }
-        if ((try self.orderListItems(span, maximum.data, maximum, item, .pair)) == .lt) {
+        if ((try self.runNative(span, ListMethods.orderListItems, .{ maximum.data, maximum, item, .pair })) == .lt) {
             self.heap.release(maximum);
             maximum = Heap.retain(item);
         }
@@ -10167,15 +9610,6 @@ fn extremePair(self: *Interpreter, kind: Value.Kind, minimum: Value, maximum: Va
     kinds[1] = kind;
     // `createTuple` takes both values over, even when it fails.
     return .{ .data = .{ .tuple = try self.heap.createTuple(items, kinds) } };
-}
-
-/// A new list containing one held copy of each value in `items`.
-fn copyList(self: *Interpreter, element: Value.Kind, items: []const Value) Error!Value {
-    const list = try self.heap.createList(element, items.len);
-    const result: Value = .{ .data = .{ .list = list } };
-    errdefer self.heap.release(result);
-    for (items) |item| list.items.appendAssumeCapacity(Heap.retain(item));
-    return result;
 }
 
 /// A method that changes its receiver. Section 4.3 and 7.1 let the checker
@@ -10322,7 +9756,7 @@ fn callChangingMethod(
         std.mem.eql(u8, member.name, "remove_if") or std.mem.eql(u8, member.name, "unique!") or
         std.mem.eql(u8, member.name, "sort!"))
     {
-        const copy = try self.copyList(slot.data.list.element, slot.data.list.items.items);
+        const copy = try ListMethods.copyList(&self.heap, slot.data.list.element, slot.data.list.items.items);
         var owned_copy = true;
         defer if (owned_copy) self.heap.release(copy);
         self.beginCallback(&guard, member.name);
@@ -10527,7 +9961,7 @@ fn callToSet(self: *Interpreter, member: Ast.Expression.Member) Error!Value {
     errdefer self.heap.release(result);
 
     for (items) |item| {
-        const hash = try self.hashKey(member.base.span, item);
+        const hash = try self.runNative(member.base.span, MapMethods.hashKey, .{item});
         try self.heap.put(map, hash, Heap.retain(item), Value.nothing, self.equatable(member.base.span));
     }
     return result;
@@ -10556,14 +9990,14 @@ fn callValueMethod(self: *Interpreter, span: Source.Span, call: Ast.Expression.C
         self.gpa.free(arguments);
     }
 
-    if (receiver.data == .range) return self.rangeMethod(span, receiver.data.range, member.name, arguments);
-    if (receiver.data == .string) return self.stringMethod(span, receiver.data.string.bytes, member.name, arguments);
-    if (receiver.data == .bytes) return self.bytesMethod(span, receiver.data.bytes.bytes, member.name);
+    if (receiver.data == .range) return self.runNative(span, Natives.call, .{ Natives.lookup(.range, member.name).?, receiver, arguments });
+    if (receiver.data == .string) return self.runNative(span, Natives.call, .{ Natives.lookup(.string, member.name).?, receiver, arguments });
+    if (receiver.data == .bytes) return self.runNative(span, Natives.call, .{ Natives.lookup(.bytes, member.name).?, receiver, &.{} });
     if (receiver.data == .int and !std.mem.eql(u8, member.name, "to_string")) {
-        return self.intMethod(span, receiver.data.int, member.name, arguments);
+        return self.runNative(span, Natives.call, .{ Natives.lookup(.int, member.name).?, receiver, arguments });
     }
     if (receiver.data == .float and !std.mem.eql(u8, member.name, "to_string")) {
-        return self.floatMethod(span, receiver.data.float, member.name, arguments);
+        return self.runNative(span, Natives.call, .{ Natives.lookup(.float, member.name).?, receiver, arguments });
     }
 
     // `to_string` on an `Int`, a `Float`, or a `Bool`: its display.
@@ -10631,126 +10065,6 @@ fn scalarMember(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call
     return .{ .data = .{ .string = try self.heap.createText(try built.toOwnedSlice()) } };
 }
 
-fn rangeMethod(self: *Interpreter, span: Source.Span, range: Range, name: []const u8, arguments: []const Value) Error!Value {
-    const Method = enum {
-        @"empty?",
-        step,
-        reverse,
-        to_list,
-    };
-
-    return switch (std.meta.stringToEnum(Method, name).?) {
-        .@"empty?" => .initBool(range.empty()),
-        .step => blk: {
-            const distance = arguments[0].data.int;
-            if (distance < 1) return self.raiseFmt(
-                span,
-                "a step must be at least 1, but this is {d}",
-                .{distance},
-                "The range says which way to count; the step says only how far, as in `10.down_to(0).step(2)`.",
-            );
-            break :blk .{ .data = .{ .range = range.step(distance) } };
-        },
-        .reverse => .{ .data = .{ .range = range.reverse() } },
-        .to_list => blk: {
-            const items = range.toList(self.gpa) catch |err| switch (err) {
-                error.RangeTooLarge => return self.raise(
-                    span,
-                    "this Range is too large to turn into a List",
-                    "Use a narrower Range or a larger `step` before calling `to_list()`.",
-                ),
-                error.OutOfMemory => return error.OutOfMemory,
-            };
-            defer if (items.len > 0) self.gpa.free(items);
-            const list = try self.heap.createList(.int, items.len);
-            const result: Value = .{ .data = .{ .list = list } };
-            errdefer self.heap.release(result);
-            for (items) |item| list.items.appendAssumeCapacity(.initInt(item));
-            break :blk result;
-        },
-    };
-}
-
-/// Section 9.3's integer vocabulary. The checker has proved each argument is
-/// an `Int`, leaving only value-dependent failures for the runtime to explain.
-fn intMethod(self: *Interpreter, span: Source.Span, value: i64, name: []const u8, arguments: []const Value) Error!Value {
-    const Method = enum {
-        abs,
-        clamp,
-        @"between?",
-        @"zero?",
-        @"positive?",
-        @"negative?",
-        @"even?",
-        @"odd?",
-        @"multiple_of?",
-        digits,
-        gcd,
-        lcm,
-        factorial,
-        to_float,
-        to_character,
-    };
-
-    return switch (std.meta.stringToEnum(Method, name).?) {
-        .abs => if (value == std.math.minInt(i64))
-            self.raiseFmt(span, "the absolute value of {d} does not fit in Int", .{value}, integer_range_help)
-        else
-            .initInt(if (value < 0) -value else value),
-        .clamp => blk: {
-            const minimum = arguments[0].data.int;
-            const maximum = arguments[1].data.int;
-            try self.requireOrderedBounds(span, "clamp", minimum, maximum);
-            break :blk .initInt(@max(minimum, @min(maximum, value)));
-        },
-        .@"between?" => blk: {
-            const minimum = arguments[0].data.int;
-            const maximum = arguments[1].data.int;
-            try self.requireOrderedBounds(span, "between?", minimum, maximum);
-            break :blk .initBool(value >= minimum and value <= maximum);
-        },
-        .@"zero?" => .initBool(value == 0),
-        .@"positive?" => .initBool(value > 0),
-        .@"negative?" => .initBool(value < 0),
-        .@"even?" => .initBool(@mod(value, 2) == 0),
-        .@"odd?" => .initBool(@mod(value, 2) != 0),
-        .@"multiple_of?" => blk: {
-            const divisor = arguments[0].data.int;
-            if (divisor == 0) return self.raise(
-                span,
-                "`multiple_of?` cannot use zero as its divisor",
-                "Pass a nonzero Int. Zero itself is a multiple of every nonzero Int.",
-            );
-            // Every Int is divisible by -1, including the asymmetric minimum.
-            break :blk .initBool(divisor == -1 or @mod(value, divisor) == 0);
-        },
-        .digits => self.integerDigits(value),
-        .gcd => self.integerGcd(span, value, arguments[0].data.int),
-        .lcm => self.integerLcm(span, value, arguments[0].data.int),
-        .factorial => self.integerFactorial(span, value),
-        .to_float => .initFloat(@floatFromInt(value)),
-        .to_character => blk: {
-            const problem: ?[]const u8 = if (value < 0)
-                "it is negative"
-            else if (value > 0x10FFFF)
-                "it is past 1114111, the largest code point"
-            else if (value >= 0xD800 and value <= 0xDFFF)
-                "55296 to 57343 are surrogates, which only UTF-16 uses, in pairs"
-            else
-                null;
-            if (problem) |why| return self.raiseFmt(
-                span,
-                "{d} is not a character's code point: {s}",
-                .{ value, why },
-                "Pass a code point such as one from `code_points()`: 0 to 1114111, leaving out 55296 to 57343.",
-            );
-            var buffer: [4]u8 = undefined;
-            const length = std.unicode.utf8Encode(@intCast(value), &buffer) catch unreachable;
-            break :blk self.heap.copyText(buffer[0..length]);
-        },
-    };
-}
-
 /// Section 15.5's `to_string(base:)`: decimal text by default, or any base 2
 /// through 36 (digits `0`-`9` then lowercase `a`-`z`) when named.
 fn intToString(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call, value: i64) Error!Value {
@@ -10771,7 +10085,7 @@ fn intToString(self: *Interpreter, span: Source.Span, call: Ast.Expression.Call,
 /// for a negative value. `base` is already proven to be 2 through 36.
 fn digitsInBase(self: *Interpreter, value: i64, base: u64) Error![]u8 {
     const alphabet = "0123456789abcdefghijklmnopqrstuvwxyz";
-    var magnitude = integerMagnitude(value);
+    var magnitude = NumberMethods.integerMagnitude(value);
     var reversed: [64]u8 = undefined;
     var count: usize = 0;
     if (magnitude == 0) {
@@ -10805,7 +10119,7 @@ fn intFormat(self: *Interpreter, call: Ast.Expression.Call, value: i64) Error!Va
     defer self.gpa.free(bound.values);
     defer if (bound.omitted) |omitted| self.gpa.free(omitted);
     const group_digits = bound.values[0].data != .nothing and bound.values[0].data.bool;
-    return self.ownedText(try self.formatMagnitude(integerMagnitude(value), value < 0, group_digits));
+    return self.ownedText(try self.formatMagnitude(NumberMethods.integerMagnitude(value), value < 0, group_digits));
 }
 
 /// Decimal digits of `magnitude`, comma-grouped every three from the right
@@ -10862,211 +10176,6 @@ fn groupDigits(self: *Interpreter, digits: []const u8) Error![]u8 {
         }
     }
     return text;
-}
-
-fn requireOrderedBounds(self: *Interpreter, span: Source.Span, name: []const u8, minimum: i64, maximum: i64) Error!void {
-    if (minimum <= maximum) return;
-    return self.raiseFmt(
-        span,
-        "`{s}` has a minimum of {d}, greater than its maximum of {d}",
-        .{ name, minimum, maximum },
-        "Put the lower bound first and the upper bound second.",
-    );
-}
-
-/// The unsigned magnitude avoids overflowing on the one `Int` whose positive
-/// counterpart cannot be represented.
-fn integerMagnitude(value: i64) u64 {
-    if (value >= 0) return @intCast(value);
-    return @as(u64, @intCast(-(value + 1))) + 1;
-}
-
-fn integerDigits(self: *Interpreter, value: i64) Error!Value {
-    var magnitude = integerMagnitude(value);
-    var reversed: [20]i64 = undefined;
-    var count: usize = 0;
-    if (magnitude == 0) {
-        reversed[0] = 0;
-        count = 1;
-    } else {
-        while (magnitude != 0) : (magnitude /= 10) {
-            reversed[count] = @intCast(magnitude % 10);
-            count += 1;
-        }
-    }
-
-    const list = try self.heap.createList(.int, count);
-    const result: Value = .{ .data = .{ .list = list } };
-    errdefer self.heap.release(result);
-    while (count > 0) {
-        count -= 1;
-        list.items.appendAssumeCapacity(.initInt(reversed[count]));
-    }
-    return result;
-}
-
-fn unsignedGcd(a_value: u64, b_value: u64) u64 {
-    var a = a_value;
-    var b = b_value;
-    while (b != 0) {
-        const remainder = a % b;
-        a = b;
-        b = remainder;
-    }
-    return a;
-}
-
-fn checkedMagnitude(self: *Interpreter, span: Source.Span, operation: []const u8, magnitude: u64) Error!Value {
-    if (magnitude > std.math.maxInt(i64)) return self.raiseFmt(
-        span,
-        "the result of `{s}` does not fit in Int",
-        .{operation},
-        integer_range_help,
-    );
-    return .initInt(@intCast(magnitude));
-}
-
-fn integerGcd(self: *Interpreter, span: Source.Span, left: i64, right: i64) Error!Value {
-    return self.checkedMagnitude(span, "gcd", unsignedGcd(integerMagnitude(left), integerMagnitude(right)));
-}
-
-fn integerLcm(self: *Interpreter, span: Source.Span, left: i64, right: i64) Error!Value {
-    const a = integerMagnitude(left);
-    const b = integerMagnitude(right);
-    if (a == 0 or b == 0) return .initInt(0);
-    const divided = a / unsignedGcd(a, b);
-    const result = @mulWithOverflow(divided, b);
-    if (result[1] != 0 or result[0] > std.math.maxInt(i64)) return self.raiseFmt(
-        span,
-        "the least common multiple of {d} and {d} does not fit in Int",
-        .{ left, right },
-        integer_range_help,
-    );
-    return .initInt(@intCast(result[0]));
-}
-
-fn integerFactorial(self: *Interpreter, span: Source.Span, value: i64) Error!Value {
-    if (value < 0) return self.raiseFmt(
-        span,
-        "a negative Int has no factorial, but this is {d}",
-        .{value},
-        "Call `factorial()` on 0 or a positive Int.",
-    );
-
-    var result: i64 = 1;
-    var factor: i64 = 2;
-    while (factor <= value) : (factor += 1) {
-        const multiplied = @mulWithOverflow(result, factor);
-        if (multiplied[1] != 0) return self.raiseFmt(
-            span,
-            "{d}! does not fit in Int",
-            .{value},
-            "The largest factorial an Int can hold is 20!.",
-        );
-        result = multiplied[0];
-    }
-    return .initInt(result);
-}
-
-/// Section 9.3's floating-point vocabulary. Rounding operations that return an
-/// `Int` all pass through one range and finiteness check before host conversion.
-fn floatMethod(self: *Interpreter, span: Source.Span, value: f64, name: []const u8, arguments: []const Value) Error!Value {
-    const Method = enum {
-        abs,
-        clamp,
-        @"between?",
-        @"zero?",
-        @"positive?",
-        @"negative?",
-        square_root,
-        to_radians,
-        to_degrees,
-        floor,
-        ceil,
-        round,
-        round_to,
-        truncate,
-        @"finite?",
-        @"infinite?",
-        @"nan?",
-        to_int,
-    };
-
-    return switch (std.meta.stringToEnum(Method, name).?) {
-        .abs => .initFloat(@abs(value)),
-        .clamp => blk: {
-            const minimum = toFloat(arguments[0]);
-            const maximum = toFloat(arguments[1]);
-            try self.requireFloatBounds(span, "clamp", minimum, maximum);
-            break :blk .initFloat(if (value < minimum) minimum else if (value > maximum) maximum else value);
-        },
-        .@"between?" => blk: {
-            const minimum = toFloat(arguments[0]);
-            const maximum = toFloat(arguments[1]);
-            try self.requireFloatBounds(span, "between?", minimum, maximum);
-            break :blk .initBool(value >= minimum and value <= maximum);
-        },
-        .@"zero?" => .initBool(value == 0),
-        .@"positive?" => .initBool(value > 0),
-        .@"negative?" => .initBool(value < 0),
-        .square_root => .initFloat(std.math.sqrt(value)),
-        .to_radians => .initFloat(value * std.math.pi / 180.0),
-        .to_degrees => .initFloat(value * 180.0 / std.math.pi),
-        .floor => self.floatResultToInt(span, "floor", @floor(value)),
-        .ceil => self.floatResultToInt(span, "ceil", @ceil(value)),
-        .round => self.floatResultToInt(span, "round", @round(value)),
-        .round_to => .initFloat(roundFloatTo(value, arguments[0].data.int)),
-        .truncate, .to_int => self.floatResultToInt(span, name, @trunc(value)),
-        .@"finite?" => .initBool(std.math.isFinite(value)),
-        .@"infinite?" => .initBool(std.math.isInf(value)),
-        .@"nan?" => .initBool(std.math.isNan(value)),
-    };
-}
-
-fn requireFloatBounds(self: *Interpreter, span: Source.Span, name: []const u8, minimum: f64, maximum: f64) Error!void {
-    if (std.math.isNan(minimum) or std.math.isNan(maximum)) return self.raiseFmt(
-        span,
-        "`{s}` cannot use NaN as a bound",
-        .{name},
-        "Use ordered Float bounds. NaN is not less than, equal to, or greater than any value.",
-    );
-    if (minimum <= maximum) return;
-
-    var minimum_text: std.Io.Writer.Allocating = .init(self.gpa);
-    defer minimum_text.deinit();
-    try Value.initFloat(minimum).display(&minimum_text.writer);
-    var maximum_text: std.Io.Writer.Allocating = .init(self.gpa);
-    defer maximum_text.deinit();
-    try Value.initFloat(maximum).display(&maximum_text.writer);
-    return self.raiseFmt(
-        span,
-        "`{s}` has a minimum of {s}, greater than its maximum of {s}",
-        .{ name, minimum_text.written(), maximum_text.written() },
-        "Put the lower bound first and the upper bound second.",
-    );
-}
-
-/// Converts an already-rounded Float only after proving Zig's `@intFromFloat`
-/// is defined. The upper comparison is inclusive because 2^63 is exactly
-/// representable as a Float but is one beyond the greatest `Int`.
-fn floatResultToInt(self: *Interpreter, span: Source.Span, operation: []const u8, value: f64) Error!Value {
-    if (!std.math.isFinite(value)) return self.raiseFmt(
-        span,
-        "`{s}` cannot produce an Int from a non-finite Float",
-        .{operation},
-        "Check `finite?()` first. NaN and infinity cannot be represented by Int.",
-    );
-    if (value >= 9223372036854775808.0 or value < -9223372036854775808.0) return self.raiseFmt(
-        span,
-        "the result of `{s}` is outside the range of Int",
-        .{operation},
-        integer_range_help,
-    );
-    return .initInt(@intFromFloat(value));
-}
-
-fn roundFloatTo(value: f64, places: i64) f64 {
-    return FloatMath.roundTo(value, places);
 }
 
 fn displayFloatAlloc(self: *Interpreter, value: f64) Error![]u8 {
@@ -11136,224 +10245,12 @@ fn groupFloatText(self: *Interpreter, text: []u8) Error![]u8 {
     return result;
 }
 
-/// Section 9.2's string methods, on the receiver's bytes. The checker has
-/// proved the method exists and the arguments fit it.
-fn stringMethod(self: *Interpreter, span: Source.Span, bytes: []const u8, name: []const u8, arguments: []const Value) Error!Value {
-    const Method = enum {
-        @"empty?",
-        @"blank?",
-        @"contains?",
-        @"starts_with?",
-        @"ends_with?",
-        trim,
-        trim_start,
-        trim_end,
-        upper,
-        lower,
-        capitalize,
-        reverse,
-        repeat,
-        replace,
-        insert_at,
-        substring,
-        remove_prefix,
-        remove_suffix,
-        collapse_repeats,
-        pad_start,
-        pad_end,
-        pad_center,
-        split,
-        partition,
-        lines,
-        words,
-        @"letter?",
-        @"digit?",
-        @"whitespace?",
-        @"upper?",
-        @"lower?",
-        chars,
-        code_points,
-        bytes,
-        index_of,
-        to_int,
-        to_int_or,
-        to_int_maybe,
-        to_float,
-        to_float_or,
-        to_float_maybe,
-    };
-    const gpa = self.gpa;
-    if (std.mem.eql(u8, name, "to_bytes")) return self.heap.copyBytes(bytes);
-    return switch (std.meta.stringToEnum(Method, name).?) {
-        .@"empty?" => .initBool(bytes.len == 0),
-        .@"blank?" => .initBool(strings.isBlank(bytes)),
-        .@"letter?" => .initBool(strings.everyCharacter(bytes, .letter)),
-        .@"digit?" => .initBool(strings.everyCharacter(bytes, .digit)),
-        .@"whitespace?" => .initBool(strings.everyCharacter(bytes, .whitespace)),
-        .@"upper?" => .initBool(strings.everyCharacter(bytes, .upper)),
-        .@"lower?" => .initBool(strings.everyCharacter(bytes, .lower)),
-        .@"contains?" => .initBool(try strings.contains(gpa, bytes, arguments[0].data.string.bytes)),
-        .@"starts_with?" => .initBool(try strings.startsWith(gpa, bytes, arguments[0].data.string.bytes)),
-        .@"ends_with?" => .initBool(try strings.endsWith(gpa, bytes, arguments[0].data.string.bytes)),
-        .trim => self.heap.copyText(strings.trim(bytes, .both)),
-        .trim_start => self.heap.copyText(strings.trim(bytes, .start)),
-        .trim_end => self.heap.copyText(strings.trim(bytes, .end)),
-        .upper => self.ownedText(try unicode.mapCase(gpa, bytes, .upper)),
-        .lower => self.ownedText(try unicode.mapCase(gpa, bytes, .lower)),
-        .capitalize => self.ownedText(try strings.capitalize(gpa, bytes)),
-        .reverse => self.ownedText(try strings.reverse(gpa, bytes)),
-        .repeat => blk: {
-            const times = arguments[0].data.int;
-            if (times < 0) return self.raiseFmt(
-                span,
-                "a String cannot be repeated {d} times",
-                .{times},
-                "Repeat it 0 or more times; 0 gives an empty String.",
-            );
-            // A result too large to address is as unrepresentable as one too
-            // large to allocate.
-            const size = std.math.mul(usize, bytes.len, @intCast(times)) catch return error.OutOfMemory;
-            const result = try gpa.alloc(u8, size);
-            for (0..@intCast(times)) |copy| @memcpy(result[copy * bytes.len ..][0..bytes.len], bytes);
-            break :blk self.ownedText(result);
-        },
-        .replace => blk: {
-            const old = arguments[0].data.string.bytes;
-            if (old.len == 0) return self.raise(
-                span,
-                "`replace` needs something to replace, but this is an empty String",
-                "Pass the text to find as the first argument.",
-            );
-            break :blk self.ownedText(try strings.replace(gpa, bytes, old, arguments[1].data.string.bytes));
-        },
-        .insert_at => blk: {
-            const index = arguments[0].data.int;
-            const result = strings.insertAt(gpa, bytes, index, arguments[1].data.string.bytes) catch |err| {
-                if (err == error.NegativeIndex or err == error.IndexPastEnd) return self.raiseInsert(span, bytes, index, @errorCast(err));
-                return error.OutOfMemory;
-            };
-            break :blk self.ownedText(result);
-        },
-        .substring => blk: {
-            const start = arguments[0].data.int;
-            const count: ?i64 = if (arguments.len == 2) arguments[1].data.int else null;
-            const slice = strings.substring(bytes, start, count) catch |err| return self.raiseSubstring(span, bytes, start, count, err);
-            break :blk self.heap.copyText(slice);
-        },
-        .remove_prefix => self.heap.copyText(try strings.removePrefix(gpa, bytes, arguments[0].data.string.bytes)),
-        .remove_suffix => self.heap.copyText(try strings.removeSuffix(gpa, bytes, arguments[0].data.string.bytes)),
-        .collapse_repeats => self.ownedText(try strings.collapseRepeats(gpa, bytes)),
-        .pad_start, .pad_end, .pad_center => blk: {
-            const width = arguments[0].data.int;
-            const fill = if (arguments.len == 2) arguments[1].data.string.bytes else " ";
-            const side: strings.PadSide = switch (std.meta.stringToEnum(Method, name).?) {
-                .pad_start => .start,
-                .pad_end => .end,
-                .pad_center => .center,
-                else => unreachable,
-            };
-            const result = strings.pad(gpa, bytes, width, fill, side) catch |err| {
-                if (err == error.NegativeWidth or err == error.EmptyFill or err == error.MultipleCharacterFill) return self.raisePadding(span, width, fill, @errorCast(err));
-                return error.OutOfMemory;
-            };
-            break :blk self.ownedText(result);
-        },
-        .split => blk: {
-            const separator = arguments[0].data.string.bytes;
-            if (separator.len == 0) return self.raise(
-                span,
-                "`split` needs a separator, but this is an empty String",
-                "Use `chars()` to split a String into its characters.",
-            );
-            break :blk self.stringList(try strings.split(gpa, bytes, separator));
-        },
-        .partition => blk: {
-            const separator = arguments[0].data.string.bytes;
-            if (separator.len == 0) return self.raise(
-                span,
-                "`partition` needs a separator, but this is an empty String",
-                "Pass the text to find as the separator.",
-            );
-            const parts = try strings.partition(gpa, bytes, separator);
-            break :blk self.stringTuple(parts);
-        },
-        .lines => self.stringList(try strings.lines(gpa, bytes)),
-        .words => self.stringList(try strings.words(gpa, bytes)),
-        .chars => blk: {
-            const pieces = try strings.characters(gpa, bytes);
-            defer gpa.free(pieces);
-            const list = try self.heap.createList(.string, pieces.len);
-            const result: Value = .{ .data = .{ .list = list } };
-            errdefer self.heap.release(result);
-            for (pieces) |piece| list.items.appendAssumeCapacity(try self.heap.copyText(piece));
-            break :blk result;
-        },
-        // These deliberately expose the exact stored representation rather
-        // than graphemes. `chars()` remains the beginner-facing operation.
-        .code_points => self.stringCodePoints(bytes),
-        .bytes => self.stringBytes(bytes),
-        // Section 9.2: the answer counts characters, so it indexes directly.
-        .index_of => blk: {
-            const found = try strings.indexOf(gpa, bytes, arguments[0].data.string.bytes);
-            break :blk if (found) |index| Value.initInt(index) else Value.nothing;
-        },
-        // Section 4.4's three forms differ only in what they do when the text
-        // does not parse: raise, use the fallback, or report absence.
-        .to_int => blk: {
-            const parsed = strings.parseInt(bytes);
-            if (parsed == .value) break :blk .initInt(parsed.value);
-            break :blk self.raiseConversion(span, bytes, "Int", parsed == .out_of_range);
-        },
-        .to_int_or => blk: {
-            const parsed = strings.parseInt(bytes);
-            break :blk if (parsed == .value) Value.initInt(parsed.value) else arguments[0];
-        },
-        .to_int_maybe => blk: {
-            const parsed = strings.parseInt(bytes);
-            break :blk if (parsed == .value) Value.initInt(parsed.value) else Value.nothing;
-        },
-        .to_float => blk: {
-            const parsed = strings.parseFloat(bytes);
-            if (parsed == .value) break :blk .initFloat(parsed.value);
-            break :blk self.raiseConversion(span, bytes, "Float", parsed == .out_of_range);
-        },
-        .to_float_or => blk: {
-            const parsed = strings.parseFloat(bytes);
-            break :blk if (parsed == .value) Value.initFloat(parsed.value) else widen(arguments[0], .float);
-        },
-        .to_float_maybe => blk: {
-            const parsed = strings.parseFloat(bytes);
-            break :blk if (parsed == .value) Value.initFloat(parsed.value) else Value.nothing;
-        },
-    };
-}
-
-fn bytesMethod(self: *Interpreter, span: Source.Span, bytes: []const u8, name: []const u8) Error!Value {
-    if (std.mem.eql(u8, name, "to_string_maybe")) {
-        return if (std.unicode.utf8ValidateSlice(bytes)) self.heap.copyText(bytes) else Value.nothing;
-    }
-    if (std.mem.eql(u8, name, "to_hex")) return self.bytesToHex(bytes);
-    if (!std.unicode.utf8ValidateSlice(bytes)) return self.raiseEncodingMessage(span, "these Bytes are not valid UTF-8 text");
-    return self.heap.copyText(bytes);
-}
-
-fn bytesToHex(self: *Interpreter, bytes: []const u8) std.mem.Allocator.Error!Value {
-    const length = std.math.mul(usize, bytes.len, 2) catch return error.OutOfMemory;
-    const out = try self.gpa.alloc(u8, length);
-    const digits = "0123456789abcdef";
-    for (bytes, 0..) |byte, index| {
-        out[index * 2] = digits[byte >> 4];
-        out[index * 2 + 1] = digits[byte & 0x0f];
-    }
-    return .{ .data = .{ .string = try self.heap.createText(out) } };
-}
-
 fn bytesFromHex(self: *Interpreter, span: Source.Span, text: []const u8, maybe: bool) Error!Value {
     const characters = try strings.characters(self.gpa, text);
     defer self.gpa.free(characters);
     if (characters.len % 2 != 0) {
         if (maybe) return Value.nothing;
-        return self.raiseEncodingMessage(span, try std.fmt.allocPrint(self.arena, "hex text has {d} digits, but every byte takes two", .{characters.len}));
+        return self.runNative(span, BytesMethods.raiseEncodingMessage, .{try std.fmt.allocPrint(self.arena, "hex text has {d} digits, but every byte takes two", .{characters.len})});
     }
 
     const bytes = try self.gpa.alloc(u8, characters.len / 2);
@@ -11361,7 +10258,7 @@ fn bytesFromHex(self: *Interpreter, span: Source.Span, text: []const u8, maybe: 
         const digit = hexValue(character) orelse {
             self.gpa.free(bytes);
             if (maybe) return Value.nothing;
-            return self.raiseEncodingMessage(span, try std.fmt.allocPrint(self.arena, "hex text has `{s}` at index {d}, which is not a hex digit", .{ character, index }));
+            return self.runNative(span, BytesMethods.raiseEncodingMessage, .{try std.fmt.allocPrint(self.arena, "hex text has `{s}` at index {d}, which is not a hex digit", .{ character, index })});
         };
         if (index % 2 == 0) {
             bytes[index / 2] = digit << 4;
@@ -11382,144 +10279,8 @@ fn hexValue(character: []const u8) ?u8 {
     };
 }
 
-/// Section 9.1's advanced conversions. A String is always valid UTF-8, so
-/// each call to `unicode.decode` is safe. Code points retain the original
-/// spelling: a decomposed character therefore gives its separate scalars.
-fn stringCodePoints(self: *Interpreter, bytes: []const u8) Error!Value {
-    const list = try self.heap.createList(.int, bytes.len);
-    const result: Value = .{ .data = .{ .list = list } };
-    errdefer self.heap.release(result);
-
-    var index: usize = 0;
-    while (index < bytes.len) {
-        const point, const length = unicode.decode(bytes, index);
-        list.items.appendAssumeCapacity(.initInt(point));
-        index += length;
-    }
-    return result;
-}
-
-/// UTF-8 bytes are represented as non-negative Ints until Emerald gains a
-/// purpose-built binary-data type. This keeps `bytes()` honest without making
-/// beginners learn an implementation-only `Byte` type.
-fn stringBytes(self: *Interpreter, bytes: []const u8) Error!Value {
-    const list = try self.heap.createList(.int, bytes.len);
-    const result: Value = .{ .data = .{ .list = list } };
-    errdefer self.heap.release(result);
-    for (bytes) |byte| list.items.appendAssumeCapacity(.initInt(byte));
-    return result;
-}
-
 fn ownedText(self: *Interpreter, bytes: []u8) Error!Value {
     return .{ .data = .{ .string = try self.heap.createText(bytes) } };
-}
-
-/// A list of strings from pieces the caller allocated, which the strings take.
-fn stringList(self: *Interpreter, pieces: [][]u8) Error!Value {
-    defer self.gpa.free(pieces);
-    var taken: usize = 0;
-    errdefer for (pieces[taken..]) |piece| self.gpa.free(piece);
-
-    const list = try self.heap.createList(.string, pieces.len);
-    const result: Value = .{ .data = .{ .list = list } };
-    errdefer self.heap.release(result);
-    for (pieces) |piece| {
-        taken += 1;
-        list.items.appendAssumeCapacity(.{ .data = .{ .string = try self.heap.createText(piece) } });
-    }
-    return result;
-}
-
-/// A three-part String tuple. The pieces borrow their receiver until copied.
-fn stringTuple(self: *Interpreter, parts: struct { []const u8, []const u8, []const u8 }) Error!Value {
-    const items = try self.gpa.alloc(Value, 3);
-    const kinds = self.gpa.alloc(Value.Kind, 3) catch |err| {
-        self.gpa.free(items);
-        return err;
-    };
-    kinds[0] = .string;
-    kinds[1] = .string;
-    kinds[2] = .string;
-    var built: usize = 0;
-    var owned = true;
-    errdefer if (owned) {
-        for (items[0..built]) |item| self.heap.release(item);
-        self.gpa.free(items);
-        self.gpa.free(kinds);
-    };
-    inline for (parts) |part| {
-        items[built] = try self.heap.copyText(part);
-        built += 1;
-    }
-    // `createTuple` takes everything over, even when it fails.
-    owned = false;
-    return .{ .data = .{ .tuple = try self.heap.createTuple(items, kinds) } };
-}
-
-/// Section 9.4's strict parsing, which raises a conversion error. Catching it
-/// arrives with section 13; until then `to_int_or` is the way to recover.
-fn raiseConversion(self: *Interpreter, span: Source.Span, bytes: []const u8, comptime type_name: []const u8, out_of_range: bool) Error {
-    const excerpt = if (bytes.len > 40) "the text" else try std.fmt.allocPrint(self.arena, "\"{s}\"", .{bytes});
-    if (out_of_range) return self.raiseFmt(
-        span,
-        "{s} is outside the range of " ++ type_name,
-        .{excerpt},
-        if (std.mem.eql(u8, type_name, "Int"))
-            "`Int` holds whole numbers from -9223372036854775808 through 9223372036854775807. `to_int_or(0)` gives a fallback instead of an error."
-        else
-            "The number is too large for a Float. `to_float_or(0.0)` gives a fallback instead of an error.",
-    );
-    return self.raiseFmt(
-        span,
-        "{s} is not " ++ (if (std.mem.eql(u8, type_name, "Int")) "a whole number" else "a number"),
-        .{excerpt},
-        if (std.mem.eql(u8, type_name, "Int"))
-            "Only digits, with an optional sign and surrounding spaces, convert to an Int. `to_int_or(0)` gives a fallback instead of an error."
-        else
-            "Only a number such as `2.5` or `3`, with an optional sign and surrounding spaces, converts to a Float. `to_float_or(0.0)` gives a fallback instead of an error.",
-    );
-}
-
-/// Section 9.1: substring bounds are errors rather than being clamped.
-fn raiseSubstring(self: *Interpreter, span: Source.Span, bytes: []const u8, start: i64, count: ?i64, err: strings.SubstringError) Error {
-    const total = unicode.graphemeCount(bytes);
-    return switch (err) {
-        error.NegativeStart => self.raiseFmt(span, "a substring cannot start at {d}", .{start}, "Start at 0 or later."),
-        error.NegativeCount => self.raiseFmt(span, "a substring cannot have {d} characters", .{count.?}, "Ask for 0 or more characters."),
-        error.StartPastEnd => self.raiseFmt(
-            span,
-            "a substring cannot start at {d} in a String of {d} character{s}",
-            .{ start, total, if (total == 1) "" else "s" },
-            "Start at most at the String's `count`, which gives an empty String.",
-        ),
-        error.CountPastEnd => self.raiseFmt(
-            span,
-            "a substring of {d} character{s} from {d} runs past the end of a String of {d}",
-            .{ count.?, if (count.? == 1) "" else "s", start, total },
-            "Ask for fewer characters, or leave the count out to take the rest of the String.",
-        ),
-    };
-}
-
-fn raiseInsert(self: *Interpreter, span: Source.Span, bytes: []const u8, index: i64, err: strings.InsertError) Error {
-    const total = unicode.graphemeCount(bytes);
-    return switch (err) {
-        error.NegativeIndex => self.raiseFmt(span, "a String insertion cannot use index {d}", .{index}, "Insert at 0 or later."),
-        error.IndexPastEnd => self.raiseFmt(
-            span,
-            "cannot insert at index {d} in a String of {d} character{s}",
-            .{ index, total, if (total == 1) "" else "s" },
-            "Insert at 0 through the String's `count`; inserting at `count` adds to the end.",
-        ),
-    };
-}
-
-fn raisePadding(self: *Interpreter, span: Source.Span, width: i64, fill: []const u8, err: strings.PadError) Error {
-    return switch (err) {
-        error.NegativeWidth => self.raiseFmt(span, "a padded String cannot have width {d}", .{width}, "Choose a width of 0 or more characters."),
-        error.EmptyFill => self.raise(span, "padding needs a fill character, but this is an empty String", "Pass one character, such as `\"-\"` or `\" \"`."),
-        error.MultipleCharacterFill => self.raiseFmt(span, "padding needs one fill character, but \"{s}\" has {d}", .{ fill, unicode.graphemeCount(fill) }, "Pass exactly one character, such as `\"-\"` or `\" \"`."),
-    };
 }
 
 /// Runs one mutating list method. Arguments are owned: one that is stored is
@@ -11607,8 +10368,8 @@ fn mutateList(self: *Interpreter, span: Source.Span, list: *Heap.List, name: []c
             self.compactList(list, keep);
         },
         .@"sort!" => {
-            if (list.element == .float and items.items.len > 0 and std.math.isNan(items.items[0].data.float)) return self.raiseExtremeNaN(span, .sort);
-            try self.sortItemsByKeys(span, list.element, items.items, null, .sort);
+            if (list.element == .float and items.items.len > 0 and std.math.isNan(items.items[0].data.float)) return self.runNative(span, ListMethods.raiseExtremeNaN, .{.sort});
+            try self.runNative(span, ListMethods.sortItemsByKeys, .{ list.element, items.items, null, .sort });
         },
         .@"shuffle!" => self.random().shuffle(Value, items.items),
     }
@@ -11646,8 +10407,7 @@ fn evaluateArguments(self: *Interpreter, expressions: []const *const Ast.Express
 
 // Raising.
 
-const integer_range_help =
-    "`Int` holds whole numbers from -9223372036854775808 through 9223372036854775807.";
+const integer_range_help = Native.integer_range_help;
 
 /// Every runtime error carries the calls active when it was raised, innermost
 /// first, which is section 13.2's stack trace.
@@ -11744,16 +10504,6 @@ fn raiseTooMuchRecursion(self: *Interpreter, span: Source.Span, name: []const u8
         else
             "These calls nest too deeply for the stack available. Check that the recursion has a case that stops it.",
     );
-}
-
-/// Callers check `isNumber` first, so a `Bool` never reaches here.
-fn toFloat(value: Value) f64 {
-    return switch (value.data) {
-        .int => |number| @floatFromInt(number),
-        .float => |number| number,
-        .range => unreachable,
-        .nothing, .bool, .string, .bytes, .list, .tuple, .map, .closure, .struct_value => unreachable,
-    };
 }
 
 test "session origin lookup finds ordered entries and excludes gaps and other files" {
