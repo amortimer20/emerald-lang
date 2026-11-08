@@ -9,12 +9,14 @@ run/colliding-calculated-keys.em
 run/comparison.em
 run/compound-assignment-order.em
 run/conditionals.em
+run/dictionary-key-copied.em
 run/dictionary-keys.em
 run/dictionary-repeated-tuple-key.em
 run/division.em
 run/early-return.em
 run/equality.em
 run/exponentiation.em
+run/fieldless-structs.em
 run/float-display.em
 run/float-receiver-math.em
 run/float-remainder.em
@@ -33,12 +35,14 @@ run/multiline-strings.em
 run/narrowing-through-loops.em
 run/precedence.em
 run/print-arguments.em
+run/private-struct-display.em
 run/set-operations.em
 run/space-minus-subtraction.em
 run/string-edge-results.em
 run/string-literals.em
 run/string-methods.em
 run/string-order-nfc.em
+run/struct-fields.em
 run/trailing-if.em
 run/tuples.em
 run/typed-declarations.em
@@ -47,7 +51,10 @@ run/unicode-text.em
 run/unicode-whitespace.em
 run/widening.em
 runtime-errors/compound-assignment-overflow.em
+runtime-errors/dictionary-entry-compound-overflow.em
 runtime-errors/division-by-zero.em
+runtime-errors/error-in-constructor.em
+runtime-errors/error-in-field-default.em
 runtime-errors/error-in-function.em
 runtime-errors/index-out-of-range.em
 runtime-errors/insert-at-past-count.em
@@ -55,6 +62,7 @@ runtime-errors/int-absolute-overflow.em
 runtime-errors/integer-overflow.em
 runtime-errors/list-compound-assignment-out-of-range.em
 runtime-errors/list-element-assignment-out-of-range.em
+runtime-errors/list-element-compound-overflow.em
 runtime-errors/list-portions.em
 runtime-errors/list-repeat-negative.em
 runtime-errors/list-sum-overflow.em
@@ -68,6 +76,7 @@ runtime-errors/replace-empty-old.em
 runtime-errors/slice-endpoints.em
 runtime-errors/string-padding.em
 runtime-errors/string-slice-start-after-end.em
+runtime-errors/struct-field-compound-overflow.em
 runtime-errors/substring-negative-start.em
 runtime-errors/substring-past-end.em
 runtime-errors/to-character-negative.em

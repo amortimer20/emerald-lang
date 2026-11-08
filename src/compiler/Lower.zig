@@ -19,6 +19,7 @@ const Arithmetic = @import("runtime").Operations.Arithmetic;
 const Natives = @import("runtime").Natives;
 const ListMethods = @import("runtime").ListMethods;
 const MapMethods = @import("runtime").MapMethods;
+const call_arguments = @import("../arguments.zig");
 
 const Lower = @This();
 
@@ -36,8 +37,18 @@ literals: std.ArrayList([]const u8) = .empty,
 /// The element type of each module-level list variable, by key, for an
 /// assignment into one of its elements.
 global_elements: std.StringHashMapUnmanaged(Ir.Type) = .empty,
+/// The struct type of each module-level struct variable, by its index.
+global_structs: std.AutoHashMapUnmanaged(Ir.GlobalIndex, *StructInfo) = .empty,
 /// The payload type of each module-level optional variable, by its index.
 global_payloads: std.AutoHashMapUnmanaged(Ir.GlobalIndex, Ir.Type) = .empty,
+/// Each struct type the program declares, by key.
+struct_infos: std.StringHashMapUnmanaged(*StructInfo) = .empty,
+struct_types: std.ArrayList(Ir.StructType) = .empty,
+/// Each struct method, by its method key (`Point::area`).
+methods: std.StringHashMapUnmanaged(MethodInfo) = .empty,
+/// The spans of every function and type declaration, where a changing
+/// method's receiver could be read behind its back.
+bodies: std.ArrayList(Source.Span) = .empty,
 /// What stopped lowering, once something has.
 unsupported: ?Unsupported = null,
 
@@ -48,6 +59,34 @@ pub const Unsupported = struct {
 };
 
 pub const Error = error{ OutOfMemory, Unsupported };
+
+const StructInfo = struct {
+    key: []const u8,
+    index: u32,
+    declaration: Ast.StructDeclaration,
+    fields: []FieldInfo,
+    field_names: []const []const u8,
+    has_default: []const bool,
+    any_default: bool,
+    /// The function that runs the field defaults, given a flag per field.
+    defaults: ?FunctionInfo = null,
+    constructor: ?FunctionInfo = null,
+};
+
+const FieldInfo = struct {
+    name: []const u8,
+    type: Ir.Type,
+    payload: ?Ir.Type,
+    element: ?Ir.Type,
+};
+
+const MethodInfo = struct {
+    function: FunctionInfo,
+    /// Section 4.3's changing method, which takes `self` by reference.
+    changing: bool,
+    declaration: Ast.FunctionDeclaration,
+    owner: *StructInfo,
+};
 
 const FunctionInfo = struct {
     index: Ir.FunctionIndex,
@@ -66,6 +105,18 @@ pub fn lower(self: *Lower, program: Ast.Program) Error!Ir.Program {
     // Functions first, so a call can come before the function it calls, and
     // module-level variables, which any function may read.
     try self.functions.append(self.arena, undefined); // the entry, built last
+    // Struct names first, so any signature or field can name one.
+    for (program.statements) |statement| switch (statement.data) {
+        .struct_declaration => |declared| try self.nameStruct(declared),
+        .function_declaration => try self.bodies.append(self.arena, statement.span),
+        else => {},
+    };
+    for (program.statements) |statement| {
+        if (statement.data == .struct_declaration) {
+            try self.bodies.append(self.arena, statement.span);
+            try self.declareStruct(statement.data.struct_declaration);
+        }
+    }
     for (program.statements) |statement| switch (statement.data) {
         .function_declaration => |function| try self.declareFunction(function),
         .declaration => |declaration| try self.declareGlobal(declaration),
@@ -74,6 +125,7 @@ pub fn lower(self: *Lower, program: Ast.Program) Error!Ir.Program {
     };
     for (program.statements) |statement| {
         if (statement.data == .function_declaration) try self.lowerFunction(statement.data.function_declaration);
+        if (statement.data == .struct_declaration) try self.lowerStruct(self.struct_infos.get(self.keyOf(statement.data.struct_declaration.name)).?);
     }
     var entry: Builder = try .init(self, "", .nothing, &.{}, &.{});
     entry.top_level = true;
@@ -82,7 +134,7 @@ pub fn lower(self: *Lower, program: Ast.Program) Error!Ir.Program {
         try entry.statement(statement);
     }
     self.functions.items[0] = try entry.finish();
-    return .{ .functions = self.functions.items, .globals = self.globals.items, .sites = self.sites.items, .literals = self.literals.items };
+    return .{ .functions = self.functions.items, .globals = self.globals.items, .sites = self.sites.items, .literals = self.literals.items, .structs = self.struct_types.items };
 }
 
 fn fail(self: *Lower, span: Source.Span, what: []const u8) Error {
@@ -121,6 +173,7 @@ fn irType(checked: Type) ?Ir.Type {
         .float => .float,
         .bool => .bool,
         .string => .string,
+        .struct_value => if (checked.user) |user| if (!user.class and !user.trait and !user.enumeration and checked.type_arguments.len == 0) .structure else null else null,
         .nothing => .nothing,
         // A list of anything the compiler holds, lists of them included.
         .list => if (irType(checked.element.?.*) != null and irType(checked.element.?.*) != .nothing) .list else null,
@@ -170,6 +223,7 @@ fn annotationType(self: *Lower, annotation: Ast.TypeExpression) Error!Ir.Type {
         if (std.mem.eql(u8, annotation.name, "Float")) return .float;
         if (std.mem.eql(u8, annotation.name, "Bool")) return .bool;
         if (std.mem.eql(u8, annotation.name, "String")) return .string;
+        if (self.struct_infos.contains(self.keyOf(annotation.name))) return .structure;
     }
     // `Dict[K, V]` and `Set[T]`.
     if (annotation.key) |key| {
@@ -216,6 +270,18 @@ fn declaredPayload(self: *Lower, declaration: Ast.Declaration) Error!?Ir.Type {
     return payloadType(found.type);
 }
 
+/// The struct type of a struct variable `declaration` declares.
+fn declaredStruct(self: *Lower, declaration: Ast.Declaration) ?*StructInfo {
+    const initializer = declaration.initializer orelse {
+        const annotation = declaration.annotation orelse return null;
+        return self.struct_infos.get(self.keyOf(annotation.name));
+    };
+    const found = self.checked.expression_types.get(initializer) orelse return null;
+    if (found.type.optional) return null;
+    const user = found.type.user orelse return null;
+    return self.struct_infos.get(user.name);
+}
+
 /// The element type of the list an expression gives, from the checker.
 fn listElement(self: *Lower, expression: *const Ast.Expression) ?Ir.Type {
     const found = self.checked.expression_types.get(expression) orelse return null;
@@ -234,6 +300,193 @@ fn declaredElement(self: *Lower, declaration: Ast.Declaration) Error!?Ir.Type {
 fn expressionType(self: *Lower, expression: *const Ast.Expression) Error!Ir.Type {
     const found = self.checked.expression_types.get(expression) orelse return self.fail(expression.span, "this expression");
     return irType(found.type) orelse self.fail(expression.span, "a value of this type");
+}
+
+/// Registers a struct's key, before any field or signature names it.
+fn nameStruct(self: *Lower, declared: Ast.StructDeclaration) Error!void {
+    const unsupported = declared.class or declared.trait or declared.enumeration or declared.type_parameters.len != 0 or
+        declared.base != null or declared.traits.len != 0 or declared.properties.len != 0 or declared.type_functions.len != 0 or
+        declared.type_fields.len != 0 or declared.types.len != 0;
+    if (unsupported) return self.fail(declared.name_span, "a type declaration of this kind");
+    const info = try self.arena.create(StructInfo);
+    info.* = .{
+        .key = self.keyOf(declared.name),
+        .index = @intCast(self.struct_infos.count()),
+        .declaration = declared,
+        .fields = &.{},
+        .field_names = &.{},
+        .has_default = &.{},
+        .any_default = false,
+    };
+    try self.struct_infos.put(self.arena, info.key, info);
+}
+
+/// The kind the runtime records for a field of `type_` (a payload's for an
+/// optional), as the interpreter's descriptors do.
+fn fieldKind(type_: Ir.Type, payload: ?Ir.Type) Ir.Type {
+    return if (type_ == .optional) payload orelse .nothing else type_;
+}
+
+/// A struct's fields, methods, constructor and defaults, and its descriptor.
+fn declareStruct(self: *Lower, declared: Ast.StructDeclaration) Error!void {
+    const info = self.struct_infos.get(self.keyOf(declared.name)).?;
+    const checked = self.checked.structs.get(info.key) orelse return self.fail(declared.name_span, "this type");
+    const user = checked.user orelse return self.fail(declared.name_span, "this type");
+    info.fields = try self.arena.alloc(FieldInfo, declared.fields.len);
+    const names = try self.arena.alloc([]const u8, declared.fields.len);
+    const defaults = try self.arena.alloc(bool, declared.fields.len);
+    const kinds = try self.arena.alloc(Ir.Type, declared.fields.len);
+    for (declared.fields, info.fields, names, defaults, kinds) |field, *out, *name, *defaulted, *kind| {
+        out.* = .{
+            .name = field.name,
+            .type = try self.annotationType(field.annotation),
+            .payload = try self.annotationPayload(field.annotation),
+            .element = try self.annotationElement(field.annotation),
+        };
+        if (out.type == .optional and out.payload == null) return self.fail(field.name_span, "a field of this type");
+        name.* = field.name;
+        defaulted.* = field.default != null;
+        info.any_default = info.any_default or defaulted.*;
+        kind.* = fieldKind(out.type, out.payload);
+    }
+    info.field_names = names;
+    info.has_default = defaults;
+    try self.struct_types.append(self.arena, .{ .name = info.key, .display_name = user.display_name, .field_names = names, .field_kinds = kinds });
+
+    if (info.any_default) {
+        const flags = try self.arena.alloc(Ir.Type, declared.fields.len);
+        @memset(flags, .bool);
+        info.defaults = try self.newFunctionInfo(flags, null);
+    }
+    if (declared.constructor) |constructor| {
+        for (constructor.parameters) |parameter| if (parameter.default != null) return self.fail(parameter.name_span, "a parameter with a default");
+        info.constructor = try self.signature(constructor.parameters, null);
+    }
+    for (declared.methods) |method| {
+        if (method.type_parameters.len != 0 or method.operator != null or method.abstract_span != null) return self.fail(method.name_span, "a method of this kind");
+        const key = try Resolver.methodKey(self.arena, info.key, method.name);
+        const changing = self.checked.changing_methods.contains(key);
+        // A method that does not change `self` takes it as its first
+        // parameter; a changing one takes it by reference instead.
+        var parameters: std.ArrayList(Ast.Parameter) = .empty;
+        if (!changing) try parameters.append(self.arena, .{ .name = "self", .name_span = method.name_span, .annotation = .{ .span = method.name_span, .name = declared.name, .question_span = null } });
+        try parameters.appendSlice(self.arena, method.parameters);
+        try self.methods.put(self.arena, key, .{ .function = try self.signature(parameters.items, method.return_annotation), .changing = changing, .declaration = method, .owner = info });
+    }
+}
+
+/// A new function's slot and signature, for the parameters written.
+fn signature(self: *Lower, parameters: []const Ast.Parameter, return_annotation: ?Ast.TypeExpression) Error!FunctionInfo {
+    const types = try self.arena.alloc(Ir.Type, parameters.len);
+    const elements = try self.arena.alloc(?Ir.Type, parameters.len);
+    const payloads = try self.arena.alloc(?Ir.Type, parameters.len);
+    for (parameters, types, elements, payloads) |parameter, *type_, *element, *payload| {
+        if (parameter.default != null) return self.fail(parameter.name_span, "a parameter with a default");
+        type_.* = try self.annotationType(parameter.annotation);
+        element.* = try self.annotationElement(parameter.annotation);
+        payload.* = try self.annotationPayload(parameter.annotation);
+    }
+    var info = try self.newFunctionInfo(types, if (return_annotation) |annotation| try self.annotationType(annotation) else null);
+    info.elements = elements;
+    info.payloads = payloads;
+    info.result_payload = if (return_annotation) |annotation| try self.annotationPayload(annotation) else null;
+    return info;
+}
+
+fn newFunctionInfo(self: *Lower, parameters: []const Ir.Type, result: ?Ir.Type) Error!FunctionInfo {
+    const none = try self.arena.alloc(?Ir.Type, parameters.len);
+    @memset(none, null);
+    const info: FunctionInfo = .{
+        .index = @intCast(self.functions.items.len),
+        .parameters = parameters,
+        .elements = none,
+        .payloads = none,
+        .result = result orelse .nothing,
+        .result_payload = null,
+    };
+    try self.functions.append(self.arena, undefined);
+    return info;
+}
+
+/// A struct's methods, constructor and field defaults, as functions.
+fn lowerStruct(self: *Lower, info: *StructInfo) Error!void {
+    const display = self.struct_types.items[info.index].display_name;
+    var methods = self.methods.iterator();
+    while (methods.next()) |entry| {
+        const method = entry.value_ptr.*;
+        if (method.owner != info) continue;
+        var names: std.ArrayList([]const u8) = .empty;
+        if (!method.changing) try names.append(self.arena, "self");
+        for (method.declaration.parameters) |parameter| try names.append(self.arena, parameter.name);
+        try self.lowerBody(method.declaration.name, method.function, names.items, method.declaration.body, method.changing, true, null, info);
+    }
+    if (info.constructor) |constructor| {
+        const names = try self.arena.alloc([]const u8, info.declaration.constructor.?.parameters.len);
+        for (info.declaration.constructor.?.parameters, names) |parameter, *name| name.* = parameter.name;
+        const frame = try std.fmt.allocPrint(self.arena, "the constructor of `{s}`", .{display});
+        try self.lowerBody(frame, constructor, names, info.declaration.constructor.?.body, true, false, null, info);
+    }
+    if (info.defaults) |defaults| {
+        const names = try self.arena.alloc([]const u8, info.fields.len);
+        for (names, 0..) |*name, position| name.* = try std.fmt.allocPrint(self.arena, "(default {d})", .{position});
+        const frame = try std.fmt.allocPrint(self.arena, "the field defaults of `{s}`", .{display});
+        try self.lowerBody(frame, defaults, names, .{ .span = info.declaration.name_span, .statements = &.{} }, true, false, info, info);
+    }
+}
+
+/// One function's body: a method, constructor or defaults when `self_ref`.
+/// For a struct's field defaults, `defaults_of` names the struct, whose
+/// defaults run where their flags say.
+fn lowerBody(self: *Lower, name: []const u8, info: FunctionInfo, names: []const []const u8, body: Ast.Block, self_ref: bool, named: bool, defaults_of: ?*StructInfo, self_struct: ?*StructInfo) Error!void {
+    var builder: Builder = try .init(self, name, info.result, info.parameters, names);
+    builder.self_ref = self_ref;
+    for (info.elements, info.payloads, 0..) |element, payload, position| {
+        if (element) |known| try builder.element_types.put(self.arena, @intCast(position), known);
+        if (payload) |known| try builder.payload_types.put(self.arena, @intCast(position), known);
+    }
+    builder.result_payload = info.result_payload;
+    builder.self_struct = self_struct;
+    if (!self_ref and self_struct != null) try builder.struct_types.put(self.arena, 0, self_struct.?);
+    if (defaults_of) |struct_info| {
+        for (struct_info.declaration.fields, struct_info.fields, 0..) |field, field_info, position| {
+            const default = field.default orelse continue;
+            const run = try builder.newBlock();
+            const after = try builder.newBlock();
+            builder.terminate(.{ .branch = .{ .condition = .{ .local = @intCast(position) }, .then = run, .otherwise = after } });
+            builder.switchTo(run);
+            const value = try builder.convertTo(try builder.expression(default), field_info.type, field_info.payload, default.span);
+            try builder.emit(default.span, .{ .struct_set = .{ .target = .self_ref, .position = @intCast(position), .value = .{ .operand = value, .type = field_info.type } } });
+            builder.terminate(.{ .jump = after });
+            builder.switchTo(after);
+        }
+    } else try builder.block(body);
+    var function = try builder.finish();
+    function.self_ref = self_ref;
+    function.named = named;
+    self.functions.items[info.index] = function;
+}
+
+/// Whether the program's text mentions `name` inside any function or type
+/// declaration: where a changing method's receiver, a module variable, could
+/// be read or changed while the method holds it. The interpreter reports that
+/// as an error; a compiled program would not, so such a call is not compiled.
+fn mentionedInBodies(self: *Lower, name: []const u8) bool {
+    for (self.bodies.items) |span| {
+        const text = self.source.text[span.start..span.end];
+        var from: usize = 0;
+        while (std.mem.indexOfPos(u8, text, from, name)) |at| {
+            from = at + 1;
+            const before_ok = at == 0 or !isNameByte(text[at - 1]);
+            const after = at + name.len;
+            const after_ok = after >= text.len or !isNameByte(text[after]);
+            if (before_ok and after_ok) return true;
+        }
+    }
+    return false;
+}
+
+fn isNameByte(byte: u8) bool {
+    return std.ascii.isAlphanumeric(byte) or byte == '_' or byte == '?' or byte == '!' or byte >= 0x80;
 }
 
 fn declareFunction(self: *Lower, function: Ast.FunctionDeclaration) Error!void {
@@ -291,6 +544,7 @@ fn declareGlobal(self: *Lower, declaration: Ast.Declaration) Error!void {
         return self.fail(declaration.name_span, "a declaration without a type");
     if (try self.declaredElement(declaration)) |element| try self.global_elements.put(self.arena, self.keyOf(declaration.name), element);
     if (try self.declaredPayload(declaration)) |payload| try self.global_payloads.put(self.arena, @intCast(self.globals.items.len), payload);
+    if (self.declaredStruct(declaration)) |info| try self.global_structs.put(self.arena, @intCast(self.globals.items.len), info);
     try self.global_keys.put(self.arena, self.keyOf(declaration.name), @intCast(self.globals.items.len));
     try self.globals.append(self.arena, .{ .name = declaration.name, .type = type_ });
 }
@@ -339,12 +593,18 @@ const Builder = struct {
     loops: std.ArrayList(Loop) = .empty,
     /// The element type of each local that holds a list, where it is known.
     element_types: std.AutoHashMapUnmanaged(Ir.Local, Ir.Type) = .empty,
+    /// The struct type of each local that holds a struct.
+    struct_types: std.AutoHashMapUnmanaged(Ir.Local, *StructInfo) = .empty,
+    /// The struct `self` is, in a method, constructor or defaults.
+    self_struct: ?*StructInfo = null,
     /// The payload type of each local that holds an optional.
     payload_types: std.AutoHashMapUnmanaged(Ir.Local, Ir.Type) = .empty,
     /// The payload type of the function's result, when it is optional.
     result_payload: ?Ir.Type = null,
     /// The payload type of the `if` expression whose arms are being lowered.
     arm_payload: ?Ir.Type = null,
+    /// Whether this function was given its `self` struct by reference.
+    self_ref: bool = false,
     /// Whether this is the entry, whose outermost declarations are the
     /// module's variables.
     top_level: bool = false,
@@ -433,6 +693,7 @@ const Builder = struct {
 
     /// The place a name written here refers to.
     fn place(self: *Builder, name: []const u8, span: Source.Span) Error!struct { place: Ir.Place, type: Ir.Type } {
+        if (self.self_ref and std.mem.eql(u8, name, "self")) return .{ .place = .self_ref, .type = .structure };
         if (self.find(name)) |local| return .{ .place = .{ .local = local }, .type = self.locals.items[local].type };
         if (self.owner.global_keys.get(self.owner.keyOf(name))) |global| {
             return .{ .place = .{ .global = global }, .type = self.owner.globals.items[global].type };
@@ -470,7 +731,7 @@ const Builder = struct {
                 } else self.terminate(.{ .@"return" = null });
             },
             .function_declaration => |function| return self.owner.fail(function.name_span, "a nested function"),
-            .struct_declaration => |declared| return self.owner.fail(declared.name_span, "a type declaration"),
+            .struct_declaration => |declared| if (!self.top_level or self.scopes.items.len != 1) return self.owner.fail(declared.name_span, "a nested type declaration"),
             .raise_statement => |raised| return self.owner.fail(raised.keyword_span, "`raise`"),
             .try_statement => |tried| return self.owner.fail(tried.keyword_span, "`try`"),
             .assert_statement => |assertion| return self.owner.fail(assertion.keyword_span, "`assert`"),
@@ -507,6 +768,7 @@ const Builder = struct {
             null;
         const local = try self.newLocal(declaration_.name, type_);
         if (payload) |known| try self.payload_types.put(self.arena(), local, known);
+        if (self.owner.declaredStruct(declaration_)) |info| try self.struct_types.put(self.arena(), local, info);
         if (try self.owner.declaredElement(declaration_)) |element| try self.element_types.put(self.arena(), local, element);
         try self.scopes.items[self.scopes.items.len - 1].put(self.arena(), declaration_.name, local);
         if (initial) |value| try self.emit(declaration_.name_span, .{ .move = .{ .destination = .{ .local = local }, .source = value } });
@@ -645,6 +907,12 @@ const Builder = struct {
                 try self.emit(span, .{ .move = .{ .destination = .{ .local = copy }, .source = .{ .global = global } } });
                 return .{ .operand = .{ .local = copy }, .type = type_ };
             },
+            // A changing call later in the expression could change it too.
+            .self_ref => {
+                const copy = try self.temporary(type_);
+                try self.emit(span, .{ .move = .{ .destination = .{ .local = copy }, .source = .self_ref } });
+                return .{ .operand = .{ .local = copy }, .type = type_ };
+            },
         }
     }
 
@@ -687,6 +955,7 @@ const Builder = struct {
         return switch (at) {
             .local => |local| self.payload_types.get(local),
             .global => |global| self.owner.global_payloads.get(global),
+            .self_ref => null,
         };
     }
 
@@ -826,7 +1095,7 @@ const Builder = struct {
                 },
                 .bool => if (right.type == .bool and operator.isEquality()) .bool else if ((right.type == .optional or right.type == .nothing) and operator.isEquality()) .value else return self.owner.fail(expression_.span, "this comparison"),
                 .string => if (right.type == .string) .string else if (operator.isEquality()) .value else return self.owner.fail(expression_.span, "this comparison"),
-                .list, .optional, .tuple, .map, .nothing => if (operator.isEquality()) .value else return self.owner.fail(expression_.span, "this comparison"),
+                .list, .optional, .tuple, .map, .structure, .nothing => if (operator.isEquality()) .value else return self.owner.fail(expression_.span, "this comparison"),
             };
             // Compared as values, both sides are wrapped as optionals.
             const left_operand = if (kind == .value) try self.wrapAs(left, left.type, expression_.span) else left.operand;
@@ -869,11 +1138,22 @@ const Builder = struct {
     /// A call to `print`, `write` or a function of the program. Gives the
     /// result, or null when the call gives nothing.
     fn call(self: *Builder, expression_: *const Ast.Expression, call_: Ast.Expression.Call, discarded: bool) Error!?Value {
+        if (call_.callee.data == .member) {
+            // A struct's own methods bind named arguments as constructions do.
+            if (self.owner.checked.method_calls.get(call_.callee)) |key| {
+                if (self.owner.methods.get(key)) |method_info| return try self.structMethod(expression_, call_, call_.callee.data.member, method_info, discarded);
+            }
+            if (call_.names.len != 0) return self.owner.fail(expression_.span, "named arguments");
+            return self.method(expression_, call_, call_.callee.data.member, discarded);
+        }
+        if (call_.callee.data == .name and self.find(call_.callee.data.name) == null) {
+            if (self.owner.struct_infos.get(self.owner.keyOf(call_.callee.data.name))) |info| return try self.construct(expression_, call_, info);
+        }
         if (call_.names.len != 0) return self.owner.fail(expression_.span, "named arguments");
-        if (call_.callee.data == .member) return self.method(expression_, call_, call_.callee.data.member, discarded);
         if (call_.callee.data != .name) return self.owner.fail(call_.callee.span, "calling this");
         const name = call_.callee.data.name;
         if (self.find(name) == null) {
+            if (self.owner.struct_infos.get(self.owner.keyOf(name))) |info| return try self.construct(expression_, call_, info);
             if (self.owner.function_keys.get(self.owner.keyOf(name))) |info| {
                 if (call_.arguments.len != info.parameters.len) return self.owner.fail(expression_.span, "leaving out an argument");
                 const arguments = try self.arena().alloc(Ir.Operand, call_.arguments.len);
@@ -930,7 +1210,7 @@ const Builder = struct {
             .float => .{ .float = value.operand },
             .bool => .{ .bool = value.operand },
             .string => .{ .string = value.operand },
-            .list, .optional, .tuple, .map => .{ .value = .{ .operand = value.operand, .type = value.type } },
+            .list, .optional, .tuple, .map, .structure => .{ .value = .{ .operand = value.operand, .type = value.type } },
             .nothing => .{ .text = "nothing" },
         };
     }
@@ -987,6 +1267,7 @@ const Builder = struct {
     /// A property: section 9.2's `count` of a string's characters.
     fn memberAccess(self: *Builder, expression_: *const Ast.Expression, member_: Ast.Expression.Member) Error!Value {
         if (member_.optional) return self.owner.fail(expression_.span, "this member");
+        if (self.checkedType(member_.base) == .structure or self.fieldOf(member_.base, member_.name) != null) return self.fieldRead(expression_, member_);
         if (member_.position) |position| {
             if (self.checkedType(member_.base) != .tuple) return self.owner.fail(expression_.span, "this member");
             const type_ = self.checkedType(expression_) orelse return self.owner.fail(expression_.span, "this member");
@@ -1097,7 +1378,7 @@ const Builder = struct {
             const current = try self.temporary(value_type);
             try self.emit(span, .{ .map_get_existing = .{ .destination = .{ .local = current }, .map = operandOf(target), .key = typed_key, .payload = value_type, .site = try self.owner.site(key_expression.span) } });
             const right = try self.expression(assignment_.value);
-            break :blk try self.binary(span, operation, .{ .operand = .{ .local = current }, .type = value_type }, right);
+            break :blk try self.binary(assignment_.target_span, operation, .{ .operand = .{ .local = current }, .type = value_type }, right);
         } else try self.expression(assignment_.value);
         if (value.type == .nothing) return self.owner.fail(assignment_.value.span, "storing `nothing` here");
         try self.emit(span, .{ .map_set = .{ .target = target, .key = typed_key, .value = .{ .operand = value.operand, .type = value.type }, .site = try self.owner.site(key_expression.span) } });
@@ -1125,6 +1406,179 @@ const Builder = struct {
             .site = try self.owner.site(call_.arguments[0].span),
         } });
         return if (destination) |local| .{ .operand = .{ .local = local }, .type = result_type } else null;
+    }
+
+    /// The struct a field step names, its info and the field's position.
+    fn fieldOf(self: *Builder, base: *const Ast.Expression, name: []const u8) ?struct { info: *StructInfo, position: u32 } {
+        // `self` is the struct being built or changed, which the checker may
+        // not have typed as an expression of its own (a field default's).
+        const info = if (base.data == .name and std.mem.eql(u8, base.data.name, "self") and self.self_struct != null)
+            self.self_struct.?
+        else blk: {
+            const found = self.owner.checked.expression_types.get(base) orelse return null;
+            const user = found.type.user orelse return null;
+            break :blk self.owner.struct_infos.get(user.name) orelse return null;
+        };
+        for (info.fields, 0..) |field, position| {
+            if (std.mem.eql(u8, field.name, name)) return .{ .info = info, .position = @intCast(position) };
+        }
+        return null;
+    }
+
+    /// Section 10.1's `value.field`.
+    fn fieldRead(self: *Builder, expression_: *const Ast.Expression, member_: Ast.Expression.Member) Error!Value {
+        const field = self.fieldOf(member_.base, member_.name) orelse return self.owner.fail(expression_.span, "this member");
+        const type_ = self.checkedType(expression_) orelse field.info.fields[field.position].type;
+        const base = try self.expression(member_.base);
+        const stored = field.info.fields[field.position].type;
+        const result = try self.temporary(stored);
+        try self.emit(expression_.span, .{ .struct_get = .{ .destination = .{ .local = result }, .operand = base.operand, .position = field.position, .type = stored } });
+        // A narrowed optional field is read as its payload (4.5).
+        if (stored == .optional and type_ != .optional) return self.unwrap(expression_.span, .{ .local = result }, type_);
+        return .{ .operand = .{ .local = result }, .type = stored };
+    }
+
+    /// `value.field = new`, or `value.field += new`, on a struct a variable
+    /// (or `self`, in a changing method) holds.
+    fn fieldAssignment(self: *Builder, span: Source.Span, assignment_: Ast.Assignment) Error!void {
+        const target = try self.place(assignment_.name, assignment_.name_span);
+        if (target.type != .structure) return self.owner.fail(assignment_.target_span, "assigning into this");
+        const step = assignment_.steps[0].field;
+        // The struct's type, from the declaration of what holds it.
+        const info = self.structOfPlace(assignment_.name, target.place) orelse return self.owner.fail(assignment_.target_span, "assigning into this");
+        const position: u32 = for (info.fields, 0..) |field, at| {
+            if (std.mem.eql(u8, field.name, step.name)) break @intCast(at);
+        } else return self.owner.fail(step.span, "assigning into this");
+        const field = info.fields[position];
+        const value: Ir.Operand = if (assignment_.operation) |operation| blk: {
+            const current = try self.temporary(field.type);
+            try self.emit(span, .{ .struct_get = .{ .destination = .{ .local = current }, .operand = operandOf(target.place), .position = position, .type = field.type } });
+            const right = try self.expression(assignment_.value);
+            const result = try self.binary(assignment_.target_span, operation, .{ .operand = .{ .local = current }, .type = field.type }, right);
+            break :blk try self.convertTo(result, field.type, field.payload, span);
+        } else try self.convertTo(try self.expression(assignment_.value), field.type, field.payload, assignment_.value.span);
+        try self.emit(span, .{ .struct_set = .{ .target = target.place, .position = position, .value = .{ .operand = value, .type = field.type } } });
+    }
+
+    /// The struct type a variable holding a struct has: `self`'s for a
+    /// method, or its declaration's.
+    fn structOfPlace(self: *Builder, name: []const u8, at: Ir.Place) ?*StructInfo {
+        if (at == .self_ref or (std.mem.eql(u8, name, "self") and self.self_struct != null)) return self.self_struct;
+        return switch (at) {
+            .local => |local| self.struct_types.get(local),
+            .global => |global| self.owner.global_structs.get(global),
+            .self_ref => self.self_struct,
+        };
+    }
+
+    /// Section 10.2: a struct built from its fields, by position or by name,
+    /// with each left-out field's default run afterwards; or by its own
+    /// constructor, after every default has run.
+    fn construct(self: *Builder, expression_: *const Ast.Expression, call_: Ast.Expression.Call, info: *StructInfo) Error!Value {
+        const result = try self.temporary(.structure);
+        // The arguments are evaluated first, in the order written.
+        const written = try self.arena().alloc(Value, call_.arguments.len);
+        for (call_.arguments, written) |argument, *value| value.* = try self.expression(argument);
+        const call_site = try self.owner.site(expression_.span);
+
+        if (info.constructor) |constructor| {
+            const declared = info.declaration.constructor.?.parameters;
+            const names = try self.arena().alloc([]const u8, declared.len);
+            for (declared, names) |parameter, *name| name.* = parameter.name;
+            const positions = try self.bindArguments(call_, names, try self.arena().alloc(bool, declared.len));
+            const fields = try self.unsetFields(info);
+            try self.emit(expression_.span, .{ .struct_new = .{ .destination = .{ .local = result }, .type_index = info.index, .fields = fields } });
+            if (info.defaults) |defaults| try self.runDefaults(expression_.span, defaults, result, info.has_default, call_site);
+            const arguments = try self.arena().alloc(Ir.Operand, declared.len);
+            for (positions, constructor.parameters, constructor.payloads, arguments) |position, parameter, payload, *out| {
+                const value = written[position orelse return self.owner.fail(expression_.span, "leaving out an argument")];
+                out.* = try self.convertTo(value, parameter, payload, expression_.span);
+            }
+            try self.emit(expression_.span, .{ .call = .{ .function = constructor.index, .arguments = arguments, .destination = null, .site = call_site, .self_slot = .{ .local = result } } });
+            return .{ .operand = .{ .local = result }, .type = .structure };
+        }
+
+        const positions = try self.bindArguments(call_, info.field_names, info.has_default);
+        const fields = try self.arena().alloc(Ir.Typed, info.fields.len);
+        const omitted = try self.arena().alloc(bool, info.fields.len);
+        var any_omitted = false;
+        for (positions, info.fields, fields, omitted) |position, field, *out, *left| {
+            left.* = position == null;
+            any_omitted = any_omitted or left.*;
+            out.* = if (position) |index|
+                .{ .operand = try self.convertTo(written[index], field.type, field.payload, expression_.span), .type = field.type }
+            else
+                .{ .operand = .nothing, .type = .optional };
+        }
+        try self.emit(expression_.span, .{ .struct_new = .{ .destination = .{ .local = result }, .type_index = info.index, .fields = fields } });
+        if (any_omitted) try self.runDefaults(expression_.span, info.defaults.?, result, omitted, call_site);
+        return .{ .operand = .{ .local = result }, .type = .structure };
+    }
+
+    /// Which written argument fills each parameter, as the interpreter binds
+    /// them (`arguments.zig`): positional first, then by name.
+    fn bindArguments(self: *Builder, call_: Ast.Expression.Call, names: []const []const u8, has_default: []const bool) Error![]const ?usize {
+        const positions = try self.arena().alloc(?usize, names.len);
+        if (call_arguments.isPlain(call_, names.len)) {
+            for (positions, 0..) |*position, index| position.* = index;
+            return positions;
+        }
+        if (call_arguments.bind(call_, names, has_default, positions) != .none) return self.owner.fail(call_.callee.span, "this call");
+        return positions;
+    }
+
+    fn unsetFields(self: *Builder, info: *StructInfo) Error![]const Ir.Typed {
+        const fields = try self.arena().alloc(Ir.Typed, info.fields.len);
+        @memset(fields, .{ .operand = .nothing, .type = .optional });
+        return fields;
+    }
+
+    /// Runs the field defaults whose flags are set, on the struct in `local`.
+    fn runDefaults(self: *Builder, span: Source.Span, defaults: FunctionInfo, local: Ir.Local, which: []const bool, call_site: Ir.Site) Error!void {
+        const flags = try self.arena().alloc(Ir.Operand, which.len);
+        for (which, flags) |runs, *flag| flag.* = .{ .bool = runs };
+        // A site of its own: each call's trace frame is its own.
+        _ = call_site;
+        try self.emit(span, .{ .call = .{ .function = defaults.index, .arguments = flags, .destination = null, .site = try self.owner.site(span), .self_slot = .{ .local = local } } });
+    }
+
+    /// A struct's own method. One that changes `self` is given the struct by
+    /// reference, from the variable that holds it.
+    fn structMethod(self: *Builder, expression_: *const Ast.Expression, call_: Ast.Expression.Call, member_: Ast.Expression.Member, called: MethodInfo, discarded: bool) Error!?Value {
+        const method_info = called;
+        const declared = method_info.declaration.parameters;
+        const names = try self.arena().alloc([]const u8, declared.len);
+        for (declared, names) |parameter, *name| name.* = parameter.name;
+        const positions = try self.bindArguments(call_, names, try self.arena().alloc(bool, declared.len));
+        var self_slot: ?Ir.Place = null;
+        var receiver: ?Ir.Operand = null;
+        if (method_info.changing) {
+            if (member_.base.data != .name) return self.owner.fail(expression_.span, "changing a struct that is not a variable");
+            const name = member_.base.data.name;
+            const target = try self.place(name, member_.base.span);
+            if (target.place == .global and self.owner.mentionedInBodies(name)) return self.owner.fail(expression_.span, "this changing method on a module variable another function names");
+            self_slot = target.place;
+        } else receiver = (try self.expression(member_.base)).operand;
+        const offset: usize = if (method_info.changing) 0 else 1;
+        const arguments = try self.arena().alloc(Ir.Operand, offset + declared.len);
+        if (receiver) |operand| arguments[0] = operand;
+        // Evaluated in the order written, then placed by parameter.
+        const written = try self.arena().alloc(Value, call_.arguments.len);
+        for (call_.arguments, written) |argument, *value| value.* = try self.expression(argument);
+        for (positions, method_info.function.parameters[offset..], method_info.function.payloads[offset..], arguments[offset..]) |position, parameter, payload, *out| {
+            const value = written[position orelse return self.owner.fail(expression_.span, "leaving out an argument")];
+            out.* = try self.convertTo(value, parameter, payload, expression_.span);
+        }
+        const result = method_info.function.result;
+        const destination: ?Ir.Local = if (result == .nothing or discarded) null else try self.temporary(result);
+        try self.emit(expression_.span, .{ .call = .{
+            .function = method_info.function.index,
+            .arguments = arguments,
+            .destination = if (destination) |local| .{ .local = local } else null,
+            .site = try self.owner.site(expression_.span),
+            .self_slot = self_slot,
+        } });
+        return if (destination) |local| .{ .operand = .{ .local = local }, .type = result } else null;
     }
 
     /// Section 4.5's `value.or(default)`: the optional's value when it holds
@@ -1230,6 +1684,7 @@ const Builder = struct {
     /// `items[position] = value`, or `items[position] += value`, on a list a
     /// variable holds.
     fn elementAssignment(self: *Builder, span: Source.Span, assignment_: Ast.Assignment) Error!void {
+        if (assignment_.steps.len == 1 and assignment_.steps[0] == .field) return self.fieldAssignment(span, assignment_);
         if (assignment_.steps.len != 1 or assignment_.steps[0] != .index) return self.owner.fail(assignment_.target_span, "assigning into a nested collection or a field");
         const target = try self.place(assignment_.name, assignment_.name_span);
         if (target.type == .map) return self.entryAssignment(span, assignment_, target.place);
@@ -1242,7 +1697,7 @@ const Builder = struct {
             const current = try self.temporary(element);
             try self.emit(span, .{ .list_get = .{ .destination = .{ .local = current }, .list = operandOf(target.place), .position = at, .element = element, .site = try self.owner.site(index_expression.span) } });
             const right = try self.expression(assignment_.value);
-            const result = try self.binary(span, operation, .{ .operand = .{ .local = current }, .type = element }, right);
+            const result = try self.binary(assignment_.target_span, operation, .{ .operand = .{ .local = current }, .type = element }, right);
             break :blk try self.convert(result, element, span);
         } else try self.convert(try self.expression(assignment_.value), element, assignment_.value.span);
         try self.emit(span, .{ .list_set = .{ .target = target.place, .position = at, .value = .{ .operand = value, .type = element }, .site = try self.owner.site(index_expression.span) } });
@@ -1345,7 +1800,10 @@ const Builder = struct {
     /// which is its display.
     fn method(self: *Builder, expression_: *const Ast.Expression, call_: Ast.Expression.Call, member_: Ast.Expression.Member, discarded: bool) Error!?Value {
         if (member_.optional or member_.position != null) return self.owner.fail(expression_.span, "this call");
-        if (self.owner.checked.method_calls.contains(call_.callee)) return self.owner.fail(expression_.span, "a method of a type");
+        if (self.owner.checked.method_calls.get(call_.callee)) |key| {
+            if (self.owner.methods.get(key)) |method_info| return try self.structMethod(expression_, call_, member_, method_info, discarded);
+            return self.owner.fail(expression_.span, "a method of this type");
+        }
         const receiver_type = self.checkedType(member_.base) orelse return self.owner.fail(expression_.span, "a method of this value");
         if (receiver_type == .optional) {
             if (!std.mem.eql(u8, member_.name, "or") or call_.arguments.len != 1) return self.owner.fail(expression_.span, "this method on an optional");
@@ -1415,6 +1873,7 @@ fn operandOf(place: Ir.Place) Ir.Operand {
     return switch (place) {
         .local => |local| .{ .local = local },
         .global => |global| .{ .global = global },
+        .self_ref => .self_ref,
     };
 }
 
