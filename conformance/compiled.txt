@@ -47,6 +47,8 @@ runtime-errors/index-out-of-range.em
 runtime-errors/insert-at-past-count.em
 runtime-errors/int-absolute-overflow.em
 runtime-errors/integer-overflow.em
+runtime-errors/list-compound-assignment-out-of-range.em
+runtime-errors/list-element-assignment-out-of-range.em
 runtime-errors/list-portions.em
 runtime-errors/list-repeat-negative.em
 runtime-errors/list-sum-overflow.em

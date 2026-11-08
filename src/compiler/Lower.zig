@@ -1125,12 +1125,12 @@ const Builder = struct {
         const element = self.elementOfPlace(assignment_) orelse return self.owner.fail(assignment_.target_span, "assigning into this");
         const value: Ir.Operand = if (assignment_.operation) |operation| blk: {
             const current = try self.temporary(element);
-            try self.emit(span, .{ .list_get = .{ .destination = .{ .local = current }, .list = operandOf(target.place), .position = at, .element = element, .site = try self.owner.site(assignment_.target_span) } });
+            try self.emit(span, .{ .list_get = .{ .destination = .{ .local = current }, .list = operandOf(target.place), .position = at, .element = element, .site = try self.owner.site(index_expression.span) } });
             const right = try self.expression(assignment_.value);
             const result = try self.binary(span, operation, .{ .operand = .{ .local = current }, .type = element }, right);
             break :blk try self.convert(result, element, span);
         } else try self.convert(try self.expression(assignment_.value), element, assignment_.value.span);
-        try self.emit(span, .{ .list_set = .{ .target = target.place, .position = at, .value = .{ .operand = value, .type = element }, .site = try self.owner.site(assignment_.target_span) } });
+        try self.emit(span, .{ .list_set = .{ .target = target.place, .position = at, .value = .{ .operand = value, .type = element }, .site = try self.owner.site(index_expression.span) } });
     }
 
     /// The element type of the list variable an element assignment changes,

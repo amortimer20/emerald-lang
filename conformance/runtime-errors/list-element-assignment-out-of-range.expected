@@ -1,0 +1,4 @@
+runtime-errors/list-element-assignment-out-of-range.em:5:8: index 2 is outside this list, which has 2 elements
+  scores[2] = 70
+         ^
+Valid indices are 0 through 1.
