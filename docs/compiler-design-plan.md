@@ -335,6 +335,21 @@ reported at the whole target, where the interpreter reports at the index; it is 
 `runtime-errors/` cases that hold both engines to it. *Not yet:* ranges as values (`const r =
 1..5`, `r.count`, `for i in r`); only `for` over a written range compiles, and ranges join a later
 part. `compiled.txt` grows to 72 cases, still none that builds and behaves differently.
+*Re-split again:* 3e is structs alone; classes (shared objects, inheritance, methods chosen at run
+time, properties), enums and traits follow as their own parts, then closures. 3e done on
+`claude/compiler-structs`: a struct is the runtime's `Heap.StructValue`, its descriptor built once
+at startup with the interpreter's names and kinds, so display and equality are the interpreter's.
+Construction binds arguments with `arguments.zig`, as the interpreter does; field defaults run
+afterwards as one function per struct, under the interpreter's trace frame ("the field defaults
+of `X`"), and a custom constructor runs after every default. The IR gained `self` by reference
+(`Function.self_ref`, `Place.self_ref`) for changing methods, constructors and defaults; a call
+passes the slot holding the struct. The interpreter takes a changing method's receiver out of its
+variable for the call, so reading the variable meanwhile is an error; passing the slot instead is
+exact unless something reads it, so a call on a module variable that any function or type body
+names is refused. Starting 3e also found that an overflow in `xs[0] += 1` or `d[k] += 1` (3b, 3d)
+underlined the statement where the interpreter underlines the target; fixed, with cases for list,
+dictionary and struct forms. *Not yet:* nested paths such as `a.b.c = v` or `a.items.append(v)`.
+`compiled.txt` grows to 81 cases, still none that builds and behaves differently.
 
 **Slice 4: errors.** `raise`, `try`, `catch`, error types, and the runtime errors with the
 shared messages; the `runtime-errors/` cases join the list.

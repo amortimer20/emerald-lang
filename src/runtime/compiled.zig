@@ -364,6 +364,7 @@ pub const EmValue = extern struct {
         list: ?*Heap.List,
         tuple: ?*Heap.Tuple,
         map: ?*Heap.Map,
+        structure: ?*Heap.StructValue,
     },
 };
 
@@ -377,6 +378,7 @@ fn fromC(value: EmValue) Value {
         .list => listValue(value.as.list.?),
         .tuple => .{ .data = .{ .tuple = value.as.tuple.? } },
         .map => .{ .data = .{ .map = value.as.map.? } },
+        .struct_value => .{ .data = .{ .struct_value = value.as.structure.? } },
         else => unreachable, // generated C holds no other kind yet
     };
 }
@@ -391,6 +393,7 @@ fn toC(value: Value) EmValue {
         .list => |list| .{ .kind = @backingInt(Value.Kind.list), .as = .{ .list = list } },
         .tuple => |tuple| .{ .kind = @backingInt(Value.Kind.tuple), .as = .{ .tuple = tuple } },
         .map => |map| .{ .kind = @backingInt(Value.Kind.map), .as = .{ .map = map } },
+        .struct_value => |instance| .{ .kind = @backingInt(Value.Kind.struct_value), .as = .{ .structure = instance } },
         else => unreachable, // the compiler asks only for natives giving these
     };
 }
@@ -660,4 +663,64 @@ export fn em_string_characters(text: *Heap.Text) *Heap.List {
         list.items.append(gpa, heap.copyText(cluster) catch outOfMemory()) catch outOfMemory();
     }
     return list;
+}
+
+// Structs (slice 3e). A struct value is the runtime's own `Heap.StructValue`,
+// described by a `Value.StructType` the program builds once at startup with
+// the interpreter's names and kinds, so display and equality are the
+// interpreter's. A struct is a value: a change goes through the slot holding
+// it, which is made its only holder first (`Heap.uniqueStruct`).
+
+fn structValue(instance: *Heap.StructValue) Value {
+    return .{ .data = .{ .struct_value = instance } };
+}
+
+export fn em_retain_struct(instance: ?*Heap.StructValue) void {
+    if (instance) |held| _ = Heap.retain(structValue(held));
+}
+
+export fn em_release_struct(instance: ?*Heap.StructValue) void {
+    if (instance) |held| heap.release(structValue(held));
+}
+
+/// The descriptor of a struct type: `name` is its program-wide key and
+/// `display_name` how a value shows it; each field has a name and the kind
+/// the interpreter gives it. Made once and cached in `cell`.
+export fn em_struct_descriptor(cell: *?*Value.StructType, name: [*:0]const u8, display_name: [*:0]const u8, names: [*]const [*:0]const u8, kinds: [*]const u8, count: usize) *Value.StructType {
+    if (cell.*) |known| return known;
+    const fields = gpa.alloc(Value.StructType.Field, count) catch outOfMemory();
+    var positions: std.StringHashMapUnmanaged(usize) = .empty;
+    for (fields, 0..) |*field, position| {
+        field.* = .{ .name = std.mem.span(names[position]), .kind = @fromBackingInt(@intCast(kinds[position])) };
+        positions.put(gpa, field.name, position) catch outOfMemory();
+    }
+    const descriptor = gpa.create(Value.StructType) catch outOfMemory();
+    descriptor.* = .{ .name = std.mem.span(name), .display_name = std.mem.span(display_name), .fields = fields, .field_positions = positions };
+    cell.* = descriptor;
+    return descriptor;
+}
+
+/// A new struct of `descriptor`'s type, holding a new reference to each
+/// field's value, widened to the field's kind.
+export fn em_struct_new(descriptor: *const Value.StructType, values: [*]const EmValue, count: usize) *Heap.StructValue {
+    const fields = gpa.alloc(Value, count) catch outOfMemory();
+    for (values[0..count], fields, descriptor.fields) |value, *field, metadata| {
+        field.* = Native.widen(Heap.retain(fromC(value)), metadata.kind);
+    }
+    return heap.createStruct(descriptor, fields) catch outOfMemory();
+}
+
+/// A new reference to the value of field `position`.
+export fn em_struct_get(instance: *Heap.StructValue, position: usize) EmValue {
+    return toC(Heap.retain(instance.fields[position]));
+}
+
+/// `value.field = new`, through the slot holding the struct.
+export fn em_struct_set(slot: **Heap.StructValue, position: usize, value: EmValue) void {
+    var held = structValue(slot.*);
+    const instance = heap.uniqueStruct(&held) catch outOfMemory();
+    slot.* = instance;
+    const old = instance.fields[position];
+    instance.fields[position] = Native.widen(Heap.retain(fromC(value)), instance.descriptor.fields[position].kind);
+    heap.release(old);
 }

@@ -34,6 +34,21 @@ pub fn emit(gpa: std.mem.Allocator, program: Ir.Program, source: *const Source, 
         \\
     );
     for (program.literals, 0..) |_, index| try out.print("static em_text *em_literal_{d};\n", .{index});
+    for (program.structs, 0..) |struct_type, index| {
+        try out.print("static em_struct_type *em_type_{d};\n", .{index});
+        if (struct_type.field_names.len == 0) continue;
+        try out.print("static const char *const em_type_names_{d}[] = {{ ", .{index});
+        for (struct_type.field_names, 0..) |name, position| {
+            if (position != 0) try out.writeAll(", ");
+            try writeString(out, name);
+        }
+        try out.print(" }};\nstatic const uint8_t em_type_kinds_{d}[] = {{ ", .{index});
+        for (struct_type.field_kinds, 0..) |kind, position| {
+            if (position != 0) try out.writeAll(", ");
+            try out.writeAll(kindName(kind));
+        }
+        try out.writeAll(" };\n");
+    }
 
     // Where each failure and call is reported.
     for (program.sites, 0..) |span, index| {
@@ -57,7 +72,7 @@ pub fn emit(gpa: std.mem.Allocator, program: Ir.Program, source: *const Source, 
         defer location.deinit();
         try location.writer.print("{s}:{d}:{d}", .{ source.path, at.line, at.column });
         try writeString(out, location.written());
-        try out.writeAll(", true };\n");
+        try out.print(", {s} }};\n", .{if (program.functions[called.function].named) "true" else "false"});
     };
     try out.writeAll("\n");
 
@@ -96,6 +111,7 @@ fn cType(type_: Ir.Type) []const u8 {
         .optional => "em_value ",
         .tuple => "em_tuple *",
         .map => "em_map *",
+        .structure => "em_struct *",
         .nothing => "void",
     };
 }
@@ -107,6 +123,7 @@ fn retainName(type_: Ir.Type) []const u8 {
         .optional => "em_retain_value",
         .tuple => "em_retain_tuple",
         .map => "em_retain_map",
+        .structure => "em_retain_struct",
         else => "em_retain",
     };
 }
@@ -117,6 +134,7 @@ fn releaseName(type_: Ir.Type) []const u8 {
         .optional => "em_release_value",
         .tuple => "em_release_tuple",
         .map => "em_release_map",
+        .structure => "em_release_struct",
         else => "em_release",
     };
 }
@@ -132,6 +150,7 @@ fn kindName(type_: Ir.Type) []const u8 {
         .list => "EM_KIND_LIST",
         .tuple => "EM_KIND_TUPLE",
         .map => "EM_KIND_MAP",
+        .structure => "EM_KIND_STRUCT",
         // An optional is an `em_value` already, and passes as itself.
         .optional => unreachable,
     };
@@ -152,6 +171,7 @@ fn fieldName(type_: Ir.Type) []const u8 {
         .list => "list",
         .tuple => "tuple",
         .map => "map",
+        .structure => "structure",
         .nothing, .optional => unreachable, // these cross as whole values
     };
 }
@@ -159,6 +179,10 @@ fn fieldName(type_: Ir.Type) []const u8 {
 fn signature(out: *Writer, function: Ir.Function, index: usize) Writer.Error!void {
     try out.print("static int em_function_{d}(", .{index});
     var first = true;
+    if (function.self_ref) {
+        try out.writeAll("em_struct **em_self");
+        first = false;
+    }
     for (function.locals[0..function.parameter_count], 0..) |parameter, position| {
         if (!first) try out.writeAll(", ");
         first = false;
@@ -266,6 +290,7 @@ const FunctionEmitter = struct {
             .float => |number| try out.print("{x}", .{number}),
             .bool => |truth| try out.writeAll(if (truth) "true" else "false"),
             .nothing => try out.writeAll("(em_value){0}"),
+            .self_ref => try out.writeAll("(*em_self)"),
             .literal => |index| {
                 const text = self.program.literals[index];
                 try out.print("em_literal(&em_literal_{d}, ", .{index});
@@ -279,6 +304,7 @@ const FunctionEmitter = struct {
         return switch (at) {
             .local => |local| self.function.locals[local].type,
             .global => |global| self.program.globals[global].type,
+            .self_ref => .structure,
         };
     }
 
@@ -296,6 +322,7 @@ const FunctionEmitter = struct {
         try self.operand(switch (at) {
             .local => |local| .{ .local = local },
             .global => |global| .{ .global = global },
+            .self_ref => .self_ref,
         });
     }
 
@@ -475,6 +502,34 @@ const FunctionEmitter = struct {
                 try self.line_("{ em_list *t = em_string_characters(@);", .{characters.operand});
                 try self.takeInto(characters.destination);
                 try self.out.writeAll(" }\n");
+            },
+            .struct_new => |built| {
+                const struct_type = self.program.structs[built.type_index];
+                try self.out.writeAll("    {");
+                try self.valueArray(built.fields);
+                try self.out.print(" em_struct *t = em_struct_new(em_struct_descriptor(&em_type_{d}, ", .{built.type_index});
+                try writeString(self.out, struct_type.name);
+                try self.out.writeAll(", ");
+                try writeString(self.out, struct_type.display_name);
+                if (struct_type.field_names.len != 0) {
+                    try self.out.print(", em_type_names_{d}, em_type_kinds_{d}, {d}), ", .{ built.type_index, built.type_index, struct_type.field_names.len });
+                } else try self.out.writeAll(", 0, 0, 0), ");
+                try self.arrayArguments(built.fields.len);
+                try self.out.writeAll(");");
+                try self.takeInto(built.destination);
+                try self.out.writeAll(" }\n");
+            },
+            .struct_get => |got| {
+                try self.line_("{ em_value r = em_struct_get(@, " ++ "@);", .{ got.operand, positionText(&site_buffer, got.position) });
+                try self.storeResult(got.destination, got.type);
+                try self.out.writeAll(" }\n");
+            },
+            .struct_set => |set| {
+                try self.out.writeAll("    em_struct_set(&");
+                try self.place(set.target);
+                try self.out.print(", {d}, ", .{set.position});
+                try self.emValue(set.value);
+                try self.out.writeAll(");\n");
             },
             .tuple_get => |got| {
                 try self.line_("{ em_value r = em_tuple_get(@, " ++ "@);", .{ got.tuple, positionText(&site_buffer, got.position) });
@@ -659,12 +714,19 @@ const FunctionEmitter = struct {
             try out.print("    {{ {s} t = {{0}};", .{cType(callee.result)});
         } else try out.writeAll("    {");
         try out.print(" if (em_function_{d}(", .{called.function});
-        for (called.arguments, 0..) |argument, position| {
-            if (position != 0) try out.writeAll(", ");
+        var any = false;
+        if (called.self_slot) |slot| {
+            try out.writeAll("&");
+            try self.place(slot);
+            any = true;
+        }
+        for (called.arguments) |argument| {
+            if (any) try out.writeAll(", ");
+            any = true;
             try self.operand(argument);
         }
         if (callee.result != .nothing) {
-            if (called.arguments.len != 0) try out.writeAll(", ");
+            if (any) try out.writeAll(", ");
             try out.writeAll("&t");
         }
         try out.print(")) {{ em_trace(&em_frame_{d}); EM_FAIL; }}", .{called.site});

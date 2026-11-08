@@ -9,7 +9,7 @@
 //!
 //! Slice 2 has the scalars (`Int`, `Float`, `Bool`), functions, control flow
 //! and `print`; slice 3a adds `String`, the first value on the heap, 3b
-//! lists, 3c optionals and tuples, and 3d dictionaries and sets.
+//! lists, 3c optionals and tuples, 3d dictionaries and sets, and 3e structs.
 //!
 //! A heap value is owned by the slot that holds it. Every local and global of
 //! a heap type owns one reference, or holds nothing yet; storing into one
@@ -32,6 +32,17 @@ pub const Program = struct {
     sites: []const Source.Span,
     /// The text of each string literal, by `Operand.literal`.
     literals: []const []const u8,
+    /// Each struct type's descriptor, by `struct_new`'s index.
+    structs: []const StructType = &.{},
+};
+
+/// What the runtime needs to know of a struct type: its key, how a value
+/// shows it, and each field's name and kind (a payload's for an optional).
+pub const StructType = struct {
+    name: []const u8,
+    display_name: []const u8,
+    field_names: []const []const u8,
+    field_kinds: []const Type,
 };
 
 pub const Type = enum {
@@ -51,11 +62,13 @@ pub const Type = enum {
     tuple,
     /// Section 8.2's `Dict[K, V]` or `Set[T]`, the runtime's one map.
     map,
+    /// Section 10.1's struct, a value with named fields.
+    structure,
 
     /// Whether a slot of this type owns a reference on the heap.
     pub fn counted(self: Type) bool {
         return switch (self) {
-            .string, .list, .optional, .tuple, .map => true,
+            .string, .list, .optional, .tuple, .map, .structure => true,
             .nothing, .int, .float, .bool => false,
         };
     }
@@ -76,6 +89,13 @@ pub const Function = struct {
     result: Type,
     /// The first block is where the function starts.
     blocks: []const Block,
+    /// Whether the function changes a struct it is given by reference, as
+    /// `self`, before its parameters: a changing method, a constructor, or a
+    /// struct's field defaults. `Place.self_ref` is that struct's slot.
+    self_ref: bool = false,
+    /// Whether `name` is one the program wrote, which a trace quotes, or a
+    /// description such as "the constructor of `Node`", which it does not.
+    named: bool = true,
 };
 
 pub const LocalInfo = struct {
@@ -99,6 +119,8 @@ pub const Site = u32;
 pub const Place = union(enum) {
     local: Local,
     global: GlobalIndex,
+    /// The struct a function was given by reference (`Function.self_ref`).
+    self_ref,
 };
 
 /// A value an instruction reads.
@@ -112,6 +134,8 @@ pub const Operand = union(enum) {
     literal: u32,
     /// `nothing`, as an optional.
     nothing,
+    /// The struct a function was given by reference.
+    self_ref,
 };
 
 /// An operand with its type, where an instruction takes values of several.
@@ -146,7 +170,9 @@ pub const Instruction = struct {
         /// One link of a comparison; the operands' types are `kind`'s.
         compare: struct { operator: ComparisonOperator, kind: Comparison, destination: Place, left: Operand, right: Operand },
         /// A call that can fail, reported in a trace at `site`.
-        call: struct { function: FunctionIndex, arguments: []const Operand, destination: ?Place, site: Site },
+        /// A call that can fail, reported in a trace at `site`. A function
+        /// that takes `self` by reference is passed `self_slot`.
+        call: struct { function: FunctionIndex, arguments: []const Operand, destination: ?Place, site: Site, self_slot: ?Place = null },
         /// Part of a line of output.
         write: Write,
         /// Section 9's `+` on two strings.
@@ -204,6 +230,14 @@ pub const Instruction = struct {
         map_items: struct { destination: Place, map: Operand },
         /// What `for` visits in a string, its characters, as a new list.
         string_characters: struct { destination: Place, operand: Operand },
+        /// A new struct of `Program.structs[type_index]`'s type, a value for
+        /// each field in order (`nothing` for one not set yet).
+        struct_new: struct { destination: Place, type_index: u32, fields: []const Typed },
+        /// The value of field `position`, a `type`.
+        struct_get: struct { destination: Place, operand: Operand, position: u32, type: Type },
+        /// `value.field = new` on the struct `target` holds, which is copied
+        /// first if anything else shares it.
+        struct_set: struct { target: Place, position: u32, value: Typed },
     };
 
     pub const Comparison = enum {
