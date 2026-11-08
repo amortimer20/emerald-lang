@@ -91,9 +91,10 @@ void em_builder_bool(em_builder *builder, bool value);
 em_text *em_builder_finish(em_builder *builder);
 
 /* A value crossing to a native, tagged in the runtime's `Value.Kind` order. */
-enum { EM_KIND_NOTHING, EM_KIND_BOOL, EM_KIND_INT, EM_KIND_FLOAT, EM_KIND_STRING, EM_KIND_BYTES, EM_KIND_RANGE, EM_KIND_LIST, EM_KIND_TUPLE };
+enum { EM_KIND_NOTHING, EM_KIND_BOOL, EM_KIND_INT, EM_KIND_FLOAT, EM_KIND_STRING, EM_KIND_BYTES, EM_KIND_RANGE, EM_KIND_LIST, EM_KIND_TUPLE, EM_KIND_MAP };
 typedef struct em_list em_list;
 typedef struct em_tuple em_tuple;
+typedef struct em_map em_map;
 typedef struct {
     uint8_t kind;
     union {
@@ -103,6 +104,7 @@ typedef struct {
         em_text *text;
         em_list *list;
         em_tuple *tuple;
+        em_map *map;
     } as;
 } em_value;
 
@@ -129,5 +131,18 @@ void em_retain_tuple(em_tuple *tuple);
 void em_release_tuple(em_tuple *tuple);
 em_tuple *em_tuple_new(const em_value *items, size_t count);
 em_value em_tuple_get(em_tuple *tuple, size_t position);
+
+/* Dictionaries and sets, held as lists are. */
+void em_retain_map(em_map *map);
+void em_release_map(em_map *map);
+em_map *em_map_new(uint8_t key_kind, uint8_t value_kind, bool is_set);
+int em_map_put(em_map *map, em_value key, em_value value, const em_site *site);
+int em_map_set(em_map **slot, em_value key, em_value value, const em_site *site);
+int em_map_get(em_map *map, em_value key, em_value *result, const em_site *site);
+int em_map_get_existing(em_map *map, em_value key, em_value *result, const em_site *site);
+int64_t em_map_count(em_map *map);
+int em_map_change(em_map **slot, int method, const em_value *arguments, size_t count, uint8_t expected, em_value *result, const em_site *site);
+em_list *em_map_items(em_map *map);
+em_list *em_string_characters(em_text *text);
 
 #endif
