@@ -323,6 +323,18 @@ default only when the value is absent. Tuples get literals, `.0` members, destru
 declarations and assignment, and `for` over a list of tuples. `==` on optionals, lists and tuples
 compares them as values. `compiled.txt` grows to 63 cases, still none that builds and behaves
 differently.
+3d done on `claude/compiler-maps`: a dictionary or set is the runtime's `Heap.Map`, held as lists
+are, and `add`, `remove` and `merge` moved from the interpreter into `MapMethods.change`. Lowering
+compiles dictionary and set literals (an empty `[]` is whichever the checker expected), lookup as
+an optional, entry assignment with compound operators (which need the entry, as the interpreter's
+do), `count`, the changing and read-only methods, display, equality, and `for` over a dictionary's
+`(key, value)` items, a set's members or a string's characters, each as it was when the loop
+began. The runtime widens what it stores to the map's kinds, so entry assignment needs no element
+types. Starting 3d also found a 3b bug no case covered: a list element assignment past the end was
+reported at the whole target, where the interpreter reports at the index; it is fixed, with two
+`runtime-errors/` cases that hold both engines to it. *Not yet:* ranges as values (`const r =
+1..5`, `r.count`, `for i in r`); only `for` over a written range compiles, and ranges join a later
+part. `compiled.txt` grows to 72 cases, still none that builds and behaves differently.
 
 **Slice 4: errors.** `raise`, `try`, `catch`, error types, and the runtime errors with the
 shared messages; the `runtime-errors/` cases join the list.
