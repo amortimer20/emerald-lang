@@ -362,6 +362,7 @@ pub const EmValue = extern struct {
         boolean: bool,
         text: ?*Heap.Text,
         list: ?*Heap.List,
+        tuple: ?*Heap.Tuple,
     },
 };
 
@@ -373,6 +374,7 @@ fn fromC(value: EmValue) Value {
         .float => .initFloat(value.as.float),
         .string => textValue(value.as.text.?),
         .list => listValue(value.as.list.?),
+        .tuple => .{ .data = .{ .tuple = value.as.tuple.? } },
         else => unreachable, // generated C holds no other kind yet
     };
 }
@@ -385,6 +387,7 @@ fn toC(value: Value) EmValue {
         .float => |number| .{ .kind = @backingInt(Value.Kind.float), .as = .{ .float = number } },
         .string => |text| .{ .kind = @backingInt(Value.Kind.string), .as = .{ .text = text } },
         .list => |list| .{ .kind = @backingInt(Value.Kind.list), .as = .{ .list = list } },
+        .tuple => |tuple| .{ .kind = @backingInt(Value.Kind.tuple), .as = .{ .tuple = tuple } },
         else => unreachable, // the compiler asks only for natives giving these
     };
 }
@@ -497,4 +500,42 @@ export fn em_builder_value(builder: *Builder, value: EmValue) void {
 export fn em_equal_values(left: EmValue, right: EmValue) bool {
     var ctx = context();
     return Value.equals(gpa, fromC(left), fromC(right), ctx.equatable()) catch outOfMemory();
+}
+
+// Optionals and tuples (slice 3c). An optional in generated C is an
+// `em_value` whose kind is `nothing` when it is absent, and which owns a
+// reference when it holds a heap value. A tuple is the runtime's own
+// `Heap.Tuple`, which never changes once built, so it is shared freely.
+
+/// Retains whatever heap value `value` holds; nothing else needs it.
+export fn em_retain_value(value: EmValue) void {
+    _ = Heap.retain(fromC(value));
+}
+
+export fn em_release_value(value: EmValue) void {
+    heap.release(fromC(value));
+}
+
+export fn em_retain_tuple(tuple: ?*Heap.Tuple) void {
+    if (tuple) |held| _ = Heap.retain(.{ .data = .{ .tuple = held } });
+}
+
+export fn em_release_tuple(tuple: ?*Heap.Tuple) void {
+    if (tuple) |held| heap.release(.{ .data = .{ .tuple = held } });
+}
+
+/// Section 8.2's `(a, b)`, holding a new reference to each item.
+export fn em_tuple_new(items: [*]const EmValue, count: usize) *Heap.Tuple {
+    const values = gpa.alloc(Value, count) catch outOfMemory();
+    const kinds = gpa.alloc(Value.Kind, count) catch outOfMemory();
+    for (items[0..count], values, kinds) |item, *value, *kind| {
+        value.* = Heap.retain(fromC(item));
+        kind.* = value.kind();
+    }
+    return heap.createTuple(values, kinds) catch outOfMemory();
+}
+
+/// Section 8.2's `entry.0`, a new reference to the item.
+export fn em_tuple_get(tuple: *Heap.Tuple, position: usize) EmValue {
+    return toC(Heap.retain(tuple.items[position]));
 }

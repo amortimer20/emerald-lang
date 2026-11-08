@@ -6613,3 +6613,22 @@ copying, changing and passing lists showed only the global list and one literal 
 `compiled.txt` grows from 43 cases to 55, and still none that builds behaves differently. One
 small surprise: the command-line test from slice 2 that shows the build refusing a program used a
 list, which now compiles, so it uses a dictionary until 3c.
+
+## 2026-11-07: Compiler slice 3c: optionals and tuples
+
+Slice 3b merged as PR #77. Optionals came before dictionaries, since a dictionary lookup gives
+one, and so do `index_of`, `first` and many more. A compiled optional is the runtime's tagged
+`em_value`, absent when its kind is `nothing`; a narrowed read unwraps it, using the type the
+checker gave that read.
+
+Testing found the one trap worth recording: wrapping needs the payload's type. `var rate: Float?
+= 2` must hold `2.0`, as the interpreter widens what it stores, but the value being wrapped is an
+`Int` and the optional slot says nothing of its payload. Lowering now records each optional's
+payload from declarations, parameters, results and the checker's types for list and tuple items,
+and where it does not know one it refuses to compile the wrap rather than risk printing `2`. Two
+smaller bugs surfaced in the same test: an optional result from a native crashed the emitter, and
+a call's result temporary was zeroed with `= 0`, which C rejects for a struct.
+
+Tuples, destructuring and `for (name, score) in pairs` came with them. `compiled.txt` grows from
+55 cases to 63, still with none that builds and behaves differently; the live heap after 1,000
+iterations of optionals and tuples held only literals and the one global.
