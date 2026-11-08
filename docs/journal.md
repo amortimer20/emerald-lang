@@ -6632,3 +6632,23 @@ a call's result temporary was zeroed with `= 0`, which C rejects for a struct.
 Tuples, destructuring and `for (name, score) in pairs` came with them. `compiled.txt` grows from
 55 cases to 63, still with none that builds and behaves differently; the live heap after 1,000
 iterations of optionals and tuples held only literals and the one global.
+
+## 2026-11-07: Compiler slice 3d: dictionaries and sets
+
+Slice 3c merged as PR #78. Before starting 3d I checked a location I had not compared in 3b, and it
+was wrong: `scores[2] = 70` past the end of a list was reported at the whole target in compiled
+code, where the interpreter points at the index. No conformance case covered an element
+assignment's error, which is why discovery never saw it. It is fixed, and two `runtime-errors/`
+cases (a plain assignment and a `+=`) now hold both engines to the interpreter's location.
+
+Then dictionaries and sets, both the runtime's `Heap.Map`. As with lists, the methods that change
+one (`add`, `remove`, `merge`) moved from the interpreter into `MapMethods.change` first. A change
+goes through the slot holding the map, made its only holder first. The runtime widens what it
+stores to the map's kinds, which spared lowering the bookkeeping lists needed. `for` now also
+covers a dictionary's `(key, value)` items, a set's members and a string's characters, all through
+one loop over a list of items. The live heap after the loop test held 7 objects whether it ran 10
+iterations or 1,000.
+
+`compiled.txt` grows from 65 cases to 72, still with none that builds and behaves differently.
+Ranges as values, planned for 3d, wait for a later part; `for` over a written range already
+compiles, and most of what is left needs structs and classes, which are next.

@@ -363,6 +363,7 @@ pub const EmValue = extern struct {
         text: ?*Heap.Text,
         list: ?*Heap.List,
         tuple: ?*Heap.Tuple,
+        map: ?*Heap.Map,
     },
 };
 
@@ -375,6 +376,7 @@ fn fromC(value: EmValue) Value {
         .string => textValue(value.as.text.?),
         .list => listValue(value.as.list.?),
         .tuple => .{ .data = .{ .tuple = value.as.tuple.? } },
+        .map => .{ .data = .{ .map = value.as.map.? } },
         else => unreachable, // generated C holds no other kind yet
     };
 }
@@ -388,6 +390,7 @@ fn toC(value: Value) EmValue {
         .string => |text| .{ .kind = @backingInt(Value.Kind.string), .as = .{ .text = text } },
         .list => |list| .{ .kind = @backingInt(Value.Kind.list), .as = .{ .list = list } },
         .tuple => |tuple| .{ .kind = @backingInt(Value.Kind.tuple), .as = .{ .tuple = tuple } },
+        .map => |map| .{ .kind = @backingInt(Value.Kind.map), .as = .{ .map = map } },
         else => unreachable, // the compiler asks only for natives giving these
     };
 }
@@ -538,4 +541,123 @@ export fn em_tuple_new(items: [*]const EmValue, count: usize) *Heap.Tuple {
 /// Section 8.2's `entry.0`, a new reference to the item.
 export fn em_tuple_get(tuple: *Heap.Tuple, position: usize) EmValue {
     return toC(Heap.retain(tuple.items[position]));
+}
+
+// Dictionaries and sets (slice 3d). Both are the runtime's own `Heap.Map`, a
+// set holding `nothing` for each value, under the ownership rule lists keep:
+// a change goes through the slot holding the map, which is made its only
+// holder first (`Heap.uniqueMap`).
+
+const MapMethods = @import("MapMethods.zig");
+
+fn mapValue(map: *Heap.Map) Value {
+    return .{ .data = .{ .map = map } };
+}
+
+export fn em_retain_map(map: ?*Heap.Map) void {
+    if (map) |held| _ = Heap.retain(mapValue(held));
+}
+
+export fn em_release_map(map: ?*Heap.Map) void {
+    if (map) |held| heap.release(mapValue(held));
+}
+
+/// An empty dictionary, or set, whose keys and values have these kinds.
+export fn em_map_new(key_kind: u8, value_kind: u8, is_set: bool) *Heap.Map {
+    return heap.createMap(@fromBackingInt(@intCast(key_kind)), @fromBackingInt(@intCast(value_kind)), is_set) catch outOfMemory();
+}
+
+/// Stores `value` under `key` in `map`, both widened to the map's kinds. The
+/// caller has made `map` its own.
+fn put(map: *Heap.Map, key: EmValue, value: EmValue, site: *const Site) c_int {
+    const held = Native.widen(Heap.retain(fromC(key)), map.key_kind);
+    var hash: u64 = undefined;
+    if (call(site, MapMethods.hashKey, .{held}, &hash) != 0) {
+        heap.release(held);
+        return 1;
+    }
+    var ctx = context();
+    heap.put(map, hash, held, Native.widen(Heap.retain(fromC(value)), map.value_kind), ctx.equatable()) catch outOfMemory();
+    return 0;
+}
+
+/// An entry of a literal being built, into the new map it builds.
+export fn em_map_put(map: *Heap.Map, key: EmValue, value: EmValue, site: *const Site) c_int {
+    return put(map, key, value, site);
+}
+
+/// `dictionary[key] = value`, through the slot holding the dictionary.
+export fn em_map_set(slot: **Heap.Map, key: EmValue, value: EmValue, site: *const Site) c_int {
+    var held = mapValue(slot.*);
+    const map = heap.uniqueMap(&held) catch outOfMemory();
+    slot.* = map;
+    return put(map, key, value, site);
+}
+
+/// The entry `key` names, if there is one.
+fn find(map: *Heap.Map, key: EmValue, site: *const Site, entry: *?Heap.Map.Entry) c_int {
+    const looked_for = Native.widen(fromC(key), map.key_kind);
+    var hash: u64 = undefined;
+    if (call(site, MapMethods.hashKey, .{looked_for}, &hash) != 0) return 1;
+    var ctx = context();
+    entry.* = Heap.lookupIn(gpa, map, hash, looked_for, ctx.equatable()) catch outOfMemory();
+    return 0;
+}
+
+/// Section 8.3's `dictionary[key]`, which gives `nothing` for a key that is
+/// not there: a new reference to the value, as an optional.
+export fn em_map_get(map: *Heap.Map, key: EmValue, result: *EmValue, site: *const Site) c_int {
+    var entry: ?Heap.Map.Entry = null;
+    if (find(map, key, site, &entry) != 0) return 1;
+    result.* = if (entry) |found| toC(Heap.retain(found.value)) else toC(Value.nothing);
+    return 0;
+}
+
+/// The value a compound assignment such as `counts[word] += 1` changes,
+/// which must be there already.
+export fn em_map_get_existing(map: *Heap.Map, key: EmValue, result: *EmValue, site: *const Site) c_int {
+    var entry: ?Heap.Map.Entry = null;
+    if (find(map, key, site, &entry) != 0) return 1;
+    const found = entry orelse return call(site, Operations.missingKey, .{Native.widen(fromC(key), map.key_kind)}, {});
+    result.* = toC(Heap.retain(found.value));
+    return 0;
+}
+
+export fn em_map_count(map: *Heap.Map) i64 {
+    return @intCast(map.count());
+}
+
+/// One of `MapMethods.Change`'s methods, through the slot holding the map.
+export fn em_map_change(slot: **Heap.Map, method: c_int, arguments: [*]const EmValue, count: usize, expected: u8, result: *EmValue, site: *const Site) c_int {
+    var values: [8]Value = undefined;
+    for (arguments[0..count], values[0..count]) |argument, *value| value.* = fromC(argument);
+    var held = mapValue(slot.*);
+    const map = heap.uniqueMap(&held) catch outOfMemory();
+    slot.* = map;
+    var answer: Value = undefined;
+    const status = call(site, MapMethods.change, .{ map, @as(MapMethods.Change, @fromBackingInt(@intCast(method))), values[0..count] }, &answer);
+    if (status == 0) result.* = toC(Native.widen(answer, @fromBackingInt(@intCast(expected))));
+    return status;
+}
+
+/// What `for` visits in a dictionary or set, in insertion order, as a new
+/// list: each member of a set, or each `(key, value)` of a dictionary.
+export fn em_map_items(map: *Heap.Map) *Heap.List {
+    const items = MapMethods.collectItems(&heap, map) catch outOfMemory();
+    defer gpa.free(items);
+    const kind: Value.Kind = if (map.is_set) map.key_kind else .tuple;
+    const list = heap.createList(kind, items.len) catch outOfMemory();
+    list.items.appendSliceAssumeCapacity(items);
+    return list;
+}
+
+/// What `for` visits in a string: each character, as a new list of strings.
+export fn em_string_characters(text: *Heap.Text) *Heap.List {
+    const unicode = @import("unicode.zig");
+    var clusters: unicode.Graphemes = .init(text.bytes);
+    const list = heap.createList(.string, 0) catch outOfMemory();
+    while (clusters.next()) |cluster| {
+        list.items.append(gpa, heap.copyText(cluster) catch outOfMemory()) catch outOfMemory();
+    }
+    return list;
 }

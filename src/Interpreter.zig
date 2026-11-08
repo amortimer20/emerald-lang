@@ -7499,7 +7499,8 @@ fn callOr(
 }
 
 /// Section 8.5's dictionary and set methods that change what they are called
-/// on. `map` has already been made safe to change.
+/// on (`MapMethods.change`). `map` has already been made safe to change, and
+/// a failure is reported at the first argument, the key.
 fn changeMap(
     self: *Interpreter,
     call: Ast.Expression.Call,
@@ -7507,44 +7508,8 @@ fn changeMap(
     map: *Heap.Map,
     arguments: []const Value,
 ) Error!Value {
-    const name = member.name;
-
-    if (std.mem.eql(u8, name, "add")) {
-        const held = widen(Heap.retain(arguments[0]), map.key_kind);
-        const hash = try self.runNative(call.arguments[0].span, MapMethods.hashKey, .{held});
-        try self.heap.put(map, hash, held, Value.nothing, self.equatable(call.arguments[0].span));
-        return Value.nothing;
-    }
-
-    if (std.mem.eql(u8, name, "remove")) {
-        const key = widen(Heap.retain(arguments[0]), map.key_kind);
-        defer self.heap.release(key);
-        const hash = try self.runNative(call.arguments[0].span, MapMethods.hashKey, .{key});
-        const removed = try self.heap.removeKey(map, hash, key, self.equatable(call.arguments[0].span));
-        // A set reports nothing; a dictionary answers with what was there, and
-        // absence when the key was not (4.5).
-        if (map.is_set) {
-            if (removed) |value| self.heap.release(value);
-            return Value.nothing;
-        }
-        return removed orelse Value.nothing;
-    }
-
-    // `merge`. The other dictionary's entries are copied first, because merging
-    // one into itself would otherwise walk a list growing underneath it.
-    const other = arguments[0].data.map;
-    const entries = try self.gpa.dupe(Heap.Map.Entry, other.entries.items);
-    defer self.gpa.free(entries);
-    for (entries) |entry| {
-        try self.heap.put(
-            map,
-            entry.hash,
-            Heap.retain(entry.key),
-            widen(Heap.retain(entry.value), map.value_kind),
-            self.equatable(call.arguments[0].span),
-        );
-    }
-    return Value.nothing;
+    const method = std.meta.stringToEnum(MapMethods.Change, member.name).?;
+    return self.runNative(call.arguments[0].span, MapMethods.change, .{ map, method, arguments });
 }
 
 const Half = MapMethods.Half;

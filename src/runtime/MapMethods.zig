@@ -226,3 +226,46 @@ pub fn hashKey(ctx: *Context, key: Value) Error!u64 {
     );
     return Value.hash(ctx.gpa, key, ctx.equatable());
 }
+
+/// Section 8.5's methods that change a dictionary or set in place. The
+/// engine has made the map its own before calling (`Heap.uniqueMap`); the
+/// arguments stay the engine's, and what is stored is retained here.
+pub const Change = enum { add, remove, merge };
+
+pub fn change(ctx: *Context, map: *Heap.Map, method: Change, arguments: []const Value) Error!Value {
+    switch (method) {
+        .add => {
+            const held = widen(Heap.retain(arguments[0]), map.key_kind);
+            const hash = hashKey(ctx, held) catch |err| {
+                ctx.heap.release(held);
+                return err;
+            };
+            try ctx.heap.put(map, hash, held, Value.nothing, ctx.equatable());
+            return Value.nothing;
+        },
+        .remove => {
+            const key = widen(Heap.retain(arguments[0]), map.key_kind);
+            defer ctx.heap.release(key);
+            const hash = try hashKey(ctx, key);
+            const removed = try ctx.heap.removeKey(map, hash, key, ctx.equatable());
+            // A set reports nothing; a dictionary answers with what was there,
+            // and absence when the key was not (4.5).
+            if (map.is_set) {
+                if (removed) |value| ctx.heap.release(value);
+                return Value.nothing;
+            }
+            return removed orelse Value.nothing;
+        },
+        .merge => {
+            // The other dictionary's entries are copied first, because merging
+            // one into itself would otherwise walk a list growing underneath it.
+            const other = arguments[0].data.map;
+            const entries = try ctx.gpa.dupe(Heap.Map.Entry, other.entries.items);
+            defer ctx.gpa.free(entries);
+            for (entries) |entry| {
+                try ctx.heap.put(map, entry.hash, Heap.retain(entry.key), widen(Heap.retain(entry.value), map.value_kind), ctx.equatable());
+            }
+            return Value.nothing;
+        },
+    }
+}

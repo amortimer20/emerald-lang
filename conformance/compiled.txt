@@ -5,9 +5,12 @@ run/adjacent-minus.em
 run/bindings.em
 run/bool-action-name.em
 run/collection-string-escapes.em
+run/colliding-calculated-keys.em
 run/comparison.em
 run/compound-assignment-order.em
 run/conditionals.em
+run/dictionary-keys.em
+run/dictionary-repeated-tuple-key.em
 run/division.em
 run/early-return.em
 run/equality.em
@@ -21,6 +24,7 @@ run/list-shape-result-types.em
 run/list-shape.em
 run/list-zip.em
 run/loop-assignment.em
+run/loop-snapshot-dict-set.em
 run/loops.em
 run/milestone.em
 run/module-scope.em
@@ -29,6 +33,7 @@ run/multiline-strings.em
 run/narrowing-through-loops.em
 run/precedence.em
 run/print-arguments.em
+run/set-operations.em
 run/space-minus-subtraction.em
 run/string-edge-results.em
 run/string-literals.em
@@ -38,6 +43,7 @@ run/trailing-if.em
 run/tuples.em
 run/typed-declarations.em
 run/unicode-names.em
+run/unicode-text.em
 run/unicode-whitespace.em
 run/widening.em
 runtime-errors/compound-assignment-overflow.em
@@ -47,9 +53,12 @@ runtime-errors/index-out-of-range.em
 runtime-errors/insert-at-past-count.em
 runtime-errors/int-absolute-overflow.em
 runtime-errors/integer-overflow.em
+runtime-errors/list-compound-assignment-out-of-range.em
+runtime-errors/list-element-assignment-out-of-range.em
 runtime-errors/list-portions.em
 runtime-errors/list-repeat-negative.em
 runtime-errors/list-sum-overflow.em
+runtime-errors/missing-entry.em
 runtime-errors/negate-minimum-int.em
 runtime-errors/negative-exponent.em
 runtime-errors/not-a-number.em

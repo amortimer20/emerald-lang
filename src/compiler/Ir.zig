@@ -9,7 +9,7 @@
 //!
 //! Slice 2 has the scalars (`Int`, `Float`, `Bool`), functions, control flow
 //! and `print`; slice 3a adds `String`, the first value on the heap, 3b
-//! lists, and 3c optionals and tuples.
+//! lists, 3c optionals and tuples, and 3d dictionaries and sets.
 //!
 //! A heap value is owned by the slot that holds it. Every local and global of
 //! a heap type owns one reference, or holds nothing yet; storing into one
@@ -49,11 +49,13 @@ pub const Type = enum {
     optional,
     /// Section 8.2's `(String, Int)`, which never changes once built.
     tuple,
+    /// Section 8.2's `Dict[K, V]` or `Set[T]`, the runtime's one map.
+    map,
 
     /// Whether a slot of this type owns a reference on the heap.
     pub fn counted(self: Type) bool {
         return switch (self) {
-            .string, .list, .optional, .tuple => true,
+            .string, .list, .optional, .tuple, .map => true,
             .nothing, .int, .float, .bool => false,
         };
     }
@@ -183,6 +185,25 @@ pub const Instruction = struct {
         tuple_new: struct { destination: Place, items: []const Typed },
         /// Section 8.2's `entry.0`, a `type`.
         tuple_get: struct { destination: Place, tuple: Operand, position: u32, type: Type },
+        /// An empty dictionary, or set, whose keys and values have these
+        /// kinds (a set's values are `nothing`).
+        map_new: struct { destination: Place, key: Type, value: Type, set: bool },
+        /// An entry of a literal, into the new map it builds.
+        map_put: struct { map: Operand, key: Typed, value: Typed, site: Site },
+        /// Section 8.3's `dictionary[key]`, an optional.
+        map_get: struct { destination: Place, map: Operand, key: Typed, site: Site },
+        /// The value a compound assignment changes, which must be there.
+        map_get_existing: struct { destination: Place, map: Operand, key: Typed, payload: Type, site: Site },
+        /// `dictionary[key] = value`, changing the map `target` holds, which
+        /// is copied first if anything else shares it.
+        map_set: struct { target: Place, key: Typed, value: Typed, site: Site },
+        map_count: struct { destination: Place, map: Operand },
+        /// One of `MapMethods.Change`'s methods on the map `target` holds.
+        map_change: struct { target: Place, method: u32, arguments: []const Typed, destination: ?Place, result: Type, site: Site },
+        /// What `for` visits in a map, as a new list.
+        map_items: struct { destination: Place, map: Operand },
+        /// What `for` visits in a string, its characters, as a new list.
+        string_characters: struct { destination: Place, operand: Operand },
     };
 
     pub const Comparison = enum {
