@@ -95,6 +95,7 @@ fn cType(type_: Ir.Type) []const u8 {
         .list => "em_list *",
         .optional => "em_value ",
         .tuple => "em_tuple *",
+        .map => "em_map *",
         .nothing => "void",
     };
 }
@@ -105,6 +106,7 @@ fn retainName(type_: Ir.Type) []const u8 {
         .list => "em_retain_list",
         .optional => "em_retain_value",
         .tuple => "em_retain_tuple",
+        .map => "em_retain_map",
         else => "em_retain",
     };
 }
@@ -114,6 +116,7 @@ fn releaseName(type_: Ir.Type) []const u8 {
         .list => "em_release_list",
         .optional => "em_release_value",
         .tuple => "em_release_tuple",
+        .map => "em_release_map",
         else => "em_release",
     };
 }
@@ -128,6 +131,7 @@ fn kindName(type_: Ir.Type) []const u8 {
         .string => "EM_KIND_STRING",
         .list => "EM_KIND_LIST",
         .tuple => "EM_KIND_TUPLE",
+        .map => "EM_KIND_MAP",
         // An optional is an `em_value` already, and passes as itself.
         .optional => unreachable,
     };
@@ -147,6 +151,7 @@ fn fieldName(type_: Ir.Type) []const u8 {
         .string => "text",
         .list => "list",
         .tuple => "tuple",
+        .map => "map",
         .nothing, .optional => unreachable, // these cross as whole values
     };
 }
@@ -312,6 +317,17 @@ const FunctionEmitter = struct {
         try self.out.writeAll("\n");
     }
 
+    /// A dictionary lookup into `r`, stored as `result`.
+    fn mapGet(self: *FunctionEmitter, got: anytype, function: []const u8, result: Ir.Type, site: []const u8) Writer.Error!void {
+        try self.out.print("    {{ em_value r; if ({s}(", .{function});
+        try self.operand(got.map);
+        try self.out.writeAll(", ");
+        try self.emValue(got.key);
+        try self.out.print(", &r, {s})) EM_FAIL;", .{site});
+        try self.storeResult(got.destination, result);
+        try self.out.writeAll(" }\n");
+    }
+
     fn positionText(buffer: []u8, position: u32) []const u8 {
         return std.fmt.bufPrint(buffer, "{d}", .{position}) catch unreachable;
     }
@@ -411,6 +427,53 @@ const FunctionEmitter = struct {
                 try self.arrayArguments(built.items.len);
                 try self.out.writeAll(");");
                 try self.takeInto(built.destination);
+                try self.out.writeAll(" }\n");
+            },
+            .map_new => |built| {
+                try self.out.print("    {{ em_map *t = em_map_new({s}, {s}, {s});", .{ kindName(built.key), kindName(built.value), if (built.set) "true" else "false" });
+                try self.takeInto(built.destination);
+                try self.out.writeAll(" }\n");
+            },
+            .map_put => |put| {
+                try self.out.writeAll("    if (em_map_put(");
+                try self.operand(put.map);
+                try self.out.writeAll(", ");
+                try self.emValue(put.key);
+                try self.out.writeAll(", ");
+                try self.emValue(put.value);
+                try self.out.print(", {s})) EM_FAIL;\n", .{siteName(&site_buffer, put.site)});
+            },
+            .map_get => |got| try self.mapGet(got, "em_map_get", .optional, siteName(&site_buffer, got.site)),
+            .map_get_existing => |got| try self.mapGet(got, "em_map_get_existing", got.payload, siteName(&site_buffer, got.site)),
+            .map_set => |set| {
+                try self.out.writeAll("    if (em_map_set(&");
+                try self.place(set.target);
+                try self.out.writeAll(", ");
+                try self.emValue(set.key);
+                try self.out.writeAll(", ");
+                try self.emValue(set.value);
+                try self.out.print(", {s})) EM_FAIL;\n", .{siteName(&site_buffer, set.site)});
+            },
+            .map_count => |counted| try self.line_("@ = em_map_count(@);", .{ counted.destination, counted.map }),
+            .map_change => |changed| {
+                try self.out.writeAll("    { em_value r;");
+                try self.valueArray(changed.arguments);
+                try self.out.writeAll(" if (em_map_change(&");
+                try self.place(changed.target);
+                try self.out.print(", {d}, ", .{changed.method});
+                try self.arrayArguments(changed.arguments.len);
+                try self.out.print(", {s}, &r, {s})) EM_FAIL;", .{ expectedKind(changed.result), siteName(&site_buffer, changed.site) });
+                try self.storeResult(changed.destination, changed.result);
+                try self.out.writeAll(" }\n");
+            },
+            .map_items => |items| {
+                try self.line_("{ em_list *t = em_map_items(@);", .{items.map});
+                try self.takeInto(items.destination);
+                try self.out.writeAll(" }\n");
+            },
+            .string_characters => |characters| {
+                try self.line_("{ em_list *t = em_string_characters(@);", .{characters.operand});
+                try self.takeInto(characters.destination);
                 try self.out.writeAll(" }\n");
             },
             .tuple_get => |got| {

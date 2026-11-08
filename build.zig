@@ -721,12 +721,12 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile, test_step: *std.Buil
 
     // `emerald build` stops before needing the build tools when the program
     // uses something it cannot compile yet, and says what and where.
-    const not_compiled_yet = fixtures.add("not-compiled-yet.em", "const ages = [\"Ava\": 3]\nprint(ages)\n");
+    const not_compiled_yet = fixtures.add("not-compiled-yet.em", "struct Point {\n    var x: Int\n}\n\nprint(Point(x: 1).x)\n");
     const build_refuses = b.addRunArtifact(exe);
     build_refuses.addArg("build");
     build_refuses.addFileArg(not_compiled_yet);
     build_refuses.expectExitCode(1);
-    build_refuses.addCheck(.{ .expect_stderr_match = ":1:14: `emerald build` cannot compile a value of this type yet" });
+    build_refuses.addCheck(.{ .expect_stderr_match = ":1:8: `emerald build` cannot compile a type declaration yet" });
     test_step.dependOn(&build_refuses.step);
 
     const build_misused = b.addRunArtifact(exe);
