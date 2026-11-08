@@ -34,11 +34,11 @@ for slice 6; 1c, the operators' and indexing's messages in `runtime/Operations.z
 PR #74; slice 2, the IR and `emerald build` for scalars, functions and control flow, merged as
 PR #75; slice 3 is split into 3a strings, 3b lists, 3c dictionaries, sets and tuples, 3d structs
 and classes, 3e closures; 3a merged as PR #76, 3b, lists, as PR #77, 3c, optionals and tuples, as
-PR #78, and 3d, dictionaries and sets, is on `claude/compiler-maps`; structs and classes follow
-as 3e, then closures as 3f). Slice 0 ran (branch `claude/compiler-spike`, not for merge): emitted C is 34x
+PR #78, 3d, dictionaries and sets, as PR #79, and 3e, structs, is on `claude/compiler-structs`;
+classes, enums, traits and closures follow as their own parts). Slice 0 ran (branch `claude/compiler-spike`, not for merge): emitted C is 34x
 (`fib`), 52x (`nbody`) and 9x (`words`) faster than the interpreter, rebuilds in 0.35 s against
 Zig source's 11.5 s, and reaches WebAssembly, a Cortex-M0+ and a host-loaded shared library; the
-build-tools archive is 52 MB (`.tar.xz`) to 85 MB (zip). Next: slice 3e, structs and classes.
+build-tools archive is 52 MB (`.tar.xz`) to 85 MB (zip). Next: classes.
 Earlier status: `v0.8.0-rc1` was published as a prerelease. The codebase review
 (roadmap item 10) has reported and been triaged in [`review/triage.md`](review/triage.md), with
 every decision accepted. Fix batches 1, 2 and 3 are merged (PRs #57–#66; the journal has each).

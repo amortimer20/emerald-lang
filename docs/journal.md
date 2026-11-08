@@ -6652,3 +6652,29 @@ iterations or 1,000.
 `compiled.txt` grows from 65 cases to 72, still with none that builds and behaves differently.
 Ranges as values, planned for 3d, wait for a later part; `for` over a written range already
 compiles, and most of what is left needs structs and classes, which are next.
+
+## 2026-11-07: Compiler slice 3e: structs
+
+Slice 3d merged as PR #79. Structs went first and classes were split off, since a class brings
+shared identity, inheritance and methods chosen at run time. A compiled struct is the runtime's
+`Heap.StructValue`, with a descriptor the program builds once from the interpreter's names and
+kinds, so `print` and `==` need nothing new.
+
+The IR gained `self` by reference, for a changing method, a constructor, and a struct's field
+defaults, which run as one function per struct because a default can read `self` and call
+functions in its own scope. The interpreter takes a changing method's receiver out of its variable
+during the call, and reports reading it meanwhile; a compiled call passes the variable's slot, so
+lowering refuses the call when the receiver is a module variable that some function or type names,
+the one case where the two could differ.
+
+The test program turned up four bugs before discovery ran. The best of them was a 3b and 3d bug
+no case covered: an overflow in `xs[0] += 1` underlined the statement, where the interpreter
+underlines the target. Three new `runtime-errors/` cases now hold the list, dictionary and struct
+forms. The others: `self` inside a field default has no expression type in the checker's map, a
+struct's defaults call and its constructor call shared one trace frame, and a runtime function was
+named like a C type. The live heap after the struct loop test held 4 objects at 10 iterations and
+at 1,000.
+
+`compiled.txt` grows from 72 cases to 81, still with none that builds and behaves differently.
+The largest refusal left is "a type declaration of this kind", 77 cases waiting for classes, enums
+and traits.
