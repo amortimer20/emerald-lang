@@ -91,7 +91,9 @@ void em_builder_bool(em_builder *builder, bool value);
 em_text *em_builder_finish(em_builder *builder);
 
 /* A value crossing to a native, tagged in the runtime's `Value.Kind` order. */
-enum { EM_KIND_NOTHING, EM_KIND_BOOL, EM_KIND_INT, EM_KIND_FLOAT, EM_KIND_STRING, EM_KIND_BYTES, EM_KIND_RANGE, EM_KIND_LIST, EM_KIND_TUPLE, EM_KIND_MAP };
+enum { EM_KIND_NOTHING, EM_KIND_BOOL, EM_KIND_INT, EM_KIND_FLOAT, EM_KIND_STRING, EM_KIND_BYTES, EM_KIND_RANGE, EM_KIND_LIST, EM_KIND_TUPLE, EM_KIND_MAP, EM_KIND_CLOSURE, EM_KIND_STRUCT };
+typedef struct em_struct em_struct;
+typedef struct em_struct_type em_struct_type;
 typedef struct em_list em_list;
 typedef struct em_tuple em_tuple;
 typedef struct em_map em_map;
@@ -105,6 +107,7 @@ typedef struct {
         em_list *list;
         em_tuple *tuple;
         em_map *map;
+        em_struct *structure;
     } as;
 } em_value;
 
@@ -144,5 +147,15 @@ int64_t em_map_count(em_map *map);
 int em_map_change(em_map **slot, int method, const em_value *arguments, size_t count, uint8_t expected, em_value *result, const em_site *site);
 em_list *em_map_items(em_map *map);
 em_list *em_string_characters(em_text *text);
+
+/* Structs: values described by a type the program builds once. A change
+ * goes through the slot holding the struct, which the runtime makes its only
+ * holder first. */
+void em_retain_struct(em_struct *instance);
+void em_release_struct(em_struct *instance);
+em_struct_type *em_struct_descriptor(em_struct_type **cell, const char *name, const char *display_name, const char *const *names, const uint8_t *kinds, size_t count);
+em_struct *em_struct_new(const em_struct_type *type, const em_value *values, size_t count);
+em_value em_struct_get(em_struct *instance, size_t position);
+void em_struct_set(em_struct **slot, size_t position, em_value value);
 
 #endif
