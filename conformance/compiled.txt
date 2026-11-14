@@ -2,8 +2,10 @@
 # their .expected files (docs/compiler-design-plan.md, decision 11). Sorted, one per line.
 # The list grows with each slice of the compiler and is deleted once it holds every case.
 run/adjacent-minus.em
+run/as-argument.em
 run/bindings.em
 run/bool-action-name.em
+run/class-in-struct-identity.em
 run/collection-string-escapes.em
 run/colliding-calculated-keys.em
 run/comparison.em
@@ -22,8 +24,10 @@ run/float-receiver-math.em
 run/float-remainder.em
 run/inline-doc-comments.em
 run/int-range.em
+run/list-append-all-self.em
 run/list-shape-result-types.em
 run/list-shape.em
+run/list-values.em
 run/list-zip.em
 run/loop-assignment.em
 run/loop-snapshot-dict-set.em
@@ -42,6 +46,10 @@ run/string-edge-results.em
 run/string-literals.em
 run/string-methods.em
 run/string-order-nfc.em
+run/struct-constructor.em
+run/struct-field-assignment.em
+run/struct-field-defaults.em
+run/struct-field-mutation-through-field.em
 run/struct-fields.em
 run/trailing-if.em
 run/tuples.em

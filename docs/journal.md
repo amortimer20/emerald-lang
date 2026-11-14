@@ -6678,3 +6678,25 @@ at 1,000.
 `compiled.txt` grows from 72 cases to 81, still with none that builds and behaves differently.
 The largest refusal left is "a type declaration of this kind", 77 cases waiting for classes, enums
 and traits.
+
+## 2026-11-14: Compiler: classes without inheritance, and paths
+
+Slice 3e merged as PR #80. After a pause, in which the user weighed retiring Emerald and decided to
+keep going, classes started. They split in two: a class that neither extends nor is extended is a
+struct whose objects are shared, so it needed little more than the descriptor's `class` flag,
+which gives identity equality and the display's cycle guard for free. Inheritance, `super`,
+abstract members, methods chosen at run time and properties are the next part.
+
+The first test program stopped at `self.history.append(amount)`, a change through a path, which
+3e had left for later and which classes use constantly. Paths now compile in the interpreter's
+order: every index, then the current value for a compound assignment, then the right side, then
+the store, which takes each container out of its holder, changes the innermost, and puts them
+back. The conformance case written for exactly this, `struct-field-assignment`, now matches.
+
+Two checks are worth recording. A path is typed from the checker's type of its root variable, and
+a declaration's initializer can be narrower than the variable (a `Point` in a `Point?`); walking
+from that handed C an optional where it expected a struct, so a root's type must now give its
+slot's own. And classes make cycles: the live heap after building one each iteration rose and fell
+with the collector's threshold rather than growing, 2,080 objects after 20,000 iterations that made
+about 100,000. `compiled.txt` grows from 81 cases to 89, still with none that builds and behaves
+differently.

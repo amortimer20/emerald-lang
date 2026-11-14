@@ -350,6 +350,21 @@ names is refused. Starting 3e also found that an overflow in `xs[0] += 1` or `d[
 underlined the statement where the interpreter underlines the target; fixed, with cases for list,
 dictionary and struct forms. *Not yet:* nested paths such as `a.b.c = v` or `a.items.append(v)`.
 `compiled.txt` grows to 81 cases, still none that builds and behaves differently.
+Classes are two parts too: without inheritance first, then `extends`, `super`, abstract members,
+methods chosen at run time and properties. The first done on `claude/compiler-classes`: a class
+that neither extends nor is extended compiles as a struct whose descriptor carries the `class`
+flag, so its objects are shared, compared by identity and displayed with the runtime's cycle
+guard; its methods take `self` by value, since the checker never counts a class's methods as
+changing ones. Its cycles are the collector's: the live heap after building a cycle each
+iteration rose and fell with the collector's threshold (920 objects after 1,000 iterations, 2,080
+after 20,000 of about 100,000 made) rather than growing with the work. The same part compiles
+changes through a path (`self.items.append(v)`, `line.start.x = v`, `grid[row][column] += 1`) in
+the interpreter's order, taking each container out of its holder and putting it back, with each
+step typed from the checker's type of the root variable (its declaration, a signature, or `self`),
+walked only when that type matches the root's slot. Calls to the program's functions bind named
+arguments. *Not yet:* a changing struct method through a path, and putting back what a failed
+step took, which matters once `catch` can observe it (slice 4). `compiled.txt` grows to 89 cases,
+still none that builds and behaves differently.
 
 **Slice 4: errors.** `raise`, `try`, `catch`, error types, and the runtime errors with the
 shared messages; the `runtime-errors/` cases join the list.
