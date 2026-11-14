@@ -683,10 +683,11 @@ export fn em_release_struct(instance: ?*Heap.StructValue) void {
     if (instance) |held| heap.release(structValue(held));
 }
 
-/// The descriptor of a struct type: `name` is its program-wide key and
-/// `display_name` how a value shows it; each field has a name and the kind
-/// the interpreter gives it. Made once and cached in `cell`.
-export fn em_struct_descriptor(cell: *?*Value.StructType, name: [*:0]const u8, display_name: [*:0]const u8, names: [*]const [*:0]const u8, kinds: [*]const u8, count: usize) *Value.StructType {
+/// The descriptor of a struct or class type: `name` is its program-wide key
+/// and `display_name` how a value shows it; each field has a name and the
+/// kind the interpreter gives it. A class's values are one shared object,
+/// compared by identity (section 10.1). Made once and cached in `cell`.
+export fn em_struct_descriptor(cell: *?*Value.StructType, name: [*:0]const u8, display_name: [*:0]const u8, class: bool, names: [*]const [*:0]const u8, kinds: [*]const u8, count: usize) *Value.StructType {
     if (cell.*) |known| return known;
     const fields = gpa.alloc(Value.StructType.Field, count) catch outOfMemory();
     var positions: std.StringHashMapUnmanaged(usize) = .empty;
@@ -695,7 +696,7 @@ export fn em_struct_descriptor(cell: *?*Value.StructType, name: [*:0]const u8, d
         positions.put(gpa, field.name, position) catch outOfMemory();
     }
     const descriptor = gpa.create(Value.StructType) catch outOfMemory();
-    descriptor.* = .{ .name = std.mem.span(name), .display_name = std.mem.span(display_name), .fields = fields, .field_positions = positions };
+    descriptor.* = .{ .name = std.mem.span(name), .display_name = std.mem.span(display_name), .class = class, .fields = fields, .field_positions = positions };
     cell.* = descriptor;
     return descriptor;
 }
@@ -723,4 +724,76 @@ export fn em_struct_set(slot: **Heap.StructValue, position: usize, value: EmValu
     const old = instance.fields[position];
     instance.fields[position] = Native.widen(Heap.retain(fromC(value)), instance.descriptor.fields[position].kind);
     heap.release(old);
+}
+
+// Paths (with classes). A change through a path such as `a.items.append(v)`
+// or `grid[r][c] = v` takes each container on the path out of the one
+// holding it, changes the innermost, and puts them back, innermost last. A
+// take makes the holder its container's only holder first, as a direct
+// change does, then moves the value out, leaving `nothing` until it is put
+// back; nothing runs in between that could see the gap.
+
+export fn em_struct_take(slot: **Heap.StructValue, position: usize) EmValue {
+    var held = structValue(slot.*);
+    const instance = heap.uniqueStruct(&held) catch outOfMemory();
+    slot.* = instance;
+    const value = instance.fields[position];
+    instance.fields[position] = Value.nothing;
+    return toC(value);
+}
+
+export fn em_struct_put(slot: **Heap.StructValue, position: usize, value: EmValue) void {
+    const instance = slot.*;
+    heap.release(instance.fields[position]);
+    instance.fields[position] = fromC(value);
+}
+
+export fn em_list_take(slot: **Heap.List, position: i64, result: *EmValue, site: *const Site) c_int {
+    const count = slot.*.items.items.len;
+    if (position < 0 or position >= count) return call(site, Operations.outsideIndex, .{ Operations.Collection.list, count, position }, {});
+    const list = uniqueList(slot);
+    const at = &list.items.items[@intCast(position)];
+    result.* = toC(at.*);
+    at.* = Value.nothing;
+    return 0;
+}
+
+export fn em_list_put(slot: **Heap.List, position: i64, value: EmValue) void {
+    const at = &slot.*.items.items[@intCast(position)];
+    heap.release(at.*);
+    at.* = fromC(value);
+}
+
+/// The entry `key` names in the map `slot` holds, made its own first, or a
+/// missing-key failure.
+fn mapEntry(slot: **Heap.Map, key: EmValue, site: *const Site) ?*Value {
+    var held = mapValue(slot.*);
+    const map = heap.uniqueMap(&held) catch outOfMemory();
+    slot.* = map;
+    const looked_for = Native.widen(fromC(key), map.key_kind);
+    var hash: u64 = undefined;
+    if (call(site, MapMethods.hashKey, .{looked_for}, &hash) != 0) return null;
+    var ctx = context();
+    const found = heap.locate(map, hash, looked_for, ctx.equatable()) catch outOfMemory();
+    switch (found) {
+        .entry => |index| return &map.entries.items[index].value,
+        .vacancy => {
+            _ = call(site, Operations.missingKey, .{looked_for}, {});
+            return null;
+        },
+    }
+}
+
+export fn em_map_take(slot: **Heap.Map, key: EmValue, result: *EmValue, site: *const Site) c_int {
+    const at = mapEntry(slot, key, site) orelse return 1;
+    result.* = toC(at.*);
+    at.* = Value.nothing;
+    return 0;
+}
+
+/// Puts back what `em_map_take` took; the entry is there, holding `nothing`.
+export fn em_map_restore(slot: **Heap.Map, key: EmValue, value: EmValue, site: *const Site) void {
+    const at = mapEntry(slot, key, site).?;
+    heap.release(at.*);
+    at.* = fromC(value);
 }

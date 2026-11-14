@@ -148,14 +148,23 @@ int em_map_change(em_map **slot, int method, const em_value *arguments, size_t c
 em_list *em_map_items(em_map *map);
 em_list *em_string_characters(em_text *text);
 
-/* Structs: values described by a type the program builds once. A change
- * goes through the slot holding the struct, which the runtime makes its only
- * holder first. */
+/* Structs and classes, described by a type the program builds once. A change
+ * goes through the slot holding the value, which the runtime makes its only
+ * holder first for a struct; a class's object is shared and changed in
+ * place. */
 void em_retain_struct(em_struct *instance);
 void em_release_struct(em_struct *instance);
-em_struct_type *em_struct_descriptor(em_struct_type **cell, const char *name, const char *display_name, const char *const *names, const uint8_t *kinds, size_t count);
+em_struct_type *em_struct_descriptor(em_struct_type **cell, const char *name, const char *display_name, bool is_class, const char *const *names, const uint8_t *kinds, size_t count);
 em_struct *em_struct_new(const em_struct_type *type, const em_value *values, size_t count);
 em_value em_struct_get(em_struct *instance, size_t position);
 void em_struct_set(em_struct **slot, size_t position, em_value value);
+
+/* Paths: take a container out of the one holding it, change it, put it back. */
+em_value em_struct_take(em_struct **slot, size_t position);
+void em_struct_put(em_struct **slot, size_t position, em_value value);
+int em_list_take(em_list **slot, int64_t position, em_value *result, const em_site *site);
+void em_list_put(em_list **slot, int64_t position, em_value value);
+int em_map_take(em_map **slot, em_value key, em_value *result, const em_site *site);
+void em_map_restore(em_map **slot, em_value key, em_value value, const em_site *site);
 
 #endif
