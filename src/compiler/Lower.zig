@@ -1737,11 +1737,21 @@ const Builder = struct {
 
     /// The checker's type of what a variable holds.
     fn checkedOf(self: *Builder, at: Ir.Place) ?Type {
-        return switch (at) {
+        const found = switch (at) {
             .local => |local| self.checked_types.get(local),
             .global => |global| self.owner.global_checked.get(global),
             .self_ref => if (self.self_struct) |info| self.owner.checked.structs.get(info.key) else null,
+        } orelse return null;
+        // A declaration's initializer can have a narrower type than the
+        // variable holds, such as a `Point` in a `Point?`; a path is walked
+        // only from the type the variable's slot actually has.
+        const slot: Ir.Type = switch (at) {
+            .local => |local| self.locals.items[local].type,
+            .global => |global| self.owner.globals.items[global].type,
+            .self_ref => .structure,
         };
+        if (irType(found) != slot) return null;
+        return found;
     }
 
     /// One step of a path: where it goes in the container before it.
