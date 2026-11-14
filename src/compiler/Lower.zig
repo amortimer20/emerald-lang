@@ -37,6 +37,8 @@ literals: std.ArrayList([]const u8) = .empty,
 /// The element type of each module-level list variable, by key, for an
 /// assignment into one of its elements.
 global_elements: std.StringHashMapUnmanaged(Ir.Type) = .empty,
+/// The checker's type of each module variable whose type is known.
+global_checked: std.AutoHashMapUnmanaged(Ir.GlobalIndex, Type) = .empty,
 /// The struct type of each module-level struct variable, by its index.
 global_structs: std.AutoHashMapUnmanaged(Ir.GlobalIndex, *StructInfo) = .empty,
 /// The payload type of each module-level optional variable, by its index.
@@ -97,6 +99,8 @@ const FunctionInfo = struct {
     payloads: []const ?Ir.Type,
     result_payload: ?Ir.Type,
     result: Ir.Type,
+    /// The parameters' names, for binding named arguments.
+    names: []const []const u8 = &.{},
 };
 
 /// Lowers the entry file `file` of a checked project. On `error.Unsupported`,
@@ -173,7 +177,7 @@ fn irType(checked: Type) ?Ir.Type {
         .float => .float,
         .bool => .bool,
         .string => .string,
-        .struct_value => if (checked.user) |user| if (!user.class and !user.trait and !user.enumeration and checked.type_arguments.len == 0) .structure else null else null,
+        .struct_value => if (checked.user) |user| if (!user.trait and !user.enumeration and user.base == null and checked.type_arguments.len == 0) .structure else null else null,
         .nothing => .nothing,
         // A list of anything the compiler holds, lists of them included.
         .list => if (irType(checked.element.?.*) != null and irType(checked.element.?.*) != .nothing) .list else null,
@@ -270,6 +274,19 @@ fn declaredPayload(self: *Lower, declaration: Ast.Declaration) Error!?Ir.Type {
     return payloadType(found.type);
 }
 
+/// The checker's type of the variable `declaration` declares: its
+/// initializer's, or for a struct annotation, the struct's.
+fn declaredChecked(self: *Lower, declaration: Ast.Declaration) ?Type {
+    if (declaration.initializer) |initializer| {
+        const found = self.checked.expression_types.get(initializer) orelse return null;
+        // A declared `Float` holding an `Int` initializer is a `Float`.
+        if (declaration.annotation != null and found.type.kind == .int) return null;
+        return found.type;
+    }
+    const annotation = declaration.annotation orelse return null;
+    return self.checked.structs.get(self.keyOf(annotation.name));
+}
+
 /// The struct type of a struct variable `declaration` declares.
 fn declaredStruct(self: *Lower, declaration: Ast.Declaration) ?*StructInfo {
     const initializer = declaration.initializer orelse {
@@ -304,9 +321,12 @@ fn expressionType(self: *Lower, expression: *const Ast.Expression) Error!Ir.Type
 
 /// Registers a struct's key, before any field or signature names it.
 fn nameStruct(self: *Lower, declared: Ast.StructDeclaration) Error!void {
-    const unsupported = declared.class or declared.trait or declared.enumeration or declared.type_parameters.len != 0 or
-        declared.base != null or declared.traits.len != 0 or declared.properties.len != 0 or declared.type_functions.len != 0 or
-        declared.type_fields.len != 0 or declared.types.len != 0;
+    // A class without a base class is a struct whose values are shared; one
+    // that extends another, or is abstract, needs inheritance, not here yet.
+    // A class that others extend fails with them, at theirs.
+    const unsupported = declared.trait or declared.enumeration or declared.type_parameters.len != 0 or
+        declared.base != null or declared.abstract_span != null or declared.traits.len != 0 or declared.properties.len != 0 or
+        declared.type_functions.len != 0 or declared.type_fields.len != 0 or declared.types.len != 0;
     if (unsupported) return self.fail(declared.name_span, "a type declaration of this kind");
     const info = try self.arena.create(StructInfo);
     info.* = .{
@@ -351,7 +371,7 @@ fn declareStruct(self: *Lower, declared: Ast.StructDeclaration) Error!void {
     }
     info.field_names = names;
     info.has_default = defaults;
-    try self.struct_types.append(self.arena, .{ .name = info.key, .display_name = user.display_name, .field_names = names, .field_kinds = kinds });
+    try self.struct_types.append(self.arena, .{ .name = info.key, .display_name = user.display_name, .class = declared.class, .field_names = names, .field_kinds = kinds });
 
     if (info.any_default) {
         const flags = try self.arena.alloc(Ir.Type, declared.fields.len);
@@ -418,26 +438,27 @@ fn lowerStruct(self: *Lower, info: *StructInfo) Error!void {
         var names: std.ArrayList([]const u8) = .empty;
         if (!method.changing) try names.append(self.arena, "self");
         for (method.declaration.parameters) |parameter| try names.append(self.arena, parameter.name);
-        try self.lowerBody(method.declaration.name, method.function, names.items, method.declaration.body, method.changing, true, null, info);
+        const key = try Resolver.methodKey(self.arena, info.key, method.declaration.name);
+        try self.lowerBody(method.declaration.name, method.function, names.items, method.declaration.body, method.changing, true, null, info, try self.methodParameterTypes(info, key, method.changing));
     }
     if (info.constructor) |constructor| {
         const names = try self.arena.alloc([]const u8, info.declaration.constructor.?.parameters.len);
         for (info.declaration.constructor.?.parameters, names) |parameter, *name| name.* = parameter.name;
         const frame = try std.fmt.allocPrint(self.arena, "the constructor of `{s}`", .{display});
-        try self.lowerBody(frame, constructor, names, info.declaration.constructor.?.body, true, false, null, info);
+        try self.lowerBody(frame, constructor, names, info.declaration.constructor.?.body, true, false, null, info, if (self.checked.signatures.get(info.key)) |found| found.parameters else null);
     }
     if (info.defaults) |defaults| {
         const names = try self.arena.alloc([]const u8, info.fields.len);
         for (names, 0..) |*name, position| name.* = try std.fmt.allocPrint(self.arena, "(default {d})", .{position});
         const frame = try std.fmt.allocPrint(self.arena, "the field defaults of `{s}`", .{display});
-        try self.lowerBody(frame, defaults, names, .{ .span = info.declaration.name_span, .statements = &.{} }, true, false, info, info);
+        try self.lowerBody(frame, defaults, names, .{ .span = info.declaration.name_span, .statements = &.{} }, true, false, info, info, null);
     }
 }
 
 /// One function's body: a method, constructor or defaults when `self_ref`.
 /// For a struct's field defaults, `defaults_of` names the struct, whose
 /// defaults run where their flags say.
-fn lowerBody(self: *Lower, name: []const u8, info: FunctionInfo, names: []const []const u8, body: Ast.Block, self_ref: bool, named: bool, defaults_of: ?*StructInfo, self_struct: ?*StructInfo) Error!void {
+fn lowerBody(self: *Lower, name: []const u8, info: FunctionInfo, names: []const []const u8, body: Ast.Block, self_ref: bool, named: bool, defaults_of: ?*StructInfo, self_struct: ?*StructInfo, checked_parameters: ?[]const Type) Error!void {
     var builder: Builder = try .init(self, name, info.result, info.parameters, names);
     builder.self_ref = self_ref;
     for (info.elements, info.payloads, 0..) |element, payload, position| {
@@ -447,6 +468,9 @@ fn lowerBody(self: *Lower, name: []const u8, info: FunctionInfo, names: []const 
     builder.result_payload = info.result_payload;
     builder.self_struct = self_struct;
     if (!self_ref and self_struct != null) try builder.struct_types.put(self.arena, 0, self_struct.?);
+    if (checked_parameters) |types| {
+        for (types, 0..) |checked, position| try builder.checked_types.put(self.arena, @intCast(position), checked);
+    }
     if (defaults_of) |struct_info| {
         for (struct_info.declaration.fields, struct_info.fields, 0..) |field, field_info, position| {
             const default = field.default orelse continue;
@@ -464,6 +488,17 @@ fn lowerBody(self: *Lower, name: []const u8, info: FunctionInfo, names: []const 
     function.self_ref = self_ref;
     function.named = named;
     self.functions.items[info.index] = function;
+}
+
+/// The checker's types of a method's parameters, `self` first when the
+/// method takes it as one.
+fn methodParameterTypes(self: *Lower, info: *StructInfo, key: []const u8, changing: bool) Error!?[]const Type {
+    const found = self.checked.signatures.get(key) orelse return null;
+    if (changing) return found.parameters;
+    const types = try self.arena.alloc(Type, found.parameters.len + 1);
+    types[0] = self.checked.structs.get(info.key) orelse return null;
+    @memcpy(types[1..], found.parameters);
+    return types;
 }
 
 /// Whether the program's text mentions `name` inside any function or type
@@ -509,6 +544,11 @@ fn declareFunction(self: *Lower, function: Ast.FunctionDeclaration) Error!void {
         .payloads = payloads,
         .result = result,
         .result_payload = if (function.return_annotation) |annotation| try self.annotationPayload(annotation) else null,
+        .names = blk: {
+            const names = try self.arena.alloc([]const u8, function.parameters.len);
+            for (function.parameters, names) |parameter, *name| name.* = parameter.name;
+            break :blk names;
+        },
     });
     try self.functions.append(self.arena, undefined);
 }
@@ -545,6 +585,7 @@ fn declareGlobal(self: *Lower, declaration: Ast.Declaration) Error!void {
     if (try self.declaredElement(declaration)) |element| try self.global_elements.put(self.arena, self.keyOf(declaration.name), element);
     if (try self.declaredPayload(declaration)) |payload| try self.global_payloads.put(self.arena, @intCast(self.globals.items.len), payload);
     if (self.declaredStruct(declaration)) |info| try self.global_structs.put(self.arena, @intCast(self.globals.items.len), info);
+    if (self.declaredChecked(declaration)) |checked| try self.global_checked.put(self.arena, @intCast(self.globals.items.len), checked);
     try self.global_keys.put(self.arena, self.keyOf(declaration.name), @intCast(self.globals.items.len));
     try self.globals.append(self.arena, .{ .name = declaration.name, .type = type_ });
 }
@@ -557,6 +598,9 @@ fn lowerFunction(self: *Lower, function: Ast.FunctionDeclaration) Error!void {
     for (info.elements, info.payloads, 0..) |element, payload, position| {
         if (element) |known| try builder.element_types.put(self.arena, @intCast(position), known);
         if (payload) |known| try builder.payload_types.put(self.arena, @intCast(position), known);
+    }
+    if (self.checked.signatures.get(self.keyOf(function.name))) |found| {
+        for (found.parameters, 0..) |checked, position| try builder.checked_types.put(self.arena, @intCast(position), checked);
     }
     builder.result_payload = info.result_payload;
     try builder.block(function.body);
@@ -595,6 +639,9 @@ const Builder = struct {
     element_types: std.AutoHashMapUnmanaged(Ir.Local, Ir.Type) = .empty,
     /// The struct type of each local that holds a struct.
     struct_types: std.AutoHashMapUnmanaged(Ir.Local, *StructInfo) = .empty,
+    /// The checker's type of each variable whose type is known, for walking
+    /// a path through it.
+    checked_types: std.AutoHashMapUnmanaged(Ir.Local, Type) = .empty,
     /// The struct `self` is, in a method, constructor or defaults.
     self_struct: ?*StructInfo = null,
     /// The payload type of each local that holds an optional.
@@ -769,6 +816,7 @@ const Builder = struct {
         const local = try self.newLocal(declaration_.name, type_);
         if (payload) |known| try self.payload_types.put(self.arena(), local, known);
         if (self.owner.declaredStruct(declaration_)) |info| try self.struct_types.put(self.arena(), local, info);
+        if (self.owner.declaredChecked(declaration_)) |checked| try self.checked_types.put(self.arena(), local, checked);
         if (try self.owner.declaredElement(declaration_)) |element| try self.element_types.put(self.arena(), local, element);
         try self.scopes.items[self.scopes.items.len - 1].put(self.arena(), declaration_.name, local);
         if (initial) |value| try self.emit(declaration_.name_span, .{ .move = .{ .destination = .{ .local = local }, .source = value } });
@@ -1149,16 +1197,20 @@ const Builder = struct {
         if (call_.callee.data == .name and self.find(call_.callee.data.name) == null) {
             if (self.owner.struct_infos.get(self.owner.keyOf(call_.callee.data.name))) |info| return try self.construct(expression_, call_, info);
         }
-        if (call_.names.len != 0) return self.owner.fail(expression_.span, "named arguments");
         if (call_.callee.data != .name) return self.owner.fail(call_.callee.span, "calling this");
         const name = call_.callee.data.name;
         if (self.find(name) == null) {
             if (self.owner.struct_infos.get(self.owner.keyOf(name))) |info| return try self.construct(expression_, call_, info);
             if (self.owner.function_keys.get(self.owner.keyOf(name))) |info| {
-                if (call_.arguments.len != info.parameters.len) return self.owner.fail(expression_.span, "leaving out an argument");
-                const arguments = try self.arena().alloc(Ir.Operand, call_.arguments.len);
-                for (call_.arguments, info.parameters, info.payloads, arguments) |argument, parameter, payload, *out| {
-                    out.* = try self.convertTo(try self.expression(argument), parameter, payload, argument.span);
+                // Evaluated in the order written, then placed by parameter,
+                // as the interpreter binds positional and named arguments.
+                const positions = try self.bindArguments(call_, info.names, try self.arena().alloc(bool, info.names.len));
+                const written = try self.arena().alloc(Value, call_.arguments.len);
+                for (call_.arguments, written) |argument, *value| value.* = try self.expression(argument);
+                const arguments = try self.arena().alloc(Ir.Operand, info.parameters.len);
+                for (positions, info.parameters, info.payloads, arguments) |position, parameter, payload, *out| {
+                    const value = written[position orelse return self.owner.fail(expression_.span, "leaving out an argument")];
+                    out.* = try self.convertTo(value, parameter, payload, expression_.span);
                 }
                 const destination: ?Ir.Local = if (info.result == .nothing or discarded) null else try self.temporary(info.result);
                 try self.emit(expression_.span, .{ .call = .{
@@ -1387,9 +1439,8 @@ const Builder = struct {
     /// One of section 8.5's methods that change a dictionary or set, on a
     /// variable that holds one. A failure is reported at the first argument.
     fn mapChange(self: *Builder, expression_: *const Ast.Expression, call_: Ast.Expression.Call, member_: Ast.Expression.Member, change: MapMethods.Change, result_type: Ir.Type, discarded: bool) Error!?Value {
-        if (member_.base.data != .name) return self.owner.fail(expression_.span, "changing a dictionary that is not a variable");
         if (call_.arguments.len == 0 or call_.arguments.len > 8) return self.owner.fail(expression_.span, "this call");
-        const target = try self.place(member_.base.data.name, member_.base.span);
+        const path = try self.preparePath(member_.base);
         const arguments = try self.arena().alloc(Ir.Typed, call_.arguments.len);
         for (call_.arguments, arguments) |argument, *out| {
             const value = try self.expression(argument);
@@ -1397,14 +1448,16 @@ const Builder = struct {
             out.* = .{ .operand = value.operand, .type = value.type };
         }
         const destination: ?Ir.Local = if (discarded or result_type == .nothing) null else try self.temporary(result_type);
+        const opened = try self.openPath(path);
         try self.emit(expression_.span, .{ .map_change = .{
-            .target = target.place,
+            .target = opened.place,
             .method = @backingInt(change),
             .arguments = arguments,
             .destination = if (destination) |local| .{ .local = local } else null,
             .result = result_type,
             .site = try self.owner.site(call_.arguments[0].span),
         } });
+        try self.closePath(path, opened);
         return if (destination) |local| .{ .operand = .{ .local = local }, .type = result_type } else null;
     }
 
@@ -1660,9 +1713,8 @@ const Builder = struct {
     /// One of section 8's methods that change a list, on a variable that holds
     /// one; the runtime copies the list first if anything else shares it.
     fn listMutation(self: *Builder, expression_: *const Ast.Expression, call_: Ast.Expression.Call, member_: Ast.Expression.Member, mutation: ListMethods.Mutation, result_type: Ir.Type, discarded: bool) Error!?Value {
-        if (member_.base.data != .name) return self.owner.fail(expression_.span, "changing a list that is not a variable");
         if (call_.arguments.len > 8) return self.owner.fail(expression_.span, "this many arguments");
-        const target = try self.place(member_.base.data.name, member_.base.span);
+        const path = try self.preparePath(member_.base);
         const arguments = try self.arena().alloc(Ir.Typed, call_.arguments.len);
         for (call_.arguments, arguments) |argument, *out| {
             const value = try self.expression(argument);
@@ -1670,20 +1722,187 @@ const Builder = struct {
             out.* = .{ .operand = value.operand, .type = value.type };
         }
         const destination: ?Ir.Local = if (discarded or result_type == .nothing) null else try self.temporary(result_type);
+        const opened = try self.openPath(path);
         try self.emit(expression_.span, .{ .list_mutate = .{
-            .target = target.place,
+            .target = opened.place,
             .method = @backingInt(mutation),
             .arguments = arguments,
             .destination = if (destination) |local| .{ .local = local } else null,
             .result = result_type,
             .site = try self.owner.site(expression_.span),
         } });
+        try self.closePath(path, opened);
         return if (destination) |local| .{ .operand = .{ .local = local }, .type = result_type } else null;
+    }
+
+    /// The checker's type of what a variable holds.
+    fn checkedOf(self: *Builder, at: Ir.Place) ?Type {
+        return switch (at) {
+            .local => |local| self.checked_types.get(local),
+            .global => |global| self.owner.global_checked.get(global),
+            .self_ref => if (self.self_struct) |info| self.owner.checked.structs.get(info.key) else null,
+        };
+    }
+
+    /// One step of a path: where it goes in the container before it.
+    const Hop = struct {
+        step: Ir.Instruction.PathStep,
+        container: Ir.Type,
+        /// The checker's type of what the step reaches.
+        child: Type,
+        site: Ir.Site,
+    };
+
+    /// A path's root variable and the steps from it, each index evaluated.
+    const PreparedPath = struct {
+        root: Ir.Place,
+        hops: []const Hop,
+    };
+
+    /// The steps of a path from its root, from the checker's types: each
+    /// index is evaluated in order, as the interpreter evaluates them before
+    /// it walks the path.
+    fn resolvePath(self: *Builder, root_type: Type, steps: []const Ast.Step) Error![]const Hop {
+        const hops = try self.arena().alloc(Hop, steps.len);
+        var current = root_type;
+        for (steps, hops) |step, *hop| {
+            if (current.optional) return self.owner.fail(stepSpan(step), "a path through an optional");
+            switch (current.kind) {
+                .struct_value => {
+                    if (step != .field) return self.owner.fail(stepSpan(step), "this path");
+                    const user = current.user orelse return self.owner.fail(stepSpan(step), "this path");
+                    if (self.owner.struct_infos.get(user.name) == null) return self.owner.fail(stepSpan(step), "a path through this type");
+                    const position = for (user.fields, 0..) |field, at| {
+                        if (std.mem.eql(u8, field.name, step.field.name)) break at;
+                    } else return self.owner.fail(step.field.span, "this path");
+                    hop.* = .{ .step = .{ .field = @intCast(position) }, .container = .structure, .child = user.fields[position].type, .site = try self.owner.site(step.field.span) };
+                },
+                .list => {
+                    if (step != .index) return self.owner.fail(stepSpan(step), "this path");
+                    const position = try self.convert(try self.expression(step.index), .int, step.index.span);
+                    hop.* = .{ .step = .{ .index = position }, .container = .list, .child = current.element.?.*, .site = try self.owner.site(step.index.span) };
+                },
+                .dictionary => {
+                    if (step != .index) return self.owner.fail(stepSpan(step), "this path");
+                    const key = try self.expression(step.index);
+                    hop.* = .{ .step = .{ .key = .{ .operand = key.operand, .type = key.type } }, .container = .map, .child = current.element.?.*, .site = try self.owner.site(step.index.span) };
+                },
+                else => return self.owner.fail(stepSpan(step), "a path through this value"),
+            }
+            if (irType(hop.child) == null) return self.owner.fail(stepSpan(step), "a path through this value");
+            current = hop.child;
+        }
+        return hops;
+    }
+
+    fn stepSpan(step: Ast.Step) Source.Span {
+        return switch (step) {
+            .index => |index| index.span,
+            .field => |field| field.span,
+        };
+    }
+
+    /// A receiver written as a path, such as `self.items` or `grid[row]`:
+    /// its root variable and its steps, each index evaluated in order.
+    fn preparePath(self: *Builder, receiver: *const Ast.Expression) Error!PreparedPath {
+        var steps: std.ArrayList(Ast.Step) = .empty;
+        var at = receiver;
+        while (true) switch (at.data) {
+            .name => break,
+            .member => |member_| {
+                if (member_.optional or member_.position != null) return self.owner.fail(receiver.span, "changing a value through this path");
+                try steps.insert(self.arena(), 0, .{ .field = .{ .name = member_.name, .span = member_.name_span } });
+                at = member_.base;
+            },
+            .index => |index_| {
+                try steps.insert(self.arena(), 0, .{ .index = index_.index });
+                at = index_.base;
+            },
+            else => return self.owner.fail(receiver.span, "changing a value through this path"),
+        };
+        const target = try self.place(at.data.name, at.span);
+        if (steps.items.len == 0) return .{ .root = target.place, .hops = &.{} };
+        const root_type = self.checkedOf(target.place) orelse return self.owner.fail(receiver.span, "changing a value through this path");
+        return .{ .root = target.place, .hops = try self.resolvePath(root_type, steps.items) };
+    }
+
+    const OpenedPath = struct {
+        /// The innermost container, ready to change.
+        place: Ir.Place,
+        temporaries: []const Ir.Local,
+    };
+
+    /// Takes each container on the path out of the one holding it, ending
+    /// with the place of what the last step reaches.
+    fn openPath(self: *Builder, path: PreparedPath) Error!OpenedPath {
+        const temporaries = try self.arena().alloc(Ir.Local, path.hops.len);
+        var container = path.root;
+        for (path.hops, temporaries) |hop, *temporary_| {
+            temporary_.* = try self.temporary(irType(hop.child).?);
+            try self.emit(self.owner.sites.items[hop.site], .{ .take = .{ .destination = .{ .local = temporary_.* }, .container = container, .container_type = hop.container, .step = hop.step, .site = hop.site } });
+            container = .{ .local = temporary_.* };
+        }
+        return .{ .place = container, .temporaries = temporaries };
+    }
+
+    /// Puts back what `openPath` took, innermost first.
+    fn closePath(self: *Builder, path: PreparedPath, opened: OpenedPath) Error!void {
+        var index = path.hops.len;
+        while (index > 0) {
+            index -= 1;
+            const hop = path.hops[index];
+            const container: Ir.Place = if (index == 0) path.root else .{ .local = opened.temporaries[index - 1] };
+            const value: Ir.Typed = .{ .operand = .{ .local = opened.temporaries[index] }, .type = irType(hop.child).? };
+            try self.emit(self.owner.sites.items[hop.site], .{ .put = .{ .container = container, .container_type = hop.container, .step = hop.step, .value = value, .site = hop.site } });
+        }
+    }
+
+    /// Reads what `hop` reaches in `container`, into a new temporary.
+    fn readHop(self: *Builder, container: Ir.Operand, hop: Hop) Error!Ir.Operand {
+        const type_ = irType(hop.child).?;
+        const result = try self.temporary(type_);
+        const span = self.owner.sites.items[hop.site];
+        try self.emit(span, switch (hop.step) {
+            .field => |position| .{ .struct_get = .{ .destination = .{ .local = result }, .operand = container, .position = position, .type = type_ } },
+            .index => |position| .{ .list_get = .{ .destination = .{ .local = result }, .list = container, .position = position, .element = type_, .site = hop.site } },
+            .key => |key| .{ .map_get_existing = .{ .destination = .{ .local = result }, .map = container, .key = key, .payload = type_, .site = hop.site } },
+        });
+        return .{ .local = result };
+    }
+
+    /// Section 8 and 10's assignment through a path of two or more steps,
+    /// `line.start.x = 9.5` or `grid[row][column] += 1`, in the interpreter's
+    /// order: every index, then for a compound assignment the current value,
+    /// then the right side, then the store along the path.
+    fn pathAssignment(self: *Builder, span: Source.Span, assignment_: Ast.Assignment) Error!void {
+        const target = try self.place(assignment_.name, assignment_.name_span);
+        const root_type = self.checkedOf(target.place) orelse return self.owner.fail(assignment_.target_span, "assigning through this path");
+        const hops = try self.resolvePath(root_type, assignment_.steps);
+        const last = hops[hops.len - 1];
+        const final_type = irType(last.child).?;
+        const final_payload = if (last.child.optional) payloadType(last.child) else null;
+        const value: Ir.Operand = if (assignment_.operation) |operation| blk: {
+            var current: Ir.Operand = operandOf(target.place);
+            for (hops) |hop| current = try self.readHop(current, hop);
+            const right = try self.expression(assignment_.value);
+            const result = try self.binary(assignment_.target_span, operation, .{ .operand = current, .type = final_type }, right);
+            break :blk try self.convertTo(result, final_type, final_payload, span);
+        } else try self.convertTo(try self.expression(assignment_.value), final_type, final_payload, assignment_.value.span);
+        const path: PreparedPath = .{ .root = target.place, .hops = hops[0 .. hops.len - 1] };
+        const opened = try self.openPath(path);
+        const typed: Ir.Typed = .{ .operand = value, .type = final_type };
+        try self.emit(span, switch (last.step) {
+            .field => |position| .{ .struct_set = .{ .target = opened.place, .position = position, .value = typed } },
+            .index => |position| .{ .list_set = .{ .target = opened.place, .position = position, .value = typed, .site = last.site } },
+            .key => |key| .{ .map_set = .{ .target = opened.place, .key = key, .value = typed, .site = last.site } },
+        });
+        try self.closePath(path, opened);
     }
 
     /// `items[position] = value`, or `items[position] += value`, on a list a
     /// variable holds.
     fn elementAssignment(self: *Builder, span: Source.Span, assignment_: Ast.Assignment) Error!void {
+        if (assignment_.steps.len > 1) return self.pathAssignment(span, assignment_);
         if (assignment_.steps.len == 1 and assignment_.steps[0] == .field) return self.fieldAssignment(span, assignment_);
         if (assignment_.steps.len != 1 or assignment_.steps[0] != .index) return self.owner.fail(assignment_.target_span, "assigning into a nested collection or a field");
         const target = try self.place(assignment_.name, assignment_.name_span);
@@ -1769,6 +1988,7 @@ const Builder = struct {
         self.switchTo(body);
         try self.pushScope();
         const variable = try self.newLocal(if (loop.pattern != null) "" else loop.name, element);
+        try self.checked_types.put(self.arena(), variable, item_type);
         if (loop.pattern == null) try self.scopes.items[self.scopes.items.len - 1].put(self.arena(), loop.name, variable);
         try self.emit(loop.name_span, .{ .list_get = .{ .destination = .{ .local = variable }, .list = .{ .local = list }, .position = .{ .local = position }, .element = element, .site = try self.owner.site(span) } });
         // `for (name, score) in pairs`: each tuple taken apart into locals.

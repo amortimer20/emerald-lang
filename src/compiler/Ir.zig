@@ -36,11 +36,15 @@ pub const Program = struct {
     structs: []const StructType = &.{},
 };
 
-/// What the runtime needs to know of a struct type: its key, how a value
-/// shows it, and each field's name and kind (a payload's for an optional).
+/// What the runtime needs to know of a struct or class type: its key, how a
+/// value shows it, whether it is a class, and each field's name and kind (a
+/// payload's for an optional).
 pub const StructType = struct {
     name: []const u8,
     display_name: []const u8,
+    /// Section 10.1: a class's values are one shared object, changed in place
+    /// and compared by identity.
+    class: bool = false,
     field_names: []const []const u8,
     field_kinds: []const Type,
 };
@@ -62,7 +66,8 @@ pub const Type = enum {
     tuple,
     /// Section 8.2's `Dict[K, V]` or `Set[T]`, the runtime's one map.
     map,
-    /// Section 10.1's struct, a value with named fields.
+    /// Section 10.1's struct, a value with named fields, or a class's
+    /// object, which is shared; both are the runtime's `StructValue`.
     structure,
 
     /// Whether a slot of this type owns a reference on the heap.
@@ -238,6 +243,21 @@ pub const Instruction = struct {
         /// `value.field = new` on the struct `target` holds, which is copied
         /// first if anything else shares it.
         struct_set: struct { target: Place, position: u32, value: Typed },
+        /// One step of a change through a path: the value `step` names in the
+        /// `container_type` that `container` holds, moved out into
+        /// `destination` (the container made its holder's own first), leaving
+        /// `nothing` until `put` moves it back.
+        take: struct { destination: Place, container: Place, container_type: Type, step: PathStep, site: Site },
+        /// Moves `value`, which `take` took, back where it came from.
+        put: struct { container: Place, container_type: Type, step: PathStep, value: Typed, site: Site },
+    };
+
+    /// Where in its container a path step goes: a struct's field, a list's
+    /// index, or a dictionary's key.
+    pub const PathStep = union(enum) {
+        field: u32,
+        index: Operand,
+        key: Typed,
     };
 
     pub const Comparison = enum {

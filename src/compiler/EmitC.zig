@@ -511,6 +511,7 @@ const FunctionEmitter = struct {
                 try writeString(self.out, struct_type.name);
                 try self.out.writeAll(", ");
                 try writeString(self.out, struct_type.display_name);
+                try self.out.writeAll(if (struct_type.class) ", true" else ", false");
                 if (struct_type.field_names.len != 0) {
                     try self.out.print(", em_type_names_{d}, em_type_kinds_{d}, {d}), ", .{ built.type_index, built.type_index, struct_type.field_names.len });
                 } else try self.out.writeAll(", 0, 0, 0), ");
@@ -530,6 +531,64 @@ const FunctionEmitter = struct {
                 try self.out.print(", {d}, ", .{set.position});
                 try self.emValue(set.value);
                 try self.out.writeAll(");\n");
+            },
+            .take => |taken| {
+                const site = siteName(&site_buffer, taken.site);
+                try self.out.writeAll("    { em_value r;");
+                switch (taken.step) {
+                    .field => |position| {
+                        try self.out.writeAll(" r = em_struct_take(&");
+                        try self.place(taken.container);
+                        try self.out.print(", {d});", .{position});
+                    },
+                    .index => |position| {
+                        try self.out.writeAll(" if (em_list_take(&");
+                        try self.place(taken.container);
+                        try self.out.writeAll(", ");
+                        try self.operand(position);
+                        try self.out.print(", &r, {s})) EM_FAIL;", .{site});
+                    },
+                    .key => |key| {
+                        try self.out.writeAll(" if (em_map_take(&");
+                        try self.place(taken.container);
+                        try self.out.writeAll(", ");
+                        try self.emValue(key);
+                        try self.out.print(", &r, {s})) EM_FAIL;", .{site});
+                    },
+                }
+                try self.storeResult(taken.destination, self.placeType(taken.destination));
+                try self.out.writeAll(" }\n");
+            },
+            .put => |put| {
+                const site = siteName(&site_buffer, put.site);
+                switch (put.step) {
+                    .field => |position| {
+                        try self.out.writeAll("    em_struct_put(&");
+                        try self.place(put.container);
+                        try self.out.print(", {d}, ", .{position});
+                    },
+                    .index => |position| {
+                        try self.out.writeAll("    em_list_put(&");
+                        try self.place(put.container);
+                        try self.out.writeAll(", ");
+                        try self.operand(position);
+                        try self.out.writeAll(", ");
+                    },
+                    .key => |key| {
+                        try self.out.writeAll("    em_map_restore(&");
+                        try self.place(put.container);
+                        try self.out.writeAll(", ");
+                        try self.emValue(key);
+                        try self.out.writeAll(", ");
+                    },
+                }
+                try self.emValue(put.value);
+                if (put.step == .key) try self.out.print(", {s}", .{site});
+                // The value is the container's again, so the temporary no
+                // longer holds it.
+                try self.out.writeAll("); ");
+                try self.operand(put.value.operand);
+                try self.out.writeAll(" = 0;\n");
             },
             .tuple_get => |got| {
                 try self.line_("{ em_value r = em_tuple_get(@, " ++ "@);", .{ got.tuple, positionText(&site_buffer, got.position) });
